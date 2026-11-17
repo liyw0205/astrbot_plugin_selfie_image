@@ -20,7 +20,12 @@
       cache.delete(key);
       cache.set(key, value);
       const namespace = cache === RECORD_PAGE_CACHE ? 'record-page' : cache === ASSET_PAGE_CACHE ? 'asset-page' : '';
-      if (namespace) writeDashboardPersistCache(namespace, key, value);
+      if (namespace && writeDashboardPersistCache(namespace, key, value)) {
+        // Keep the short in-memory TTL separate from the three-day persisted
+        // page cache. A failed storage write must not make this entry appear
+        // durable, while a successful write can be reused after a refresh.
+        value.persistedAt = Date.now();
+      }
       while (cache.size > PAGE_CACHE_MAX_ENTRIES) {
         const oldest = cache.keys().next().value;
         if (!oldest) break;
@@ -29,12 +34,30 @@
       }
       return value;
     }
+    function restorePersistedPageCache(cache, key) {
+      const namespace = cache === RECORD_PAGE_CACHE ? 'record-page' : cache === ASSET_PAGE_CACHE ? 'asset-page' : '';
+      if (!namespace) return null;
+      const persisted = readDashboardPersistCacheEntry(namespace, key);
+      const data = persisted?.data;
+      if (!data || !Array.isArray(data.rows) || !data.meta || typeof data.meta !== 'object') return null;
+      const value = Object.assign({}, data, {
+        cachedAt: Date.now(),
+        persistedAt: Number(persisted.storedAt || 0),
+      });
+      cache.delete(key);
+      cache.set(key, value);
+      return value;
+    }
     function usablePageCache(cache, key) {
       const value = cache.get(key);
       if (!value) return null;
       if (Date.now() - Number(value.cachedAt || 0) > PAGE_CACHE_TTL_MS) {
-        cache.delete(key);
-        return null;
+        const restored = restorePersistedPageCache(cache, key);
+        if (!restored) {
+          cache.delete(key);
+          return null;
+        }
+        return restored;
       }
       cache.delete(key);
       cache.set(key, value);

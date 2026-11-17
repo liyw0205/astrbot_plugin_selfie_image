@@ -381,6 +381,7 @@
     function requestTraceSnapshot() { return REQUEST_TRACE.map(item => Object.assign({}, item)); }
     let CONFIG = {};
     let CONFIG_LOAD_SEQ = 0;
+    let QQ_GROUP_LOAD_SEQ = 0;
     let CONFIG_MUTATION_SEQ = 0;
     // Pages are loaded on demand; startup refreshes only tabs the user opened.
     const DASHBOARD_VISITED_TABS = new Set(['base']);
@@ -521,11 +522,11 @@
       }
       const recordPages = listDashboardPersistCache('record-page');
       for (const entry of recordPages) {
-        if (entry.key && entry.data?.rows && entry.data?.meta) RECORD_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: entry.storedAt || 0}));
+        if (entry.key && entry.data?.rows && entry.data?.meta) RECORD_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: Date.now(), persistedAt: entry.storedAt || 0}));
       }
       const assetPages = listDashboardPersistCache('asset-page');
       for (const entry of assetPages) {
-        if (entry.key && entry.data?.rows && entry.data?.meta) ASSET_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: entry.storedAt || 0}));
+        if (entry.key && entry.data?.rows && entry.data?.meta) ASSET_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: Date.now(), persistedAt: entry.storedAt || 0}));
       }
       const gallery = readDashboardPersistCache('gallery-picker', 'items');
       if (Array.isArray(gallery)) {

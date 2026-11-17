@@ -113,13 +113,18 @@ class SelfieProfileWebService:
         item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
         if not item_id:
             raise ValueError("缺少衣橱服装 id")
-        self.plugin.persona.update_wardrobe_item(
+        persona = self.plugin.persona
+        persona.update_wardrobe_item(
             item_id,
             name=payload.get("name") if "name" in payload else None,
             description=payload.get("description") if "description" in payload else None,
             tags=payload.get("tags") if "tags" in payload else None,
             enabled=payload.get("enabled") if "enabled" in payload else None,
         )
+        # Metadata edits on an existing ID must immediately reach the
+        # canonical schedule used by prompt generation. Explicit schedule
+        # outfits are retained by the persona reconciler.
+        persona.reconcile_wardrobe_schedule(reason="衣橱更新")
         return self.plugin.get_wardrobe_payload()
 
     async def delete_wardrobe_item(self, payload: dict[str, Any]) -> dict[str, Any]:

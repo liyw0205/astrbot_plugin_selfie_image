@@ -1581,14 +1581,7 @@ class PersonaManager:
         with self._daily_profile_lock:
             result = import_archive()
             self.wardrobe.load()
-            schedule = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
-            if schedule is not None:
-                if self._schedule_needs_wardrobe(schedule):
-                    self._select_wardrobe_for_schedule(schedule)
-                else:
-                    # The same image ID can carry a different name or description.
-                    self._apply_wardrobe_item(schedule, self.wardrobe.get(schedule.wardrobe_item_id))
-                self._persist_daily_selfie_profile(self._profile_from_timeline(schedule))
+            self.reconcile_wardrobe_schedule(reason="衣橱导入")
             return result
 
     def configure_wardrobe_limits(
@@ -1642,6 +1635,41 @@ class PersonaManager:
             self.wardrobe.mark_used(current.id, daily_schedule_date_key(self.business_day_start))
         self.wardrobe.set_selection_mode(mode)
 
+    def reconcile_wardrobe_schedule(
+        self,
+        *,
+        date: Optional[str] = None,
+        reason: str = "",
+    ) -> Optional[DailySelfieProfile]:
+        """Refresh today's auto wardrobe prompt after a wardrobe mutation.
+
+        A schedule may contain explicit event outfits. Only the main outfit
+        and events marked as wardrobe-sourced are refreshed; custom event
+        references remain untouched. Invalid, disabled, or unreadable items
+        go through the existing selector so the schedule cannot retain a
+        broken image reference.
+        """
+        del reason  # Kept for call-site diagnostics without changing storage.
+        target_date = str(date or daily_schedule_date_key(self.business_day_start))
+        with self._daily_profile_lock:
+            schedule = self.get_daily_schedule(target_date)
+            if schedule is None:
+                return None
+            before = schedule.to_dict()
+            if self._schedule_needs_wardrobe(schedule):
+                self._select_wardrobe_for_schedule(schedule)
+            else:
+                item = self.wardrobe.get(schedule.wardrobe_item_id)
+                # A non-wardrobe source represents an explicit schedule edit;
+                # do not overwrite it when only wardrobe metadata changes.
+                if item is not None and schedule.outfit_source in {"", "wardrobe"}:
+                    self._apply_wardrobe_item(schedule, item, mark_used=False)
+            if schedule.to_dict() == before:
+                return self._profile_from_timeline(schedule)
+            profile = self._profile_from_timeline(schedule)
+            self._persist_daily_selfie_profile(profile)
+            return profile
+
     async def select_wardrobe_today(self, item_id: str) -> DailySelfieProfile:
         async with self._daily_profile_update():
             today = daily_schedule_date_key(self.business_day_start)
@@ -1670,7 +1698,13 @@ class PersonaManager:
         item = self.current_wardrobe_item()
         return self.wardrobe.image_reference(item) if item else None
 
-    def _apply_wardrobe_item(self, schedule: DailySchedule, item: WardrobeItem) -> DailySchedule:
+    def _apply_wardrobe_item(
+        self,
+        schedule: DailySchedule,
+        item: WardrobeItem,
+        *,
+        mark_used: bool = True,
+    ) -> DailySchedule:
         """Use one clothing image as the day's main outfit without replacing
         explicit schedule overrides such as homewear or sleepwear.
         """
@@ -1684,10 +1718,11 @@ class PersonaManager:
                 event.outfit_ref = "main"
                 event.outfit_source = "wardrobe"
                 event.wardrobe_item_id = item.id
-        try:
-            self.wardrobe.mark_used(item.id, schedule.date)
-        except ValueError:
-            pass
+        if mark_used:
+            try:
+                self.wardrobe.mark_used(item.id, schedule.date)
+            except ValueError:
+                pass
         return schedule
 
     def _select_wardrobe_for_schedule(

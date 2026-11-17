@@ -102,9 +102,13 @@
       }).join('');
     }
     async function loadQQGroups(force = false) {
+      const loadSeq = ++QQ_GROUP_LOAD_SEQ;
+      const mutationSeq = CONFIG_MUTATION_SEQ;
       try {
         setStatus('groupsStatus', '正在读取 QQ 群列表…');
         const res = await api('/api/qq-groups' + (force ? '?refresh=1' : ''));
+        // Ignore a late refresh or a response superseded by a local save.
+        if (loadSeq !== QQ_GROUP_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
         const data = res.data || {};
         QQ_GROUP_MODELS = Array.isArray(data.models) ? uniq(data.models) : [];
         QQ_BOT_IDS = Array.isArray(data.bot_ids) ? uniq(data.bot_ids.map(String)) : [];
@@ -120,6 +124,7 @@
         renderGroupAccessSummary();
         renderQQGroups();
       } catch (error) {
+        if (loadSeq !== QQ_GROUP_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
         const message = error.message || '读取群列表失败';
         setStatus('groupsStatus', force ? '' : message);
         if (force) showToast(message, 'bad');
@@ -128,7 +133,7 @@
     async function saveQQGroups() {
       const mutationSeq = ++CONFIG_MUTATION_SEQ;
       try {
-        const rows = QQ_GROUP_ROWS.map(row => ({group_id: row.group_id, config: row.config}));
+        const rows = QQ_GROUP_ROWS.map(row => ({group_id: row.group_id, config: {...(row.config || {})}}));
         const blockedUsers = textList('groupBlockedUsers');
         const whitelistUsers = textList('groupWhitelistUsers');
         const blockedReasons = CONFIG.permission?.blocked_user_reasons || {};
@@ -141,14 +146,38 @@
           whitelist_users: whitelistUsers,
           whitelist_user_reasons: Object.fromEntries(Object.entries(whitelistReasons).filter(([id]) => whitelistUsers.includes(id))),
         };
-        const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify({groups: rows, permission})});
-        if (mutationSeq !== CONFIG_MUTATION_SEQ) return;
+        const previousGroups = CONFIG.group_chat_configs;
+        const previousPermission = CONFIG.permission;
+        // Keep later full-config writes from carrying an older group snapshot.
+        // The endpoint below is queued, so this optimistic local state is
+        // also the source for any config write submitted immediately after it.
         if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
         CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
-        if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
-        updateGlobalUsableGateUi();
-        showToast('群聊配置和用户名单已保存', 'ok');
-      } catch (error) { showToast(error.message || '保存群聊配置失败', 'bad'); }
+        const payload = {groups: rows, permission};
+        return enqueueConfigWrite(async () => {
+          try {
+            const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify(payload)});
+            if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
+            if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
+            CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
+            if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
+            updateGlobalUsableGateUi();
+            showToast('群聊配置和用户名单已保存', 'ok');
+            return true;
+          } catch (error) {
+            if (mutationSeq === CONFIG_MUTATION_SEQ) {
+              if (rows.length) CONFIG.group_chat_configs = previousGroups;
+              CONFIG.permission = previousPermission;
+              updateGlobalUsableGateUi();
+              showToast(error.message || '保存群聊配置失败', 'bad');
+            }
+            return false;
+          }
+        });
+      } catch (error) {
+        showToast(error.message || '保存群聊配置失败', 'bad');
+        return false;
+      }
     }
 
     async function loadConfig() {
@@ -216,20 +245,27 @@
       event.target.value = '';
     });
     let PERSIST_TAIL = Promise.resolve(true);
-    async function persistConfig(renderAfterSave = false, okText = '配置已保存', options = {}) {
-      CONFIG_MUTATION_SEQ += 1;
-      const run = () => persistConfigNow(renderAfterSave, okText, options);
+    function enqueueConfigWrite(run) {
       const next = PERSIST_TAIL.then(run, run);
       PERSIST_TAIL = next.then(() => true, () => true);
       return next;
     }
+    async function persistConfig(renderAfterSave = false, okText = '配置已保存', options = {}) {
+      const mutationSeq = ++CONFIG_MUTATION_SEQ;
+      collectForms();
+      const snapshot = JSON.parse(JSON.stringify(CONFIG || {}));
+      const run = () => persistConfigNow(renderAfterSave, okText, {...options, mutationSeq, snapshot});
+      return enqueueConfigWrite(run);
+    }
     async function persistConfigNow(renderAfterSave = false, okText = '配置已保存', options = {}) {
+      const mutationSeq = options.mutationSeq ?? CONFIG_MUTATION_SEQ;
       const toastOnOk = options.toast === true;
       const toastOnError = options.toastError !== false;
       const quiet = options.quiet === true;
       try {
-        collectForms();
-        const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
+        const snapshot = options.snapshot || (collectForms(), JSON.parse(JSON.stringify(CONFIG || {})));
+        const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: snapshot})});
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         CONFIG = res.data || CONFIG;
         ensureConfig();
         $('configText').value = JSON.stringify(CONFIG, null, 2);
@@ -245,6 +281,7 @@
         if (toastOnOk && okText) setMultiStatus(okText, 'ok');
         return true;
       } catch (e) {
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         if (toastOnError) setMultiStatus(e.message, 'bad');
         return false;
       }
@@ -614,8 +651,7 @@
         image_model_call_mode: ($('imageModelCallMode') && $('imageModelCallMode').value) || CONFIG.image_model_call_mode || 'sequence',
       };
     }
-    async function persistChannelListSnapshot(snapshot) {
-      const mutationSeq = ++CONFIG_MUTATION_SEQ;
+    async function persistChannelListSnapshot(snapshot, mutationSeq = ++CONFIG_MUTATION_SEQ) {
       try {
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: snapshot})});
         if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
@@ -626,6 +662,9 @@
         refreshModelSelectors();
         return true;
       } catch (e) {
+        // A newer mutation owns the visible state; do not let this old
+        // failure trigger the caller's rollback path.
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         // A failed autosave must leave the visible priority order aligned with
         // the last known server config, so a retry cannot submit a partial or
         // reordered snapshot by accident.
@@ -642,16 +681,22 @@
     async function scheduleChannelListAutoSave() {
       if (isChannelModalOpen()) return false;
       const snapshot = channelListSaveSnapshot();
-      const run = () => persistChannelListSnapshot(snapshot);
-      const next = PERSIST_TAIL.then(run, run);
-      PERSIST_TAIL = next.then(() => true, () => true);
-      return await next;
+      const mutationSeq = ++CONFIG_MUTATION_SEQ;
+      return await enqueueConfigWrite(() => persistChannelListSnapshot(snapshot, mutationSeq));
     }
     async function saveJsonConfig() {
       const mutationSeq = ++CONFIG_MUTATION_SEQ;
+      let parsed;
+      try {
+        parsed = JSON.parse($('configText').value || '{}');
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('配置必须是 JSON 对象');
+      } catch (e) {
+        showToast(e.message || 'JSON 配置保存失败', 'bad');
+        return false;
+      }
       const run = async () => {
       try {
-        CONFIG = JSON.parse($('configText').value || '{}');
+        CONFIG = parsed;
         ensureConfig();
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
         if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
@@ -659,12 +704,12 @@
         fillForms();
         showToast('JSON 配置已保存', 'ok');
         return true;
-      } catch (e) { showToast(e.message || 'JSON 配置保存失败', 'bad'); }
+      } catch (e) {
+        if (mutationSeq === CONFIG_MUTATION_SEQ) showToast(e.message || 'JSON 配置保存失败', 'bad');
         return false;
+      }
       };
-      const next = PERSIST_TAIL.then(run, run);
-      PERSIST_TAIL = next.then(() => true, () => true);
-      return next;
+      return enqueueConfigWrite(run);
     }
 
     async function checkHealth() {

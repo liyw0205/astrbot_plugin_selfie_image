@@ -45,25 +45,47 @@
     }
 
     let SELFIE_DAILY_ENSURE_REQUEST = null;
+    let SELFIE_DAILY_LOAD_SEQ = 0;
     let SELFIE_MUTATION_SEQ = 0;
+    function invalidateSelfieDailySchedule() {
+      SELFIE_DAILY_LOAD_SEQ += 1;
+      // A mutation must not reuse an ensure request that started against the
+      // previous wardrobe/schedule snapshot. The old promise may still settle;
+      // its identity check keeps it from clearing a newer request.
+      SELFIE_DAILY_ENSURE_REQUEST = null;
+    }
+    function beginSelfieMutation() {
+      SELFIE_MUTATION_SEQ += 1;
+      invalidateSelfieDailySchedule();
+      return SELFIE_MUTATION_SEQ;
+    }
     async function loadSelfieDailySchedule() {
-      if (!SELFIE_DAILY_ENSURE_REQUEST) {
-        SELFIE_DAILY_ENSURE_REQUEST = api('/api/selfie-profile/ensure-today', {method:'POST', body:'{}'})
+      let request = SELFIE_DAILY_ENSURE_REQUEST;
+      if (!request) {
+        const loadSeq = ++SELFIE_DAILY_LOAD_SEQ;
+        request = {loadSeq, promise: null};
+        const promise = api('/api/selfie-profile/ensure-today', {method:'POST', body:'{}'})
           .then(res => ({
             schedule: res.data?.daily_schedule || null,
             wardrobe: res.data?.wardrobe || null,
             error: '',
           }))
           .catch(e => ({schedule: null, wardrobe: null, error: e.message || '今日日程恢复失败'}))
-          .finally(() => { SELFIE_DAILY_ENSURE_REQUEST = null; });
+          .finally(() => {
+            if (SELFIE_DAILY_ENSURE_REQUEST === request) SELFIE_DAILY_ENSURE_REQUEST = null;
+          });
+        request.promise = promise;
+        SELFIE_DAILY_ENSURE_REQUEST = request;
       }
-      return await SELFIE_DAILY_ENSURE_REQUEST;
+      const result = await request.promise;
+      return {...result, loadSeq: request.loadSeq};
     }
 
     async function retrySelfieDailySchedule() {
       const button = $('ensureSelfieDailySchedule');
       if (button) { button.disabled = true; button.textContent = '正在恢复…'; }
       const result = await loadSelfieDailySchedule();
+      if (result.loadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
       if (result.wardrobe) renderWardrobe(result.wardrobe);
       renderSelfieDailySchedule(result.schedule, result.error || '服务暂未返回今日日程，请重试。');
       if (result.schedule?.schedule) showToast('今日日程已恢复', 'ok');
@@ -102,6 +124,7 @@
 
     async function refreshSelfie(notify = false) {
       const mutationSeq = SELFIE_MUTATION_SEQ;
+      const dailyLoadSeq = SELFIE_DAILY_LOAD_SEQ;
       try {
         const res = await api('/api/selfie-reference');
         if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
@@ -120,9 +143,11 @@
         $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
         let dailySchedule = data.daily_schedule;
         let scheduleError = '';
+        let scheduleLoadSeq = dailyLoadSeq;
         if (!Array.isArray(dailySchedule?.schedule?.events) || !dailySchedule.schedule.events.length) {
           const ensured = await loadSelfieDailySchedule();
-          if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
+          if (mutationSeq !== SELFIE_MUTATION_SEQ || ensured.loadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
+          scheduleLoadSeq = ensured.loadSeq;
           dailySchedule = ensured.schedule || dailySchedule;
           scheduleError = ensured.error || (
             Array.isArray(ensured.schedule?.schedule?.events) && ensured.schedule.schedule.events.length
@@ -130,7 +155,7 @@
           );
           if (ensured.wardrobe) data.wardrobe = ensured.wardrobe;
         }
-        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
+        if (mutationSeq !== SELFIE_MUTATION_SEQ || scheduleLoadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
         renderSelfieDailySchedule(dailySchedule, scheduleError);
         renderWardrobe(data.wardrobe);
         if ($('selfieAppearanceType')) {
@@ -138,6 +163,7 @@
         }
         if (notify) showToast('形象参考已刷新', 'ok');
       } catch (e) {
+        if (mutationSeq !== SELFIE_MUTATION_SEQ || dailyLoadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
         $('selfieStatus').textContent = '形象信息暂不可用';
         renderSelfieDailySchedule(null, e.message || '形象信息读取失败');
         showToast(e.message || '形象信息读取失败', 'bad');
@@ -154,6 +180,7 @@
       }));
       if (!queue.length) { showToast('请选择服装图片', 'bad'); return; }
       WARDROBE_BATCH_BUSY = true;
+      const batchMutationSeq = beginSelfieMutation();
       WARDROBE_BATCH_CANCELLED = false;
       const controlIds = ['uploadWardrobe', 'wardrobeFile', 'wardrobeName', 'wardrobeDescription', 'wardrobeTags', 'importWardrobeBtn'];
       controlIds.forEach(id => { if ($(id)) $(id).disabled = true; });
@@ -186,7 +213,9 @@
         const message = `${WARDROBE_BATCH_CANCELLED ? '已停止' : '导入完成'}：成功 ${succeeded} 张，失败 ${failures.length} 张${queue.length > processed ? `，未处理 ${queue.length - processed} 张` : ''}`;
         $('wardrobeBatchProgressLabel').textContent = message;
         $('wardrobeBatchResult').textContent = failures.join('\n');
+        if (batchMutationSeq !== SELFIE_MUTATION_SEQ) return;
         await refreshSelfie();
+        if (batchMutationSeq !== SELFIE_MUTATION_SEQ) return;
         showToast(message, failures.length ? 'bad' : 'ok');
       } finally {
         WARDROBE_BATCH_BUSY = false;
@@ -203,93 +232,104 @@
     async function saveWardrobeMode() {
       const select = $('wardrobeSelectionMode');
       select.disabled = true;
+      const mutationSeq = beginSelfieMutation();
       try {
-        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-wardrobe/settings', {method:'POST', body: JSON.stringify({selection_mode:select.value})});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         renderWardrobe(res.data);
         showToast('轮换方式已保存，今天的服装保留', 'ok');
-      } catch (e) { showToast(e.message || '轮换方式保存失败', 'bad'); await refreshSelfie(); }
+      } catch (e) {
+        if (mutationSeq === SELFIE_MUTATION_SEQ) { showToast(e.message || '轮换方式保存失败', 'bad'); await refreshSelfie(); }
+      }
       finally { select.disabled = false; }
     }
     async function wearWardrobe(button) {
       const id = button.closest('[data-wardrobe-id]').dataset.wardrobeId;
       button.disabled = true;
+      const mutationSeq = beginSelfieMutation();
       try {
-        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-wardrobe/select', {method:'POST', body: JSON.stringify({id})});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         renderSelfieDailySchedule(res.data?.daily_schedule);
         renderWardrobe(res.data?.wardrobe);
         showToast('今日服装已指定，明天继续自动轮换', 'ok');
-      } catch (e) { showToast(e.message || '今日服装设置失败', 'bad'); }
+      } catch (e) { if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message || '今日服装设置失败', 'bad'); }
       finally { button.disabled = false; }
     }
     async function updateWardrobe(id) {
       const row = document.querySelector(`[data-wardrobe-id="${CSS.escape(id)}"]`);
       if (!row) return;
+      const mutationSeq = beginSelfieMutation();
       try {
-        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/update', {method:'POST', body: JSON.stringify({id, name: row.querySelector('.wardrobe-name')?.value || ''})});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         await refreshSelfie();
         showToast('衣橱服装已更新', 'ok');
-      } catch (e) { showToast(e.message || '衣橱服装更新失败', 'bad'); }
+      } catch (e) { if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message || '衣橱服装更新失败', 'bad'); }
     }
     async function toggleWardrobe(id) {
       const item = (window.__selfieWardrobeItems || []).find(value => String(value.id) === String(id));
+      const mutationSeq = beginSelfieMutation();
       try {
-        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/toggle', {method:'POST', body: JSON.stringify({id, enabled: !(item && item.enabled)})});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         await refreshSelfie();
-      } catch (e) { showToast(e.message || '衣橱服装状态更新失败', 'bad'); }
+      } catch (e) { if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message || '衣橱服装状态更新失败', 'bad'); }
     }
     async function deleteWardrobe(id) {
       if (!await confirmAction('确定删除这套衣橱服装吗？', {title:'删除衣橱服装', confirmText:'删除'})) return;
+      const mutationSeq = beginSelfieMutation();
       try {
-        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/delete', {method:'POST', body: JSON.stringify({id})});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         await refreshSelfie();
         showToast('衣橱服装已删除', 'ok');
-      } catch (e) { showToast(e.message || '衣橱服装删除失败', 'bad'); }
+      } catch (e) { if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message || '衣橱服装删除失败', 'bad'); }
     }
     async function refreshDailySelfieLocal() {
       if (!await confirmAction('重新生成会替换今天已有的安排，不会清空衣橱中的服装。', {title:'重新生成今日日程', confirmText:'重新生成'})) return;
+      const mutationSeq = beginSelfieMutation();
       try {
-        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         renderSelfieDailySchedule(res.data && res.data.daily_schedule);
         renderWardrobe(res.data && res.data.wardrobe);
         showToast('今日日程已重新生成', 'ok');
       } catch (e) {
-        showToast(e.message, 'bad');
+        if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message, 'bad');
       }
     }
     async function uploadSelfie() {
       const file = $('selfieFile').files[0];
       if (!file) { showToast('请选择图片', 'bad'); return; }
+      const mutationSeq = beginSelfieMutation();
       try {
-        SELFIE_MUTATION_SEQ += 1;
         const image = await readFileDataUrl(file);
         await api('/api/selfie-reference', {method:'POST', body: JSON.stringify({image, mime_type:file.type, filename:file.name})});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         await refreshSelfie();
         showToast('参考图已更新', 'ok');
-      } catch (e) { showToast(e.message || '参考图上传失败', 'bad'); }
+      } catch (e) { if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message || '参考图上传失败', 'bad'); }
     }
     async function clearSelfie() {
       if (!await confirmAction('确定清除当前自拍形象参考图吗？清除后后续生成将不再使用这张形象图。', {title:'清除形象参考图', confirmText:'清除参考图'})) return;
-      try { SELFIE_MUTATION_SEQ += 1; await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
-      catch (e) { showToast(e.message || '参考图清除失败', 'bad'); }
+      const mutationSeq = beginSelfieMutation();
+      try { await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); if (mutationSeq !== SELFIE_MUTATION_SEQ) return; await refreshSelfie(); showToast('参考图已清除', 'ok'); }
+      catch (e) { if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message || '参考图清除失败', 'bad'); }
     }
     async function saveAppearanceType() {
+      const mutationSeq = beginSelfieMutation();
       try {
-        SELFIE_MUTATION_SEQ += 1;
         const appearance_type = ($('selfieAppearanceType') && $('selfieAppearanceType').value) || 'auto';
         const res = await api('/api/selfie-appearance-type', {method:'POST', body: JSON.stringify({appearance_type})});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         const data = res.data || {};
         if ($('selfieAppearanceType')) $('selfieAppearanceType').value = data.appearance_type || appearance_type;
         const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || appearance_type] || '自动';
         $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
         showToast('形象类型已保存', 'ok');
       } catch (e) {
-        showToast(e.message, 'bad');
+        if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message, 'bad');
       }
     }
 

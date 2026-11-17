@@ -100,6 +100,46 @@ def test_persona_selects_one_wardrobe_outfit_for_daily_schedule(tmp_path):
     )
 
 
+def test_wardrobe_metadata_update_reconciles_same_id_daily_outfit(tmp_path):
+    manager = PersonaManager(tmp_path)
+    item = manager.add_wardrobe_item(
+        PNG_1X1,
+        name="旧名称",
+        description="旧衣橱描述",
+    )
+    asyncio.run(manager.ensure_daily_selfie_profile())
+    schedule = manager.get_daily_schedule(daily_schedule_date_key())
+    assert schedule is not None and schedule.outfits["main"] == "旧衣橱描述"
+
+    manager.update_wardrobe_item(item.id, name="新名称", description="新衣橱描述")
+    manager.reconcile_wardrobe_schedule(reason="测试更新")
+
+    refreshed = manager.get_daily_schedule(daily_schedule_date_key())
+    assert refreshed is not None
+    assert refreshed.wardrobe_item_id == item.id
+    assert refreshed.outfits["main"] == "新衣橱描述"
+    assert manager.get_daily_selfie_profile().wardrobe_item_name == "新名称"
+
+
+def test_wardrobe_reconcile_preserves_explicit_schedule_outfit(tmp_path):
+    manager = PersonaManager(tmp_path)
+    item = manager.add_wardrobe_item(PNG_1X1, name="衣橱名称", description="衣橱描述")
+    asyncio.run(manager.ensure_daily_selfie_profile())
+    schedule = manager.get_daily_schedule(daily_schedule_date_key())
+    assert schedule is not None
+    schedule.outfits["main"] = "用户手写穿搭"
+    schedule.outfit_source = "manual"
+    manager._persist_daily_selfie_profile(manager._profile_from_timeline(schedule))
+
+    manager.update_wardrobe_item(item.id, description="更新后的衣橱描述")
+    manager.reconcile_wardrobe_schedule(reason="测试显式覆盖")
+
+    refreshed = manager.get_daily_schedule(daily_schedule_date_key())
+    assert refreshed is not None
+    assert refreshed.outfits["main"] == "用户手写穿搭"
+    assert refreshed.outfit_source == "manual"
+
+
 def test_wardrobe_reference_selection_has_stable_identity_then_clothing_order():
     selection = select_wardrobe_selfie_references(
         ImageReference(data=b"identity"),

@@ -146,6 +146,13 @@ def test_record_and_asset_pages_cache_metadata_and_prefetch_neighbors():
     assert "pruneProtectedMediaLoadQueue();" in PAGE
 
 
+def test_record_and_asset_persistent_pages_survive_short_memory_ttl():
+    assert "function restorePersistedPageCache(cache, key)" in PAGE
+    assert "const restored = restorePersistedPageCache(cache, key);" in PAGE
+    assert "cachedAt: Date.now(), persistedAt: entry.storedAt || 0" in PAGE
+    assert "if (namespace && writeDashboardPersistCache(namespace, key, value))" in PAGE
+
+
 def test_catalogs_prefetch_three_forward_pages_without_loading_media():
     assert "const PAGE_PREFETCH_AHEAD = 3;" in PAGE
     assert "function prefetchCatalogPages(kind, query, page, total)" in PAGE
@@ -230,6 +237,18 @@ def test_selfie_controls_only_offer_local_daily_outfit_refresh():
     assert "'/api/selfie-profile/ensure-today'" in PAGE
     assert "async function retrySelfieDailySchedule()" in PAGE
     assert '今日穿搭与日程' in PAGE
+
+
+def test_selfie_schedule_and_wardrobe_requests_ignore_late_mutations():
+    assert "let SELFIE_DAILY_LOAD_SEQ = 0;" in PAGE
+    assert "function invalidateSelfieDailySchedule()" in PAGE
+    assert "if (SELFIE_DAILY_ENSURE_REQUEST === request) SELFIE_DAILY_ENSURE_REQUEST = null;" in PAGE
+    assert "return {...result, loadSeq: request.loadSeq};" in PAGE
+    assert "if (result.loadSeq !== SELFIE_DAILY_LOAD_SEQ) return;" in PAGE
+    assert "const mutationSeq = beginSelfieMutation();" in PAGE
+    assert "if (mutationSeq !== SELFIE_MUTATION_SEQ) return;" in PAGE
+    assert "if (mutationSeq === SELFIE_MUTATION_SEQ) showToast" in PAGE
+    assert "if (mutationSeq !== SELFIE_MUTATION_SEQ || dailyLoadSeq !== SELFIE_DAILY_LOAD_SEQ) return;" in PAGE
 
 
 def test_dashboard_health_and_metrics_are_grouped_for_scanning():
