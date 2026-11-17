@@ -258,6 +258,7 @@
     .soft { background: var(--panel-soft); }
     .between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .channel-row { display: grid; grid-template-columns: minmax(160px, 1fr) 130px 90px auto; gap: 10px; align-items: center; }
+    .channel-row b { overflow-wrap: anywhere; }
     .pill {
       display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 10px;
       background: var(--panel-soft); color: var(--primary-strong); font-size: 12px; font-weight: 600;
@@ -307,6 +308,13 @@
     .toast.bad { background: rgba(244,67,54,.94); }
     .detail-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
     .detail-title h3 { margin: 0; }
+    .task-record-links { flex-wrap: wrap; }
+    .task-record-links > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+    .task-attempt-table { table-layout: fixed; }
+    .task-attempt-table th, .task-attempt-table td { overflow-wrap: anywhere; }
+    .task-attempt-table th:nth-child(1) { width: 32px; }
+    .task-attempt-table th:nth-child(2) { width: 30%; }
+    .task-attempt-table th:nth-child(3), .task-attempt-table th:nth-child(4) { width: 64px; }
     .copy-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background: #fff; border-color: var(--line); color: #344054; }
     .copy-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-weak); }
     .copy-btn svg { width: 15px; height: 15px; display: block; }
@@ -721,7 +729,6 @@
     .topline input { max-width: 280px; }
     .sidebar-backdrop { display: none; position: fixed; inset: 0; z-index: 15; background: rgba(22, 24, 35, .34); }
     .floating-action-section { padding-bottom: 120px; }
-    section#channels.floating-action-section { padding-bottom: 188px; }
     .floating-actions {
       display: none;
       position: fixed;
@@ -781,6 +788,7 @@
       transform: translateY(-50%) translateX(0);
     }
     section.active .floating-actions { display: flex; }
+    #channels > .between > .floating-actions { position: static; flex-direction: row; gap: 8px; }
     body.dashboard-embedded { background: var(--bg); }
     @media (max-width: 1100px) {
       .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }

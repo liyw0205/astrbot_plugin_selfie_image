@@ -266,6 +266,7 @@
     .soft { background: var(--panel-soft); }
     .between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .channel-row { display: grid; grid-template-columns: minmax(160px, 1fr) 130px 90px auto; gap: 10px; align-items: center; }
+    .channel-row b { overflow-wrap: anywhere; }
     .pill {
       display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 10px;
       background: var(--panel-soft); color: var(--primary-strong); font-size: 12px; font-weight: 600;
@@ -315,6 +316,13 @@
     .toast.bad { background: rgba(244,67,54,.94); }
     .detail-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
     .detail-title h3 { margin: 0; }
+    .task-record-links { flex-wrap: wrap; }
+    .task-record-links > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+    .task-attempt-table { table-layout: fixed; }
+    .task-attempt-table th, .task-attempt-table td { overflow-wrap: anywhere; }
+    .task-attempt-table th:nth-child(1) { width: 32px; }
+    .task-attempt-table th:nth-child(2) { width: 30%; }
+    .task-attempt-table th:nth-child(3), .task-attempt-table th:nth-child(4) { width: 64px; }
     .copy-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background: #fff; border-color: var(--line); color: #344054; }
     .copy-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-weak); }
     .copy-btn svg { width: 15px; height: 15px; display: block; }
@@ -729,7 +737,6 @@
     .topline input { max-width: 280px; }
     .sidebar-backdrop { display: none; position: fixed; inset: 0; z-index: 15; background: rgba(22, 24, 35, .34); }
     .floating-action-section { padding-bottom: 120px; }
-    section#channels.floating-action-section { padding-bottom: 188px; }
     .floating-actions {
       display: none;
       position: fixed;
@@ -789,6 +796,7 @@
       transform: translateY(-50%) translateX(0);
     }
     section.active .floating-actions { display: flex; }
+    #channels > .between > .floating-actions { position: static; flex-direction: row; gap: 8px; }
     body.dashboard-embedded { background: var(--bg); }
     @media (max-width: 1100px) {
       .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1196,9 +1204,13 @@
       </div>
     </section>
 
-    <section id="channels" class="floating-action-section">
+    <section id="channels">
       <div class="between">
         <h2>渠道</h2>
+        <div class="floating-actions" aria-label="添加渠道">
+          <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
+          <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
+        </div>
       </div>
       <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停会马上保存，删除、复制和优先级也会自动保存。启用但没选模型时会自动关掉该渠道。</p>
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
@@ -1229,10 +1241,6 @@
         <div id="auditPriorityRows" class="model-list"></div>
       </div>
       <div id="channelStatus" class="status" style="margin-top:12px"></div>
-      <div class="floating-actions" aria-label="添加渠道">
-        <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
-        <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
-      </div>
     </section>
 
     <section id="groups" class="floating-action-section">
@@ -5007,7 +5015,7 @@ Source prompt:
           ? taskImageResultsMarkup(task.image_results)
           : '';
         const attemptRows = attempts.length
-          ? `<div style="overflow:auto;margin-top:12px"><table class="table"><thead><tr><th>#</th><th>渠道/模型</th><th>结果</th><th>耗时</th><th>原因</th></tr></thead><tbody>${attempts.map(item => `<tr><td>${escapeHtml(String(item.attempt || ''))}</td><td>${escapeHtml(String(item.model || item.channel || ''))}</td><td>${item.success ? '成功' : '失败'}</td><td>${escapeHtml(String(item.elapsed_seconds ?? '-'))}s</td><td>${escapeHtml(String(item.error || item.error_category || ''))}</td></tr>`).join('')}</tbody></table></div>`
+          ? `<div style="overflow:auto;margin-top:12px"><table class="table task-attempt-table"><thead><tr><th>#</th><th>渠道/模型</th><th>结果</th><th>耗时</th><th>原因</th></tr></thead><tbody>${attempts.map(item => `<tr><td>${escapeHtml(String(item.attempt || ''))}</td><td>${escapeHtml(String(item.model || item.channel || ''))}</td><td>${item.success ? '成功' : '失败'}</td><td>${escapeHtml(String(item.elapsed_seconds ?? '-'))}s</td><td>${escapeHtml(String(item.error || item.error_category || ''))}</td></tr>`).join('')}</tbody></table></div>`
           : '<div class="muted" style="margin-top:12px">尚无渠道尝试明细</div>';
         const parameterRows = Object.entries(params).map(([key, value]) => `<div><label>${escapeHtml(key)}</label><div class="status">${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : String(value))}</div></div>`).join('');
         const recordId = String(task.retry_record_id || task.record_id || '').trim();
@@ -5036,7 +5044,7 @@ Source prompt:
           ${personaReference}
           ${requestImagePaths.length ? `<div style="margin-top:14px">${imageThumbs(requestImagePaths, '请求图')}</div>` : ''}
           ${parameterRows ? `<div class="grid" style="margin-top:12px">${parameterRows}</div>` : ''}
-          <div class="detail-title" style="margin-top:14px"><h3>关联记录</h3>${linkedRecordIds.length ? linkedRecordIds.map(id => `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(id)}" type="button">查看 ${escapeHtml(id)}</button>`).join(' ') : recordId ? `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(recordId)}" type="button">查看来源记录</button>` : '<span class="muted">生成记录尚未写入</span>'}${recordId ? `<button class="ok mini task-record-retry" data-record-id="${escapeHtml(recordId)}" type="button">重新执行来源</button>` : ''}</div>
+          <div class="detail-title task-record-links" style="margin-top:14px"><h3>关联记录</h3>${linkedRecordIds.length ? linkedRecordIds.map(id => `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(id)}" type="button">查看 ${escapeHtml(id)}</button>`).join(' ') : recordId ? `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(recordId)}" type="button">查看来源记录</button>` : '<span class="muted">生成记录尚未写入</span>'}${recordId ? `<button class="ok mini task-record-retry" data-record-id="${escapeHtml(recordId)}" type="button">重新执行来源</button>` : ''}</div>
           ${attemptRows}`;
         body.querySelectorAll('.task-record-open').forEach(button => button.addEventListener('click', () => { closeTaskDetail(); openRecordDetail(button.dataset.recordId || ''); }));
         body.querySelector('.task-record-retry')?.addEventListener('click', () => retryTaskFromRecord(recordId, String($('taskRetryStrategy')?.value || 'full')));

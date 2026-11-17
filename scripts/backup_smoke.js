@@ -41,6 +41,7 @@ const sdk = `
     window.AstrBotPluginPage={ready:async()=>{}, apiGet:(endpoint,body)=>request('GET',endpoint,body),
       apiPost:(endpoint,body)=>request('POST',endpoint,body),
       download:(endpoint,body,filename)=>request('download',endpoint,body,filename)};
+    if(location.search.includes('legacy'))delete window.AstrBotPluginPage.download;
   }
 `;
 const page = fs.readFileSync(path.join(ROOT, 'pages/dashboard/index.source.html'), 'utf8')
@@ -75,9 +76,11 @@ async function main() {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'selfie-backup-browser-'));
   const server = http.createServer(async (request,response) => {
     const url = new URL(request.url, 'http://fixture');
-    if (url.pathname === '/fixture' || url.pathname === '/host') {
+    if (['/fixture','/host','/legacy'].includes(url.pathname)) {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
-      response.end(url.pathname === '/host' ? host : page); return;
+      response.end(url.pathname === '/legacy'
+        ? host.replace('src="/fixture"','src="/fixture?legacy=1"').replace('sandbox="allow-scripts"','sandbox="allow-scripts allow-downloads"')
+        : url.pathname === '/host' ? host : page); return;
     }
     if (!url.pathname.startsWith('/api/')) {response.end(); return;}
     if(request.headers['x-selfie-image-token']!==fixtureToken) {
@@ -85,10 +88,18 @@ async function main() {
     }
     const chunks=[]; for await (const chunk of request) chunks.push(chunk);
     const body=chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
-    calls.push({path:url.pathname, method:request.method, body, format:url.searchParams.get('format')});
+    calls.push({path:url.pathname, method:request.method, body, format:url.searchParams.get('format'), offset:url.searchParams.get('offset')});
     if (url.pathname.endsWith('/download')) {
       if(downloadMode==='failure') {
         response.statusCode=503;response.setHeader('Content-Type','application/json');response.end(JSON.stringify({success:false,error:'fixture download unavailable'}));return;
+      }
+      if(url.searchParams.get('format')==='chunk') {
+        const offset=Number(url.searchParams.get('offset')),chunk=archive.subarray(offset,offset+48);
+        assert.equal(url.searchParams.get('revision'),offset?'fixture-revision':'');
+        if(downloadMode==='slow')await new Promise(resolve=>setTimeout(resolve,250));
+        response.setHeader('Content-Type','application/json');
+        response.end(JSON.stringify({success:true,data:{offset,next_offset:offset+chunk.length,size:archive.length,
+          revision:'fixture-revision',content_base64:chunk.toString('base64'),eof:offset+chunk.length===archive.length,filename:'bkp_fixture.zip'}}));return;
       }
       response.setHeader('Content-Type','application/zip');
       response.setHeader('Content-Disposition','attachment; filename="bkp_fixture.zip"');
@@ -145,11 +156,12 @@ async function main() {
       await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
       await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
     };
-    for(const embedded of [false,true])for(const width of [1280,390,320]) {
+    for(const mode of ['standalone','host','legacy'])for(const width of [1280,390,320]) {
+      const embedded=mode!=='standalone';
       calls=[];pending=false;deleted=false;rejectRestore=false;contextId=undefined;visibleRows=rows;downloadMode='normal';
       const height=width===1280?900:width===320?568:844;
       await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500});
-      await cdp.send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/${embedded?'host':'fixture'}`});
+      await cdp.send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/${embedded?mode:'fixture'}`});
       await new Promise(resolve=>setTimeout(resolve,350));
       await until("typeof navigateToTab === 'function'");
       await evaluate(`AUTH_TOKEN=${JSON.stringify(fixtureToken)}`);
@@ -158,7 +170,7 @@ async function main() {
       if(embedded)assert.equal(await evaluate("window.confirm('sandbox probe')"),false);
       await evaluate("navigateToTab('backup')"); await until("document.querySelector('.backup-restore')");
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth+1'),true);
-      const downloadDir=path.join(output,`${embedded?'embedded':'standalone'}-${width}-downloads`);
+      const downloadDir=path.join(output,`${mode}-${width}-downloads`);
       fs.mkdirSync(downloadDir,{recursive:true});
       await cdp.send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloadDir});
       const downloaded=()=>fs.readdirSync(downloadDir).filter(name=>name.endsWith('.zip'));
@@ -168,7 +180,8 @@ async function main() {
       assert.equal(downloaded().length,previousDownloads);
       downloadMode='slow';await evaluate("$('toastWrap').innerHTML=''");await click('.backup-download');
       await until("[...document.querySelectorAll('.toast')].some(el=>el.textContent.includes('已开始下载'))");
-      assert(calls.some(call=>call.path.endsWith('/download')&&call.format==='file'));
+      assert(calls.some(call=>call.path.endsWith('/download')&&call.format===(mode==='legacy'?'chunk':'file')));
+      if(mode==='legacy')assert.deepEqual(calls.filter(call=>call.path.endsWith('/download')).slice(1).map(call=>Number(call.offset)),Array.from({length:Math.ceil(archive.length/48)},(_,i)=>i*48));
       for(let i=0;i<100&&downloaded().length===previousDownloads;i++)await new Promise(resolve=>setTimeout(resolve,30));
       assert.equal(downloaded().length,previousDownloads+1,'download did not leave the sandbox');
       assert(downloaded().every(name=>fs.readFileSync(path.join(downloadDir,name)).equals(archive)));
@@ -219,7 +232,7 @@ async function main() {
       assert(bounds.left>=0&&bounds.right<=width+1&&bounds.top>=0&&bounds.bottom<=height&&!bounds.overflow,JSON.stringify(bounds));
       assert.equal(await evaluate("[...$('backupRestoreOptions').querySelectorAll('input')].every(el=>el.getBoundingClientRect().width<=20)"),true);
       const shot=await cdp.send('Page.captureScreenshot',{format:'png'});
-      fs.writeFileSync(path.join(output,`${embedded?'embedded':'standalone'}-${width}.png`),Buffer.from(shot.data,'base64'));
+      fs.writeFileSync(path.join(output,`${mode}-${width}.png`),Buffer.from(shot.data,'base64'));
       holdChunk=true;
       await click('#backupRestoreSubmit');await click('#confirmProceedBtn');
       for(let i=0;i<100&&!releaseChunk;i++)await new Promise(resolve=>setTimeout(resolve,20));
@@ -241,7 +254,7 @@ async function main() {
       await click('.backup-delete'); await click('#confirmProceedBtn'); await until('!BACKUP_BUSY');
       assert.equal(calls.filter(call=>call.path.endsWith('/delete')).length,1);
       assert.equal(await evaluate("$('backupList').textContent.includes('暂无备份')"),true);
-      console.log(`[backup-smoke] ${embedded?'sandbox iframe':'standalone'} ${width}x${height}: valid ZIP, download failure/retry/delay, restore, upload cancel/retry, full/empty list and long filename passed`);
+      console.log(`[backup-smoke] ${mode} ${width}x${height}: valid ZIP, download failure/retry/delay, restore, upload cancel/retry, full/empty list and long filename passed`);
     }
     assert.deepEqual(exceptions,[]);
     console.log(`[backup-smoke] screenshots: ${output}`);

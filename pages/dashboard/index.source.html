@@ -101,9 +101,13 @@
       </div>
     </section>
 
-    <section id="channels" class="floating-action-section">
+    <section id="channels">
       <div class="between">
         <h2>渠道</h2>
+        <div class="floating-actions" aria-label="添加渠道">
+          <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
+          <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
+        </div>
       </div>
       <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停会马上保存，删除、复制和优先级也会自动保存。启用但没选模型时会自动关掉该渠道。</p>
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
@@ -134,10 +138,6 @@
         <div id="auditPriorityRows" class="model-list"></div>
       </div>
       <div id="channelStatus" class="status" style="margin-top:12px"></div>
-      <div class="floating-actions" aria-label="添加渠道">
-        <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
-        <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
-      </div>
     </section>
 
     <section id="groups" class="floating-action-section">

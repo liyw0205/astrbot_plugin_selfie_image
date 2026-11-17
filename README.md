@@ -3,7 +3,7 @@
 AstrBot 的生图、图生图、AI 自拍、合影与管理面板插件。
 
 - 插件名：`astrbot_plugin_selfie_image`
-- 当前稳定版：`1.7.66`
+- 当前稳定版：`1.7.67`
 - AstrBot：`>=4.13.0,<5`
 - 仓库：<https://github.com/liyw0205/astrbot_plugin_selfie_image>
 
@@ -270,9 +270,11 @@ python -m compileall -q features generation tasks main.py
 git diff --check
 ```
 
-备份管理浏览器回归：`node scripts/backup_smoke.js`（需要 Chromium、Python）。使用临时数据验证独立页与受限 iframe 在 1280×900、390×844、320×568 下的按钮点击、认证下载、有效 ZIP、下载失败重试与延迟响应、恢复勾选、上传取消后重试、满/空列表及长文件名布局；默认将截图保存到临时目录，可用 `BACKUP_SMOKE_OUTPUT` 指定输出位置。测试使用模拟宿主桥接，不操作真实插件数据。
+备份管理浏览器回归：`node scripts/backup_smoke.js`（需要 Chromium、Python）。使用临时数据验证独立页、当前宿主桥接和没有文件下载方法的旧桥接，在 1280×900、390×844、320×568 下的按钮点击、认证文件/分块下载、有效 ZIP、下载失败重试与延迟响应、恢复勾选、上传取消后重试、满/空列表及长文件名布局；默认将截图保存到临时目录，可用 `BACKUP_SMOKE_OUTPUT` 指定输出位置。测试使用模拟宿主桥接，不操作真实插件数据。
 
 衣橱浏览器回归：`node scripts/wardrobe_smoke.js`（需要 Chromium）。覆盖相同视口和宿主模式下的多图导入、部分失败重试、停止后续上传、轮换方式、今日选衣与日程同步；截图默认保存到临时目录，可用 `WARDROBE_SMOKE_OUTPUT` 指定输出位置，不操作真实插件数据。
+
+长文本浏览器回归：`node scripts/dashboard_content_smoke.js`（需要 Chromium）。覆盖相同视口和模拟宿主模式下的中英文长渠道名、模型名、错误状态、多条关联记录与尝试明细，验证按钮点击及布局；可用 `DASHBOARD_CONTENT_SMOKE_OUTPUT` 指定截图位置。备份脚本另覆盖无 `download` 方法但允许下载的旧桥接，检查分块偏移、版本和落盘 ZIP。
 
 提交前不要加入以下本地文件：
 
