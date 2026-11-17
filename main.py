@@ -341,6 +341,29 @@ class SelfieImagePlugin(
         self._quota_reservation_lock = threading.RLock()
         self._quota_reservations: Dict[str, Dict[str, Any]] = {}
         self._records_lock = threading.RLock()
+        # Record schema migration and WAL negotiation may wait on a Windows
+        # file lock. Keep that wait out of plugin construction so the
+        # management API can come up and report readiness instead of hanging.
+        self._persistent_state_lock = threading.RLock()
+        self._record_db = None
+        self._record_db_initialization_attempted = False
+        self._record_db_initialization_failed = False
+        self._record_storage_health: Dict[str, Any] = {
+            "status": "not_initialized",
+            "read_only": False,
+        }
+        self._startup_state_lock = threading.RLock()
+        self._startup_started_monotonic = time.monotonic()
+        self._startup_state: Dict[str, Any] = {
+            "status": "loading",
+            "phase": "constructing",
+            "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            "finished_at": "",
+            "duration_ms": 0.0,
+            "error": "",
+            "records_loaded": False,
+            "tasks_loaded": False,
+        }
         self._progress_lock = threading.RLock()
         self._progress_last_sent: Dict[str, float] = {}
         self._llm_generation_lock = threading.RLock()
@@ -350,16 +373,26 @@ class SelfieImagePlugin(
             native_config = load_json_file(self._native_config_path)
         self.key_config = self._extract_native_key_config(native_config)
         self.raw_config, self.config = self._load_initial_config_state()
-        self._records: List[Dict[str, Any]] = self._load_records()
-        self._record_seq = self._restore_record_sequence()
+        self._records: List[Dict[str, Any]] = []
+        self._record_seq = 0
         self._web_task_lock = threading.RLock()
-        self._web_tasks: Dict[str, Dict[str, Any]] = self._load_web_tasks()
+        self._web_tasks: Dict[str, Dict[str, Any]] = {}
         self._web_task_seq = 0
-        # Reconcile tasks that were persisted as active before a process
-        # restart.  The queue cannot safely resume an in-flight provider
-        # request, so the task loader marks it expired and this pass links a
-        # single durable record for history/retry visibility.
-        self.reconcile_expired_tasks_after_restart()
+        self._startup_load_task: Optional[asyncio.Task] = None
+        # A non-web utility instance has no dashboard startup to unblock, so
+        # keep its historical eager-load behavior. The normal web-enabled
+        # plugin defers the same work to initialize(), even when AstrBot
+        # constructs it from a synchronous loader.
+        if not bool(getattr(self.config, "web_enable", True)):
+            self._load_persistent_state()
+            self._set_startup_state(
+                status="ready",
+                phase="ready",
+                records_loaded=True,
+                tasks_loaded=True,
+                finished_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                duration_ms=round((time.monotonic() - self._startup_started_monotonic) * 1000, 2),
+            )
         self._runtime_generation_tasks: Dict[str, Any] = {}
         self._runtime_generation_workers: Dict[str, asyncio.Task] = {}
         self._terminating = False
@@ -415,6 +448,16 @@ class SelfieImagePlugin(
     async def initialize(self) -> None:
         self.loop = asyncio.get_running_loop()
         self.log_config_preflight()
+        startup_state = getattr(self, "_startup_state", None)
+        deferred_storage_load = isinstance(startup_state, dict) and startup_state.get("status") == "loading"
+        if deferred_storage_load:
+            # Start the API before touching the potentially locked SQLite/task
+            # files. The dashboard can show a bounded loading state immediately.
+            self._start_web_server()
+            self._startup_load_task = asyncio.create_task(
+                self._load_persistent_state_async(),
+                name="selfie-image-startup-storage",
+            )
         try:
             self._help_image_paths = dict(
                 await asyncio.to_thread(
@@ -426,14 +469,99 @@ class SelfieImagePlugin(
             )
         except Exception as exc:
             logger.warning("[SelfieImage] 启动帮助图生成失败：%s", redact_sensitive_text(str(exc)))
+        # Do not scan or delete cache files until the record store has been
+        # installed.  An empty in-memory list during startup is not proof
+        # that a cache file is orphaned.
+        startup_task = self._startup_load_task if deferred_storage_load else None
+        if startup_task is not None:
+            try:
+                await asyncio.shield(startup_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("[SelfieImage] 等待启动存储加载失败：%s", redact_sensitive_text(str(exc)))
         try:
-            cleanup = await asyncio.to_thread(self._cleanup_image_cache_if_needed)
-            deleted = cleanup.get("deleted") if isinstance(cleanup, Mapping) else []
-            if deleted:
-                logger.info("[SelfieImage] startup cache cleanup removed %d orphan file(s)", len(deleted))
+            readiness = self.get_startup_readiness() if deferred_storage_load else {"records_loaded": True}
+            if readiness.get("records_loaded"):
+                cleanup = await asyncio.to_thread(self._cleanup_image_cache_if_needed)
+                deleted = cleanup.get("deleted") if isinstance(cleanup, Mapping) else []
+                if deleted:
+                    logger.info("[SelfieImage] startup cache cleanup removed %d orphan file(s)", len(deleted))
+            else:
+                logger.warning("[SelfieImage] 跳过启动缓存清理：记录存储尚未加载")
         except Exception as exc:
             logger.warning(f"[SelfieImage] 启动缓存清理失败：{exc}")
-        self._start_web_server()
+        if not deferred_storage_load:
+            self._start_web_server()
+
+    def _set_startup_state(self, **updates: Any) -> None:
+        lock = getattr(self, "_startup_state_lock", None)
+        if lock is None:
+            return
+        with lock:
+            self._startup_state.update(updates)
+
+    def get_startup_readiness(self) -> Dict[str, Any]:
+        """Return bounded startup state without touching persistent storage."""
+        lock = getattr(self, "_startup_state_lock", None)
+        if lock is None:
+            return {"status": "unknown", "phase": "unavailable"}
+        with lock:
+            return dict(self._startup_state)
+
+    def _load_persistent_state(self) -> None:
+        self._set_startup_state(phase="records")
+        with self._persistent_state_lock:
+            records = self._load_records()
+            with self._records_lock:
+                # A request may have committed a record while the worker was
+                # reading SQLite. Preserve those in-memory commits instead of
+                # replacing them with the older on-disk snapshot.
+                current_records = [
+                    item for item in (getattr(self, "_records", []) or [])
+                    if isinstance(item, dict)
+                ]
+                current_ids = {str(item.get("id") or "") for item in current_records}
+                self._records = current_records + [
+                    item for item in records
+                    if str(item.get("id") or "") not in current_ids
+                ]
+            self._record_seq = self._restore_record_sequence()
+            self._set_startup_state(records_loaded=True, phase="tasks")
+            tasks = self._load_web_tasks()
+            with self._web_task_lock:
+                # Keep tasks created/updated by an early dashboard request.
+                # The loader owns the persistent lock, so the merge is the
+                # installation boundary for both startup and live writes.
+                current_tasks = dict(getattr(self, "_web_tasks", {}) or {})
+                merged_tasks = dict(tasks)
+                merged_tasks.update(current_tasks)
+                self._web_tasks = merged_tasks
+                self._web_task_seq = max(
+                    (int(row.get("seq") or 0) for row in merged_tasks.values() if isinstance(row, Mapping)),
+                    default=0,
+                )
+            # Reconcile tasks persisted as active before restart only after
+            # both stores are installed, preserving the existing durable flow.
+            self.reconcile_expired_tasks_after_restart()
+
+    async def _load_persistent_state_async(self) -> None:
+        try:
+            await asyncio.to_thread(self._load_persistent_state)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            reason = redact_sensitive_text(str(exc))[:320] or "持久化状态加载失败"
+            logger.warning("[SelfieImage] 启动存储加载失败：%s", reason, exc_info=True)
+            self._set_startup_state(status="error", phase="error", error=reason)
+            return
+        self._set_startup_state(
+            status="ready",
+            phase="ready",
+            tasks_loaded=True,
+            finished_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            duration_ms=round((time.monotonic() - self._startup_started_monotonic) * 1000, 2),
+        )
 
     def get_http_session_health(self) -> Dict[str, Any]:
         """Expose credential-free image transport-pool counters to health APIs."""
@@ -466,6 +594,14 @@ class SelfieImagePlugin(
                     task["cancel_requested"] = True
             runtime_tasks = dict(getattr(self, "_runtime_generation_tasks", {}))
             handles = list(runtime_tasks.values())
+        startup_task = getattr(self, "_startup_load_task", None)
+        if isinstance(startup_task, asyncio.Task) and not startup_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(startup_task), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("[SelfieImage] 终止时启动存储仍在加载，继续关闭运行时")
+            except asyncio.CancelledError:
+                pass
         # Stop Flask without blocking cancellation work on the bot event loop.
         await asyncio.to_thread(self.web_server.stop)
         for handle in handles:

@@ -639,6 +639,15 @@ class WebTaskMixin:
     def _persist_web_tasks_locked(
         self, *, tasks: Optional[Mapping[str, Dict[str, Any]]] = None,
     ) -> None:
+        lock = getattr(self, "_persistent_state_lock", None)
+        if lock is None:
+            return self._persist_web_tasks_locked_unlocked(tasks=tasks)
+        with lock:
+            return self._persist_web_tasks_locked_unlocked(tasks=tasks)
+
+    def _persist_web_tasks_locked_unlocked(
+        self, *, tasks: Optional[Mapping[str, Dict[str, Any]]] = None,
+    ) -> None:
         timer = getattr(self, "_web_task_snapshot_timer", None)
         if timer is not None:
             timer.cancel()

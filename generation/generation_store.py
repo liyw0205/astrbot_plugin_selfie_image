@@ -342,6 +342,16 @@ class GenerationStoreMixin(PromptLookupMixin):
         return bool(value)
 
     def _record_database(self) -> Optional[RecordDatabase]:
+        # Startup storage loading runs in a worker thread. Writers that arrive
+        # during that window wait for the same lock instead of opening a second
+        # SQLite connection and racing schema/WAL migration on Windows.
+        lock = getattr(self, "_persistent_state_lock", None)
+        if lock is None:
+            return self._record_database_unlocked()
+        with lock:
+            return self._record_database_unlocked()
+
+    def _record_database_unlocked(self) -> Optional[RecordDatabase]:
         path = str(getattr(self, "records_db_path", "") or "").strip()
         if not path:
             return None
@@ -957,10 +967,23 @@ class GenerationStoreMixin(PromptLookupMixin):
 
     def _commit_generation_records(self, record: Dict[str, Any]) -> None:
         # One generated image per monitor row. Batch/concurrency must not pile shots together.
-        for piece in split_generation_record_images(record):
-            self._commit_generation_record(piece)
+        lock = getattr(self, "_persistent_state_lock", None)
+        if lock is None:
+            for piece in split_generation_record_images(record):
+                self._commit_generation_record(piece)
+            return
+        with lock:
+            for piece in split_generation_record_images(record):
+                self._commit_generation_record(piece)
 
     def _commit_generation_record(self, record: Dict[str, Any]) -> None:
+        lock = getattr(self, "_persistent_state_lock", None)
+        if lock is None:
+            return self._commit_generation_record_unlocked(record)
+        with lock:
+            return self._commit_generation_record_unlocked(record)
+
+    def _commit_generation_record_unlocked(self, record: Dict[str, Any]) -> None:
         self._require_record_store_writable()
         stale_cache_paths: List[str] = []
         paths = record.get("generated_image_paths") or []

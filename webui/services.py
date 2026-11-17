@@ -431,6 +431,7 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
     get_record_commit_health = getattr(plugin, "get_record_commit_health", None)
     get_cache_metrics = getattr(plugin, "get_cache_metrics", None)
     get_http_session_health = getattr(plugin, "get_http_session_health", None)
+    get_startup_readiness = getattr(plugin, "get_startup_readiness", None)
     get_preflight = getattr(plugin, "get_config_preflight_for_web", None)
     if callable(get_preflight):
         try:
@@ -493,6 +494,17 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
             }
     else:
         http_session_health = {}
+    if callable(get_startup_readiness):
+        try:
+            startup_readiness = redact_sensitive_data(dict(get_startup_readiness() or {}))
+        except Exception:
+            startup_readiness = {
+                "status": "error",
+                "phase": "health",
+                "error": "启动状态读取失败",
+            }
+    else:
+        startup_readiness = {}
     overall_status = "ok"
     if isinstance(config_preflight, Mapping) and str(config_preflight.get("status") or "ok") != "ok":
         overall_status = "degraded"
@@ -504,6 +516,12 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
         overall_status = "degraded"
     if http_session_health.get("status") == "error":
         overall_status = "degraded"
+    if startup_readiness.get("status") == "error":
+        overall_status = "degraded"
+    elif startup_readiness.get("status") not in {"", "ready", None}:
+        # Keep the health endpoint responsive and make in-progress storage
+        # loading visible without presenting it as a provider failure.
+        overall_status = "starting"
     cache_limit_count = int(getattr(plugin.config, "image_cache_limit_count", 1000) or 1000)
     record_keep_limit = int(getattr(plugin.config, "image_record_keep_limit", 1000) or 1000)
     cache_limit_warning = ""
@@ -530,6 +548,7 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
         "record_storage_health": record_storage_health,
         "record_commit_health": record_commit_health,
         "http_session_health": http_session_health,
+        "startup": startup_readiness,
         "config_preflight": config_preflight,
         "cache_cleanup_preview": cache_preview,
         "cache_metrics": cache_metrics,

@@ -676,10 +676,11 @@
         const recordStorage = d.record_storage_health || {};
         const recordCommit = d.record_commit_health || {};
         const cacheMetrics = d.cache_metrics || {};
+        const startup = d.startup || {};
         const referenceCache = cacheMetrics.reference_cache || {};
         const cleanupMetrics = cacheMetrics.cleanup || {};
         const cleanupScan = cleanupMetrics.last_scan || {};
-        const statusText = d.status === 'ok' ? '运行正常' : d.status === 'degraded' ? '运行需要检查' : String(d.status || '状态未知');
+        const statusText = d.status === 'ok' ? '运行正常' : d.status === 'starting' ? '正在加载数据' : d.status === 'degraded' ? '运行需要检查' : String(d.status || '状态未知');
         const healthItems = [
           ['插件状态', statusText],
           ['缓存占用', `${String(d.cache_file_count ?? 0)} / ${String(d.cache_limit_count ?? 1000)} 张 · ${String(d.cache_size_mb ?? 0)} / ${String(d.cache_limit_mb ?? 2048)} MB`],
@@ -688,6 +689,15 @@
           ['记录文件', d.records_path || '-'],
           ['配置文件', d.config_path || '-'],
         ];
+        if (startup.status) {
+          const phase = startup.phase || startup.status;
+          const startupText = startup.status === 'ready'
+            ? `已完成 · ${String(startup.duration_ms ?? 0)} ms`
+            : startup.status === 'error'
+              ? `失败 · ${String(startup.error || '请查看启动日志')}`
+              : `进行中 · ${String(phase)}`;
+          healthItems.push(['启动数据加载', startupText]);
+        }
         if (referenceCache.lookups !== undefined) {
           const hitRate = referenceCache.hit_rate === null ? '暂无样本' : `${(Number(referenceCache.hit_rate || 0) * 100).toFixed(1)}%`;
           healthItems.push(['参考图缓存命中', `${String(referenceCache.hits ?? 0)} / ${String(referenceCache.lookups ?? 0)} 次 · ${hitRate}`]);
@@ -740,10 +750,12 @@
         `;
         $('healthPill').textContent = d.status === 'ok' ? '已连接' : '已连接 · 需检查';
         $('healthPill').className = `pill ${d.status === 'ok' ? 'green' : 'warning'}`;
+        return d;
       } catch (e) {
         $('health').innerHTML = `<div class="health-message">${escapeHtml(e.message || '连接失败')}</div>`;
         $('healthPill').textContent = '未连接';
         $('healthPill').className = 'pill gray';
+        return null;
       }
     }
     async function cleanupCache() {

@@ -311,6 +311,43 @@
     function setMultiStatus(text, type = 'info') {
       if (text) showToast(text, type);
     }
+    let STARTUP_REFRESH_REQUEST = null;
+    async function refreshDashboardAfterStartupReady() {
+      if (STARTUP_REFRESH_REQUEST) return STARTUP_REFRESH_REQUEST;
+      STARTUP_REFRESH_REQUEST = (async () => {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          let health;
+          try {
+            const response = await api('/api/health');
+            health = response.data || {};
+          } catch (_) {
+            continue;
+          }
+          const startup = health.startup || {};
+          if (startup.status === 'error') {
+            showToast(startup.error || '启动数据加载失败，请查看运行状态', 'bad');
+            return false;
+          }
+          if (startup.status !== 'ready') continue;
+          // The first login request may have observed the temporary empty
+          // state. Refresh only once after the durable stores are installed.
+          METRICS_REQUESTS.clear();
+          TASK_LOAD_SEQ += 1;
+          TASK_REQUESTS.clear();
+          await Promise.all([
+            loadRecords(true),
+            loadAssets(true),
+            loadMetrics(),
+            loadTasks(false),
+          ]);
+          await checkHealth();
+          return true;
+        }
+        return false;
+      })().finally(() => { STARTUP_REFRESH_REQUEST = null; });
+      return STARTUP_REFRESH_REQUEST;
+    }
     async function enterApp(silent = false) {
       if (!silent && $('loginStatus')) $('loginStatus').textContent = '登录中...';
       if (isDashboardPage()) {
@@ -339,7 +376,7 @@
           if ($('logoutBtn')) $('logoutBtn').style.display = 'none';
         }
         if ($('loginStatus')) $('loginStatus').textContent = '';
-        await checkHealth();
+        const health = await checkHealth();
         await refreshSelfie();
         await loadRecords(false);
         await loadAssets(false);
@@ -347,6 +384,9 @@
         await loadMetrics();
         await loadStudioList(STUDIO.current && STUDIO.current.id);
         await resumeImageTestTask();
+        if (health?.status === 'starting' || health?.startup?.status === 'loading') {
+          void refreshDashboardAfterStartupReady();
+        }
       } catch (e) {
         document.body.classList.remove('authed');
         const message = e.message || '登录失败';
