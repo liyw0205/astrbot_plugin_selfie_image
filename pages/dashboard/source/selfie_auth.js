@@ -45,6 +45,7 @@
     }
 
     let SELFIE_DAILY_ENSURE_REQUEST = null;
+    let SELFIE_MUTATION_SEQ = 0;
     async function loadSelfieDailySchedule() {
       if (!SELFIE_DAILY_ENSURE_REQUEST) {
         SELFIE_DAILY_ENSURE_REQUEST = api('/api/selfie-profile/ensure-today', {method:'POST', body:'{}'})
@@ -100,8 +101,10 @@
     }
 
     async function refreshSelfie(notify = false) {
+      const mutationSeq = SELFIE_MUTATION_SEQ;
       try {
         const res = await api('/api/selfie-reference');
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         const data = res.data || {};
         SELFIE_REFERENCE_DATA_URL = data.has_image && String(data.image || '').startsWith('data:image/')
           ? String(data.image)
@@ -119,6 +122,7 @@
         let scheduleError = '';
         if (!Array.isArray(dailySchedule?.schedule?.events) || !dailySchedule.schedule.events.length) {
           const ensured = await loadSelfieDailySchedule();
+          if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
           dailySchedule = ensured.schedule || dailySchedule;
           scheduleError = ensured.error || (
             Array.isArray(ensured.schedule?.schedule?.events) && ensured.schedule.schedule.events.length
@@ -126,6 +130,7 @@
           );
           if (ensured.wardrobe) data.wardrobe = ensured.wardrobe;
         }
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         renderSelfieDailySchedule(dailySchedule, scheduleError);
         renderWardrobe(data.wardrobe);
         if ($('selfieAppearanceType')) {
@@ -199,6 +204,7 @@
       const select = $('wardrobeSelectionMode');
       select.disabled = true;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-wardrobe/settings', {method:'POST', body: JSON.stringify({selection_mode:select.value})});
         renderWardrobe(res.data);
         showToast('轮换方式已保存，今天的服装保留', 'ok');
@@ -209,6 +215,7 @@
       const id = button.closest('[data-wardrobe-id]').dataset.wardrobeId;
       button.disabled = true;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-wardrobe/select', {method:'POST', body: JSON.stringify({id})});
         renderSelfieDailySchedule(res.data?.daily_schedule);
         renderWardrobe(res.data?.wardrobe);
@@ -220,6 +227,7 @@
       const row = document.querySelector(`[data-wardrobe-id="${CSS.escape(id)}"]`);
       if (!row) return;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/update', {method:'POST', body: JSON.stringify({id, name: row.querySelector('.wardrobe-name')?.value || ''})});
         await refreshSelfie();
         showToast('衣橱服装已更新', 'ok');
@@ -228,6 +236,7 @@
     async function toggleWardrobe(id) {
       const item = (window.__selfieWardrobeItems || []).find(value => String(value.id) === String(id));
       try {
+        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/toggle', {method:'POST', body: JSON.stringify({id, enabled: !(item && item.enabled)})});
         await refreshSelfie();
       } catch (e) { showToast(e.message || '衣橱服装状态更新失败', 'bad'); }
@@ -235,6 +244,7 @@
     async function deleteWardrobe(id) {
       if (!await confirmAction('确定删除这套衣橱服装吗？', {title:'删除衣橱服装', confirmText:'删除'})) return;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/delete', {method:'POST', body: JSON.stringify({id})});
         await refreshSelfie();
         showToast('衣橱服装已删除', 'ok');
@@ -243,6 +253,7 @@
     async function refreshDailySelfieLocal() {
       if (!await confirmAction('重新生成会替换今天已有的安排，不会清空衣橱中的服装。', {title:'重新生成今日日程', confirmText:'重新生成'})) return;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
         renderSelfieDailySchedule(res.data && res.data.daily_schedule);
         renderWardrobe(res.data && res.data.wardrobe);
@@ -255,6 +266,7 @@
       const file = $('selfieFile').files[0];
       if (!file) { showToast('请选择图片', 'bad'); return; }
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const image = await readFileDataUrl(file);
         await api('/api/selfie-reference', {method:'POST', body: JSON.stringify({image, mime_type:file.type, filename:file.name})});
         await refreshSelfie();
@@ -263,11 +275,12 @@
     }
     async function clearSelfie() {
       if (!await confirmAction('确定清除当前自拍形象参考图吗？清除后后续生成将不再使用这张形象图。', {title:'清除形象参考图', confirmText:'清除参考图'})) return;
-      try { await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
+      try { SELFIE_MUTATION_SEQ += 1; await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
       catch (e) { showToast(e.message || '参考图清除失败', 'bad'); }
     }
     async function saveAppearanceType() {
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const appearance_type = ($('selfieAppearanceType') && $('selfieAppearanceType').value) || 'auto';
         const res = await api('/api/selfie-appearance-type', {method:'POST', body: JSON.stringify({appearance_type})});
         const data = res.data || {};
@@ -321,6 +334,7 @@
         document.body.classList.add('authed');
         if (isDashboardPage()) {
           document.body.classList.add('dashboard-embedded');
+          document.documentElement.classList.add('embedded-dashboard', 'embedded-dashboard-ready');
           if ($('loginPage')) $('loginPage').style.display = 'none';
           if ($('logoutBtn')) $('logoutBtn').style.display = 'none';
         }
@@ -337,15 +351,12 @@
         document.body.classList.remove('authed');
         const message = e.message || '登录失败';
         if (isDashboardPage()) {
-          // Keep a visible error instead of falling back to token login.
-          if ($('loginPage')) {
-            $('loginPage').style.display = '';
-            const box = $('loginPage').querySelector('.login-box');
-            if (box) {
-              box.innerHTML = `<h1>管理页加载失败</h1><p class="muted">请刷新后重试。</p><div class="status">${escapeHtml(message)}</div>`;
-            }
-          }
-          if ($('loginStatus')) $('loginStatus').textContent = message;
+          document.documentElement.classList.add('embedded-dashboard');
+          document.documentElement.classList.remove('embedded-dashboard-ready');
+          if ($('loginPage')) $('loginPage').style.display = 'none';
+          if ($('embeddedBootPage')) $('embeddedBootPage').style.display = '';
+          if ($('embeddedBootMessage')) $('embeddedBootMessage').textContent = message;
+          if ($('embeddedBootRetry')) $('embeddedBootRetry').hidden = false;
           return;
         }
         if (!silent || AUTH_TOKEN) {

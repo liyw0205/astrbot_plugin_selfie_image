@@ -8,9 +8,11 @@ events, and an outfit is an event attribute rather than a time-period slot.
 from __future__ import annotations
 
 import datetime as _datetime
+import copy
 import hashlib
 import json
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -559,50 +561,84 @@ class DailyScheduleStore:
     def __init__(self, path: str | os.PathLike[str], *, history_limit: int = MAX_HISTORY_DAYS):
         self.path = Path(path)
         self.history_limit = max(1, int(history_limit))
+        self._lock = threading.RLock()
         self.current: Optional[DailySchedule] = None
         self.history: list[dict[str, Any]] = []
+        self._storage_status: dict[str, Any] = {"ok": True, "status": "missing", "source": str(self.path)}
+        self._storage_blocked = False
         self.load()
 
     def load(self) -> None:
-        self.current = None
-        self.history = []
-        if not self.path.exists():
-            return
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError, TypeError):
-            return
-        if not isinstance(raw, dict):
-            return
-        self.current = DailySchedule.from_dict(raw.get("current"))
-        raw_history = raw.get("history")
-        if isinstance(raw_history, list):
-            self.history = [item for item in raw_history if isinstance(item, dict)][: self.history_limit]
+        with self._lock:
+            previous = (copy.deepcopy(self.current), copy.deepcopy(self.history))
+            self.current = None
+            self.history = []
+            if not self.path.exists():
+                self._storage_status = {"ok": True, "status": "missing", "source": str(self.path)}
+                self._storage_blocked = False
+                return
+            try:
+                raw = json.loads(self.path.read_text(encoding="utf-8-sig"))
+            except json.JSONDecodeError as exc:
+                self.current, self.history = previous
+                self._storage_status = {"ok": False, "status": "corrupt", "error": type(exc).__name__, "source": str(self.path)}
+                self._storage_blocked = True
+                return
+            except (OSError, UnicodeError, TypeError) as exc:
+                self.current, self.history = previous
+                self._storage_status = {"ok": False, "status": "unreadable", "error": type(exc).__name__, "source": str(self.path)}
+                self._storage_blocked = True
+                return
+            if not isinstance(raw, dict):
+                self.current, self.history = previous
+                self._storage_status = {"ok": False, "status": "invalid_schema", "error": "expected_object", "source": str(self.path)}
+                self._storage_blocked = True
+                return
+            self.current = DailySchedule.from_dict(raw.get("current"))
+            raw_history = raw.get("history")
+            if isinstance(raw_history, list):
+                self.history = [item for item in raw_history if isinstance(item, dict)][: self.history_limit]
+            self._storage_status = {"ok": True, "status": "ok", "source": str(self.path)}
+            self._storage_blocked = False
+
+    def storage_status(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._storage_status)
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schema_version": SCHEDULE_SCHEMA_VERSION,
-            "current": self.current.to_dict() if self.current else None,
-            "history": self.history[: self.history_limit],
-        }
-        temp_path = self.path.with_suffix(f".{time.time_ns()}.tmp")
-        try:
-            temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            temp_path.replace(self.path)
-        finally:
+        with self._lock:
+            if self._storage_blocked:
+                raise RuntimeError("日程存储读取失败，已停止覆盖原文件")
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "schema_version": SCHEDULE_SCHEMA_VERSION,
+                "current": self.current.to_dict() if self.current else None,
+                "history": self.history[: self.history_limit],
+            }
+            temp_path = self.path.with_suffix(f".{time.time_ns()}.tmp")
             try:
-                temp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+                temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                temp_path.replace(self.path)
+                self._storage_status = {"ok": True, "status": "ok", "source": str(self.path)}
+            finally:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def set_current(self, schedule: DailySchedule, *, remember_previous: bool = True) -> None:
-        if remember_previous and self.current and self.current.date != schedule.date:
-            self.remember(self.current)
-        elif remember_previous and self.current and schedule_signature(self.current) != schedule_signature(schedule):
-            self.remember(self.current)
-        self.current = schedule
-        self.save()
+        with self._lock:
+            previous = (copy.deepcopy(self.current), copy.deepcopy(self.history))
+            if remember_previous and self.current and self.current.date != schedule.date:
+                self.remember(self.current)
+            elif remember_previous and self.current and schedule_signature(self.current) != schedule_signature(schedule):
+                self.remember(self.current)
+            self.current = schedule
+            try:
+                self.save()
+            except Exception:
+                self.current, self.history = previous
+                raise
 
     def remember(self, schedule: DailySchedule) -> None:
         item = {

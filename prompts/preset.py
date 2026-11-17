@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 import random
+import threading
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from astrbot.api import logger
 
-from ..core.utils import load_json_file, save_json_file
+from ..core.utils import load_json_file_result, save_json_file
 
 def _preset_group_for_name(name: object) -> str:
     try:
@@ -103,8 +104,10 @@ class ImagePresetManager:
 
     def __init__(self, data_dir: str):
         self.file_path = os.path.join(data_dir, self.PRESET_FILENAME)
+        self._lock = threading.RLock()
         self.presets: Dict[str, ImagePreset] = {}
         self._deleted_builtin_names: set[str] = set()
+        self._storage_blocked = False
         self.load_status: Dict[str, object] = {
             "ok": True,
             "source": "builtin",
@@ -113,10 +116,22 @@ class ImagePresetManager:
         self.load()
 
     def load(self) -> None:
-        raw = load_json_file(self.file_path)
-        if not isinstance(raw, dict):
-            raw = {}
+        with self._lock:
+            self._load_locked()
 
+    def _load_locked(self) -> None:
+        result = load_json_file_result(self.file_path)
+        if not result.ok and result.status != "missing":
+            self._storage_blocked = True
+            self.load_status = {
+                "ok": False,
+                "source": self.file_path,
+                "status": result.status,
+                "error": f"预设文件读取失败：{result.error or result.status}",
+            }
+            return
+        self._storage_blocked = False
+        raw = result.data
         deleted = raw.get(self._DELETED_BUILTINS_KEY)
         if isinstance(deleted, dict):
             deleted = deleted.get("names")
@@ -164,6 +179,12 @@ class ImagePresetManager:
         self.presets = presets
         if dirty or (not raw and presets):
             self.save()
+        if self.load_status.get("ok", True):
+            self.load_status = {
+                "ok": True,
+                "source": "builtin" if result.status == "missing" else self.file_path,
+                "error": "",
+            }
 
     def _load_builtin_seed(self) -> Dict[str, Dict[str, str]]:
         try:
@@ -194,19 +215,22 @@ class ImagePresetManager:
         return dict(self.load_status)
 
     def save(self) -> None:
-        payload = {
-            name: {
-                "prompt": preset.prompt,
-                "aspect_ratio": preset.aspect_ratio,
-                "resolution": preset.resolution,
-                "description": preset.description,
-                "extra_prompt": preset.extra_prompt,
+        with self._lock:
+            if self._storage_blocked:
+                raise RuntimeError("预设文件读取失败，已停止覆盖原文件")
+            payload = {
+                name: {
+                    "prompt": preset.prompt,
+                    "aspect_ratio": preset.aspect_ratio,
+                    "resolution": preset.resolution,
+                    "description": preset.description,
+                    "extra_prompt": preset.extra_prompt,
+                }
+                for name, preset in self.presets.items()
             }
-            for name, preset in self.presets.items()
-        }
-        if self._deleted_builtin_names:
-            payload[self._DELETED_BUILTINS_KEY] = {"names": sorted(self._deleted_builtin_names)}
-        save_json_file(self.file_path, payload)
+            if self._deleted_builtin_names:
+                payload[self._DELETED_BUILTINS_KEY] = {"names": sorted(self._deleted_builtin_names)}
+            save_json_file(self.file_path, payload)
 
     def list(self) -> List[Tuple[str, ImagePreset]]:
         return list(self.presets.items())
@@ -247,9 +271,17 @@ class ImagePresetManager:
         if not preset.prompt:
             return False, "预设内容不能为空"
 
-        self.presets[key] = preset
-        self._deleted_builtin_names.discard(key)
-        self.save()
+        with self._lock:
+            previous_presets = self.presets.copy()
+            previous_deleted = set(self._deleted_builtin_names)
+            self.presets[key] = preset
+            self._deleted_builtin_names.discard(key)
+            try:
+                self.save()
+            except Exception:
+                self.presets = previous_presets
+                self._deleted_builtin_names = previous_deleted
+                raise
         return True, f"已添加预设 {key}"
 
     def remove(self, name: str) -> Tuple[bool, str]:
@@ -259,10 +291,18 @@ class ImagePresetManager:
         if key not in self.presets:
             return False, f"预设不存在: {name}"
 
-        self.presets.pop(key, None)
-        if key in self._load_builtin_seed():
-            self._deleted_builtin_names.add(key)
-        self.save()
+        with self._lock:
+            previous_presets = self.presets.copy()
+            previous_deleted = set(self._deleted_builtin_names)
+            self.presets.pop(key, None)
+            if key in self._load_builtin_seed():
+                self._deleted_builtin_names.add(key)
+            try:
+                self.save()
+            except Exception:
+                self.presets = previous_presets
+                self._deleted_builtin_names = previous_deleted
+                raise
         return True, f"已删除预设 {name}"
 
     def list_management(self) -> List[Dict[str, str]]:
@@ -291,21 +331,22 @@ class ImagePresetManager:
         prepared, error = self._prepare_management_payload(payload)
         if prepared is None:
             return False, error
-        name, original_name, preset = prepared
-        previous_presets = dict(self.presets)
-        previous_deleted = set(self._deleted_builtin_names)
-        if original_name and original_name != name:
-            self.presets.pop(original_name, None)
-            if original_name in self._load_builtin_seed():
-                self._deleted_builtin_names.add(original_name)
-        self.presets[name] = preset
-        self._deleted_builtin_names.discard(name)
-        try:
-            self.save()
-        except Exception:
-            self.presets = previous_presets
-            self._deleted_builtin_names = previous_deleted
-            raise
+        with self._lock:
+            name, original_name, preset = prepared
+            previous_presets = dict(self.presets)
+            previous_deleted = set(self._deleted_builtin_names)
+            if original_name and original_name != name:
+                self.presets.pop(original_name, None)
+                if original_name in self._load_builtin_seed():
+                    self._deleted_builtin_names.add(original_name)
+            self.presets[name] = preset
+            self._deleted_builtin_names.discard(name)
+            try:
+                self.save()
+            except Exception:
+                self.presets = previous_presets
+                self._deleted_builtin_names = previous_deleted
+                raise
         return True, f"已保存预设 {name}"
 
     def _prepare_management_payload(
@@ -368,25 +409,26 @@ class ImagePresetManager:
             prepared_items.append(prepared)
         if errors:
             raise ValueError("；".join(errors[:5]))
-        candidate_presets = dict(self.presets)
-        candidate_deleted = set(self._deleted_builtin_names)
-        for name, original_name, preset in prepared_items:
-            if original_name and original_name != name:
-                candidate_presets.pop(original_name, None)
-                if original_name in self._load_builtin_seed():
-                    candidate_deleted.add(original_name)
-            candidate_presets[name] = preset
-            candidate_deleted.discard(name)
-        previous_presets = self.presets
-        previous_deleted = self._deleted_builtin_names
-        self.presets = candidate_presets
-        self._deleted_builtin_names = candidate_deleted
-        try:
-            self.save()
-        except Exception:
-            self.presets = previous_presets
-            self._deleted_builtin_names = previous_deleted
-            raise
+        with self._lock:
+            candidate_presets = dict(self.presets)
+            candidate_deleted = set(self._deleted_builtin_names)
+            for name, original_name, preset in prepared_items:
+                if original_name and original_name != name:
+                    candidate_presets.pop(original_name, None)
+                    if original_name in self._load_builtin_seed():
+                        candidate_deleted.add(original_name)
+                candidate_presets[name] = preset
+                candidate_deleted.discard(name)
+            previous_presets = self.presets
+            previous_deleted = self._deleted_builtin_names
+            self.presets = candidate_presets
+            self._deleted_builtin_names = candidate_deleted
+            try:
+                self.save()
+            except Exception:
+                self.presets = previous_presets
+                self._deleted_builtin_names = previous_deleted
+                raise
         imported = len(prepared_items)
         return imported, f"已导入 {imported} 个预设"
 

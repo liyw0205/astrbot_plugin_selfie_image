@@ -570,6 +570,7 @@ class StudioStore:
         self._lock = threading.RLock()
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._load_status: Dict[str, Any] = {"ok": True, "error": ""}
+        self._storage_blocked = False
         self._load()
 
     def _load(self) -> None:
@@ -578,10 +579,17 @@ class StudioStore:
                 raw = json.load(handle)
         except FileNotFoundError:
             self._load_status = {"ok": True, "error": "", "source": "new"}
+            self._storage_blocked = False
             raw = {}
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             self._load_status = {"ok": False, "error": f"画布存储读取失败：{type(exc).__name__}: {exc}", "source": self.path}
+            self._storage_blocked = True
             logger.exception("[SelfieImage] studio storage read failed: %s", self.path)
+            self._sessions = {}
+            return
+        if not isinstance(raw, dict):
+            self._load_status = {"ok": False, "error": "画布存储格式无效：expected_object", "source": self.path}
+            self._storage_blocked = True
             self._sessions = {}
             return
         items = raw.get("sessions") if isinstance(raw, dict) else None
@@ -605,6 +613,7 @@ class StudioStore:
                 else:
                     logger.warning("[SelfieImage] skipped invalid studio session %s", key)
         self._load_status = {"ok": True, "error": "", "source": self.path}
+        self._storage_blocked = False
         self._sessions = out
 
     @staticmethod
@@ -724,6 +733,8 @@ class StudioStore:
             return dict(self._load_status)
 
     def _persist(self) -> None:
+        if self._storage_blocked:
+            raise RuntimeError("画布存储读取失败，已停止覆盖原文件")
         ordered = sorted(
             self._sessions.values(),
             key=lambda s: str(s.get("updated_at") or s.get("created_at") or ""),

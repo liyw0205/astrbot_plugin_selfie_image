@@ -8,6 +8,7 @@ record pruning cannot remove a user's source clothing image.
 from __future__ import annotations
 
 import datetime as _datetime
+import copy
 import hashlib
 import json
 import os
@@ -136,10 +137,13 @@ class WardrobeStore:
         self.recent_days = max(0, int(recent_days))
         self._lock = threading.RLock()
         self.items: dict[str, WardrobeItem] = {}
+        self._storage_status: dict[str, Any] = {"ok": True, "status": "missing", "source": str(self.metadata_path)}
+        self._storage_blocked = False
         self.load()
 
     @_synchronized
     def load(self) -> None:
+        previous = self._snapshot_state() if hasattr(self, "selection_mode") else None
         self.items = {}
         self.selection_mode = "random"
         self.last_auto_order = 0
@@ -147,10 +151,32 @@ class WardrobeStore:
         self.selection_id = ""
         self.manual_date = ""
         self.manual_id = ""
+        if not self.metadata_path.exists():
+            self._storage_status = {"ok": True, "status": "missing", "source": str(self.metadata_path)}
+            self._storage_blocked = False
+            return
         try:
             raw = json.loads(self.metadata_path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError, TypeError):
+        except json.JSONDecodeError as exc:
+            self._storage_status = {"ok": False, "status": "corrupt", "error": type(exc).__name__, "source": str(self.metadata_path)}
+            self._storage_blocked = True
+            if previous is not None:
+                self._restore_state(previous)
             return
+        except (OSError, UnicodeError, TypeError) as exc:
+            self._storage_status = {"ok": False, "status": "unreadable", "error": type(exc).__name__, "source": str(self.metadata_path)}
+            self._storage_blocked = True
+            if previous is not None:
+                self._restore_state(previous)
+            return
+        if not isinstance(raw, (dict, list)):
+            self._storage_status = {"ok": False, "status": "invalid_schema", "error": "expected_object_or_array", "source": str(self.metadata_path)}
+            self._storage_blocked = True
+            if previous is not None:
+                self._restore_state(previous)
+            return
+        self._storage_status = {"ok": True, "status": "ok", "source": str(self.metadata_path)}
+        self._storage_blocked = False
         values = raw.get("items") if isinstance(raw, dict) else raw
         if not isinstance(values, list):
             return
@@ -171,8 +197,33 @@ class WardrobeStore:
                 last_order = item.sort_order
                 self.items[item.id] = item
 
+    def _snapshot_state(self) -> tuple[dict[str, WardrobeItem], dict[str, Any]]:
+        return copy.deepcopy(self.items), {
+            key: getattr(self, key, "")
+            for key in ("selection_mode", "last_auto_order", "selection_date", "selection_id", "manual_date", "manual_id")
+        }
+
+    def _restore_state(self, snapshot: tuple[dict[str, WardrobeItem], dict[str, Any]]) -> None:
+        items, state = snapshot
+        self.items = items
+        for key, value in state.items():
+            setattr(self, key, value)
+
+    def _commit_or_restore(self, snapshot: tuple[dict[str, WardrobeItem], dict[str, Any]]) -> None:
+        try:
+            self.save()
+        except Exception:
+            self._restore_state(snapshot)
+            raise
+
+    def storage_status(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._storage_status)
+
     @_synchronized
     def save(self) -> None:
+        if self._storage_blocked:
+            raise RuntimeError("衣橱存储读取失败，已停止覆盖原文件")
         self.root.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema_version": WARDROBE_SCHEMA_VERSION,
@@ -187,6 +238,7 @@ class WardrobeStore:
         try:
             temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             temp.replace(self.metadata_path)
+            self._storage_status = {"ok": True, "status": "ok", "error": "", "source": str(self.metadata_path)}
         finally:
             try:
                 temp.unlink(missing_ok=True)
@@ -246,6 +298,7 @@ class WardrobeStore:
             if item.sha256 == digest:
                 # Updating metadata on a duplicate is explicit and predictable:
                 # an omitted name never erases the existing label.
+                snapshot = self._snapshot_state()
                 changed = False
                 if name and _text(name, MAX_NAME_LENGTH) != item.name:
                     item.name = _text(name, MAX_NAME_LENGTH)
@@ -258,7 +311,7 @@ class WardrobeStore:
                     item.tags = parsed_tags
                     changed = True
                 if changed:
-                    self.save()
+                    self._commit_or_restore(snapshot)
                 return item
 
         item_id = f"wardrobe_{digest[:16]}"
@@ -308,6 +361,7 @@ class WardrobeStore:
         item = self.get(item_id)
         if item is None:
             raise ValueError("衣橱服装不存在")
+        snapshot = self._snapshot_state()
         if name is not None:
             value = _text(name, MAX_NAME_LENGTH)
             if value:
@@ -318,7 +372,7 @@ class WardrobeStore:
             item.tags = _tags(tags)
         if enabled is not None:
             item.enabled = bool(enabled)
-        self.save()
+        self._commit_or_restore(snapshot)
         return item
 
     def set_enabled(self, item_id: str, enabled: bool) -> WardrobeItem:
@@ -329,13 +383,22 @@ class WardrobeStore:
         item = self.get(item_id)
         if item is None:
             raise ValueError("衣橱服装不存在")
+        snapshot = self._snapshot_state()
         self.items.pop(item.id, None)
         try:
             path = self.resolve_path(item)
-            path.unlink(missing_ok=True)
-        except (OSError, ValueError):
-            pass
-        self.save()
+        except ValueError:
+            path = None
+        # Commit metadata first. If the file is locked, the source image is
+        # retained and the in-memory item is restored for a safe retry.
+        self._commit_or_restore(snapshot)
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                # An orphan source image is safer than a metadata reference to
+                # a missing image and can be cleaned up on a later maintenance pass.
+                pass
         return item
 
     @_synchronized
@@ -432,20 +495,22 @@ class WardrobeStore:
         item = self.get(item_id)
         if item is None:
             raise ValueError("衣橱服装不存在")
+        snapshot = self._snapshot_state()
         item.last_used_date = _text(date, 20)
         if not (self.manual_date == str(date) and self.manual_id == item.id):
             self.last_auto_order = item.sort_order
             self.selection_date = str(date)
             self.selection_id = item.id
-        self.save()
+        self._commit_or_restore(snapshot)
         return item
 
     @_synchronized
     def set_selection_mode(self, mode: str) -> None:
         if mode not in {"random", "sequential"}:
             raise ValueError("衣橱轮换方式只能是 random 或 sequential")
+        snapshot = self._snapshot_state()
         self.selection_mode = mode
-        self.save()
+        self._commit_or_restore(snapshot)
 
     @_synchronized
     def select_today(self, item_id: str, date: str) -> WardrobeItem:
@@ -453,9 +518,10 @@ class WardrobeStore:
         if item is None or not item.enabled:
             raise ValueError("请选择已启用的衣橱服装")
         self.read(item)
+        snapshot = self._snapshot_state()
         self.manual_date = str(date)
         self.manual_id = item.id
-        self.save()
+        self._commit_or_restore(snapshot)
         return item
 
     @_synchronized

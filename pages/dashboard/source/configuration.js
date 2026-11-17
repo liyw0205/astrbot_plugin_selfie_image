@@ -126,6 +126,7 @@
       }
     }
     async function saveQQGroups() {
+      const mutationSeq = ++CONFIG_MUTATION_SEQ;
       try {
         const rows = QQ_GROUP_ROWS.map(row => ({group_id: row.group_id, config: row.config}));
         const blockedUsers = textList('groupBlockedUsers');
@@ -141,6 +142,7 @@
           whitelist_user_reasons: Object.fromEntries(Object.entries(whitelistReasons).filter(([id]) => whitelistUsers.includes(id))),
         };
         const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify({groups: rows, permission})});
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return;
         if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
         CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
         if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
@@ -150,13 +152,16 @@
     }
 
     async function loadConfig() {
+      const loadSeq = ++CONFIG_LOAD_SEQ;
+      const mutationSeq = CONFIG_MUTATION_SEQ;
       try {
         const res = await api('/api/config');
+        if (loadSeq !== CONFIG_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
         CONFIG = res.data || {};
         fillForms();
         renderProxyList();
       } catch (e) {
-        showToast(e.message || '配置读取失败', 'bad');
+        if (loadSeq === CONFIG_LOAD_SEQ) showToast(e.message || '配置读取失败', 'bad');
       }
     }
     async function exportJsonConfig() {
@@ -212,6 +217,7 @@
     });
     let PERSIST_TAIL = Promise.resolve(true);
     async function persistConfig(renderAfterSave = false, okText = '配置已保存', options = {}) {
+      CONFIG_MUTATION_SEQ += 1;
       const run = () => persistConfigNow(renderAfterSave, okText, options);
       const next = PERSIST_TAIL.then(run, run);
       PERSIST_TAIL = next.then(() => true, () => true);
@@ -609,8 +615,10 @@
       };
     }
     async function persistChannelListSnapshot(snapshot) {
+      const mutationSeq = ++CONFIG_MUTATION_SEQ;
       try {
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: snapshot})});
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         CONFIG = res.data || CONFIG;
         ensureConfig();
         // Channel-list mutations already update their local card. Rebuilding
@@ -640,14 +648,23 @@
       return await next;
     }
     async function saveJsonConfig() {
+      const mutationSeq = ++CONFIG_MUTATION_SEQ;
+      const run = async () => {
       try {
         CONFIG = JSON.parse($('configText').value || '{}');
         ensureConfig();
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         CONFIG = res.data || CONFIG;
         fillForms();
         showToast('JSON 配置已保存', 'ok');
+        return true;
       } catch (e) { showToast(e.message || 'JSON 配置保存失败', 'bad'); }
+        return false;
+      };
+      const next = PERSIST_TAIL.then(run, run);
+      PERSIST_TAIL = next.then(() => true, () => true);
+      return next;
     }
 
     async function checkHealth() {

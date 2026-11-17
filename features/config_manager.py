@@ -32,7 +32,13 @@ from ..core.models import (
     normalize_provider_type,
     public_proxy_row,
 )
-from ..core.utils import load_json_file, redact_sensitive_data, redact_sensitive_text, save_json_file
+from ..core.utils import (
+    load_json_file,
+    load_json_file_result,
+    redact_sensitive_data,
+    redact_sensitive_text,
+    save_json_file,
+)
 
 WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
 DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip().lower()
@@ -553,7 +559,15 @@ class ConfigurationMixin:
 
     def _load_initial_config_state(self) -> tuple[Dict[str, Any], AICatConfig]:
         """Load raw/runtime config together, reusing normalization when safe."""
-        persisted = self._strip_web_startup_config(load_json_file(self.config_path))
+        result = load_json_file_result(self.config_path)
+        self._config_storage_status = {
+            "ok": result.ok,
+            "status": result.status,
+            "error": result.error,
+            "source": self.config_path,
+        }
+        self._config_storage_blocked = not result.ok
+        persisted = self._strip_web_startup_config(result.data)
         normalized_persisted = normalize_legacy_keys(normalize_config_tree(persisted))
         permission_source = normalized_persisted.get("permission") if isinstance(normalized_persisted.get("permission"), dict) else {}
         legacy_usable_list = (
@@ -586,8 +600,16 @@ class ConfigurationMixin:
 
     def _persist_config(self) -> None:
         with self._config_lock:
+            if getattr(self, "_config_storage_blocked", False):
+                raise RuntimeError("配置文件读取失败，已停止覆盖原文件")
             web_config = self._strip_web_startup_config(self.raw_config)
             save_json_file(self.config_path, web_config)
+            self._config_storage_status = {
+                "ok": True,
+                "status": "ok",
+                "error": "",
+                "source": self.config_path,
+            }
 
     def _apply_raw_config(self, raw: Dict[str, Any]) -> None:
         raw = self._strip_web_startup_config(raw)
@@ -596,21 +618,34 @@ class ConfigurationMixin:
         )
         next_config["web"] = copy.deepcopy(self.key_config["web"])
         _ensure_channel_ids(next_config)
-        self.raw_config = next_config
-        self.config = AICatConfig.from_dict(self.raw_config)
+        next_runtime = AICatConfig.from_dict(next_config)
         for key in ("proxies", "image_channels", "audit_channels"):
-            self.raw_config[key] = copy.deepcopy(self.config.raw[key])
-        self.raw_config["monitoring"] = copy.deepcopy(self.config.raw["monitoring"])
-        self.raw_config["group_chat_configs"] = copy.deepcopy(self.config.group_chat_configs)
-        self.raw_config.setdefault("image", {})["max_concurrent_tasks"] = self.config.image_max_concurrent_tasks
+            next_config[key] = copy.deepcopy(next_runtime.raw[key])
+        next_config["monitoring"] = copy.deepcopy(next_runtime.raw["monitoring"])
+        next_config["group_chat_configs"] = copy.deepcopy(next_runtime.group_chat_configs)
+        next_config.setdefault("image", {})["max_concurrent_tasks"] = next_runtime.image_max_concurrent_tasks
+        previous_raw = getattr(self, "raw_config", None)
+        previous_config = getattr(self, "config", None)
         scheduler = getattr(self, "_image_scheduler", None)
+        previous_limit = getattr(previous_config, "image_max_concurrent_tasks", None)
+        self.raw_config = next_config
+        self.config = next_runtime
+        try:
+            self._persist_config()
+        except Exception:
+            if previous_raw is not None:
+                self.raw_config = previous_raw
+            if previous_config is not None:
+                self.config = previous_config
+            if scheduler is not None and previous_limit is not None:
+                scheduler.set_limit(previous_limit)
+            raise
         if scheduler is None:
             from ..generation.image_scheduler import ImageJobScheduler
 
             self._image_scheduler = ImageJobScheduler(self.config.image_max_concurrent_tasks)
         else:
             scheduler.set_limit(self.config.image_max_concurrent_tasks)
-        self._persist_config()
 
     def _start_web_server(self) -> None:
         if not self.config.web_enable:

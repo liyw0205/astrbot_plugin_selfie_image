@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="logo.png">
   <title>Selfie Image 管理面板</title>
+  <script>
+    try {
+      if ((window.parent && window.parent !== window)
+        || String(window.location.pathname || '').startsWith('/api/plugin/page/content/')) {
+        document.documentElement.classList.add('embedded-dashboard');
+      }
+    } catch (_) {}
+  </script>
   <style>
     :root {
       color-scheme: light;
@@ -64,6 +72,10 @@
     body.authed main.app-shell { display: grid; }
     .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 18px; }
     body.authed .login-page { display: none; }
+    #embeddedBootPage { display: none; }
+    html.embedded-dashboard #loginPage { display: none !important; }
+    html.embedded-dashboard:not(.embedded-dashboard-ready) #embeddedBootPage { display: flex; }
+    html.embedded-dashboard-ready #embeddedBootPage { display: none !important; }
     .login-box {
       width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line);
       border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow);
@@ -1129,6 +1141,14 @@
       <div id="loginStatus" class="status"></div>
     </div>
   </div>
+  <div id="embeddedBootPage" class="login-page" role="status" aria-live="polite">
+    <div class="login-box">
+      <p class="header-eyebrow">Selfie Image</p>
+      <h1>管理页连接中</h1>
+      <p id="embeddedBootMessage" class="muted">正在连接 AstrBot 管理通道…</p>
+      <button id="embeddedBootRetry" class="secondary" type="button" hidden>重新连接</button>
+    </div>
+  </div>
 
   <header class="app-shell">
     <div class="header-brand">
@@ -1844,7 +1864,7 @@
           </div>
           <div class="grid">
             <div><label>手动添加模型</label><input id="manualModel" placeholder="model-id"></div>
-            <div><label>操作</label><button class="secondary" type="button" id="manualAdd">添加</button></div>
+            <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" id="manualAdd">添加</button><button class="secondary" type="button" id="manualFillNai" style="display:none">填充</button></div></div>
           </div>
           <div id="enabledModels" class="model-list"></div>
         </div>
@@ -2232,6 +2252,8 @@
     }
     function requestTraceSnapshot() { return REQUEST_TRACE.map(item => Object.assign({}, item)); }
     let CONFIG = {};
+    let CONFIG_LOAD_SEQ = 0;
+    let CONFIG_MUTATION_SEQ = 0;
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
     let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0, viewportFittedForSession: false };
@@ -2257,6 +2279,10 @@
     let METRICS_CONTENTS = {};
     let ACTIVE_METRICS_CATEGORY = '';
     const TASK_REQUESTS = new Map();
+    // A query-key cache prevents duplicate work, but different filters can
+    // still overlap.  Keep a generation so an older response cannot repaint
+    // the task table after the user has changed filters or pages.
+    let TASK_LOAD_SEQ = 0;
     // Invalidate slower task-detail responses when the user switches or closes a detail view.
     let TASK_DETAIL_REQUEST_SEQ = 0;
     let RECORD_LOADING = false;
@@ -2646,6 +2672,7 @@ Source prompt:
         normalizeChannels();
         normalizeAuditChannels();
         const p = CONFIG.permission, img = CONFIG.image;
+        syncMetricAlertForm(true);
         setTextList('groupUsableUsers', p.usable_users);
         $('groupUsableEnabled').checked = !!p.usable_users_enabled;
         setTextList('groupBlockedUsers', p.blocked_users);
@@ -3389,6 +3416,7 @@ Source prompt:
         else ch = channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] || factory();
       }
       ch = normalizeChannel(ch);
+      $('manualFillNai').style.display = EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none';
       const enabled = ch.enabled_models || [];
       const search = $('cacheSearch').value.trim().toLowerCase();
       const cacheItems = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
@@ -3512,6 +3540,17 @@ Source prompt:
     function addEnabledModel(name) {
       const ch = currentModalChannel();
       setChannelEnabledModels(ch, (ch.enabled_models || []).concat([name]));
+      storeModalChannel(ch);
+      CHANNEL_MODAL_DIRTY = true;
+      renderModalModels(ch);
+      refreshModelSelectors();
+    }
+    function fillNovelAIModels() {
+      if (EDITING_CHANNEL_KIND !== 'image' || $('modalProvider').value !== 'novelai') return;
+      const ch = currentModalChannel();
+      const models = ['nai-diffusion-4-5-full', 'nai-diffusion-5-full'];
+      setChannelEnabledModels(ch, (ch.enabled_models || []).concat(models));
+      ch.models_cache = uniq((ch.models_cache || []).concat(models));
       storeModalChannel(ch);
       CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
@@ -3918,6 +3957,7 @@ Source prompt:
       }
     }
     async function saveQQGroups() {
+      const mutationSeq = ++CONFIG_MUTATION_SEQ;
       try {
         const rows = QQ_GROUP_ROWS.map(row => ({group_id: row.group_id, config: row.config}));
         const blockedUsers = textList('groupBlockedUsers');
@@ -3933,6 +3973,7 @@ Source prompt:
           whitelist_user_reasons: Object.fromEntries(Object.entries(whitelistReasons).filter(([id]) => whitelistUsers.includes(id))),
         };
         const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify({groups: rows, permission})});
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return;
         if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
         CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
         if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
@@ -3942,13 +3983,16 @@ Source prompt:
     }
 
     async function loadConfig() {
+      const loadSeq = ++CONFIG_LOAD_SEQ;
+      const mutationSeq = CONFIG_MUTATION_SEQ;
       try {
         const res = await api('/api/config');
+        if (loadSeq !== CONFIG_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
         CONFIG = res.data || {};
         fillForms();
         renderProxyList();
       } catch (e) {
-        showToast(e.message || '配置读取失败', 'bad');
+        if (loadSeq === CONFIG_LOAD_SEQ) showToast(e.message || '配置读取失败', 'bad');
       }
     }
     async function exportJsonConfig() {
@@ -4004,6 +4048,7 @@ Source prompt:
     });
     let PERSIST_TAIL = Promise.resolve(true);
     async function persistConfig(renderAfterSave = false, okText = '配置已保存', options = {}) {
+      CONFIG_MUTATION_SEQ += 1;
       const run = () => persistConfigNow(renderAfterSave, okText, options);
       const next = PERSIST_TAIL.then(run, run);
       PERSIST_TAIL = next.then(() => true, () => true);
@@ -4401,8 +4446,10 @@ Source prompt:
       };
     }
     async function persistChannelListSnapshot(snapshot) {
+      const mutationSeq = ++CONFIG_MUTATION_SEQ;
       try {
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: snapshot})});
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         CONFIG = res.data || CONFIG;
         ensureConfig();
         // Channel-list mutations already update their local card. Rebuilding
@@ -4432,14 +4479,23 @@ Source prompt:
       return await next;
     }
     async function saveJsonConfig() {
+      const mutationSeq = ++CONFIG_MUTATION_SEQ;
+      const run = async () => {
       try {
         CONFIG = JSON.parse($('configText').value || '{}');
         ensureConfig();
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         CONFIG = res.data || CONFIG;
         fillForms();
         showToast('JSON 配置已保存', 'ok');
+        return true;
       } catch (e) { showToast(e.message || 'JSON 配置保存失败', 'bad'); }
+        return false;
+      };
+      const next = PERSIST_TAIL.then(run, run);
+      PERSIST_TAIL = next.then(() => true, () => true);
+      return next;
     }
 
     async function checkHealth() {
@@ -4847,14 +4903,21 @@ Source prompt:
     }
     function taskQueueFilterChanged() {
       clearTimeout(TASK_FILTER_TIMER);
+      // A reverted filter can produce the same URL while the old request is
+      // still pending.  Drop the dedupe entry so the new generation gets its
+      // own response and the old one is ignored by TASK_LOAD_SEQ.
+      TASK_LOAD_SEQ += 1;
+      TASK_REQUESTS.clear();
       TASK_PAGE = 1;
-      TASK_FILTER_TIMER = setTimeout(() => loadTasks(false), 260);
+      TASK_FILTER_TIMER = setTimeout(() => loadTasks(true), 260);
     }
     function setTaskPage(page) {
       const total = Number($('taskQueuePager')?.dataset.total || 0);
       const pages = Math.max(1, Math.ceil(total / TASK_PAGE_SIZE));
       TASK_PAGE = Math.min(Math.max(1, Number(page) || 1), pages);
-      loadTasks(false);
+      TASK_LOAD_SEQ += 1;
+      TASK_REQUESTS.clear();
+      loadTasks(true);
     }
     function selectedTaskIds() {
       return Array.from(TASK_SELECTION).filter(Boolean);
@@ -5057,9 +5120,11 @@ Source prompt:
       }
     }
     async function loadTasksNow(schedule = true) {
+      const loadSeq = ++TASK_LOAD_SEQ;
       try {
         const scope = taskQueueScope();
         const res = await api(taskQueueQueryPath());
+        if (loadSeq !== TASK_LOAD_SEQ) return;
         const data = res.data || {};
         const summary = data.summary || {};
         const prefix = scope === 'recent' ? '最近任务' : '活动任务';
@@ -5069,6 +5134,7 @@ Source prompt:
           TASK_PAGE = pageCount;
           if (filteredTotal && !(Array.isArray(data.tasks) && data.tasks.length)) return loadTasks(false);
         }
+        if (loadSeq !== TASK_LOAD_SEQ) return;
         $('taskQueueSummary').textContent = `${prefix} · 第 ${TASK_PAGE}/${pageCount} 页 · 匹配 ${filteredTotal} · 排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)}`;
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
         $('taskQueueTable').innerHTML = rows.length ? `<thead><tr><th></th><th>任务</th><th>来源</th><th>类型</th><th>状态</th><th>提示词</th><th>模型/原因</th><th></th></tr></thead><tbody>${rows.map(task => {
@@ -5113,9 +5179,9 @@ Source prompt:
         });
         updateTaskSelectionStatus(rows);
       } catch (e) {
-        if ($('taskQueueSummary')) $('taskQueueSummary').textContent = e.message || '任务队列读取失败';
+        if (loadSeq === TASK_LOAD_SEQ && $('taskQueueSummary')) $('taskQueueSummary').textContent = e.message || '任务队列读取失败';
       } finally {
-        if (schedule) {
+        if (schedule && loadSeq === TASK_LOAD_SEQ) {
           clearTimeout(TASK_LOAD_TIMER);
           TASK_LOAD_TIMER = setTimeout(() => loadTasks(true), 4000);
         }
@@ -7888,6 +7954,7 @@ Source prompt:
     }
 
     let SELFIE_DAILY_ENSURE_REQUEST = null;
+    let SELFIE_MUTATION_SEQ = 0;
     async function loadSelfieDailySchedule() {
       if (!SELFIE_DAILY_ENSURE_REQUEST) {
         SELFIE_DAILY_ENSURE_REQUEST = api('/api/selfie-profile/ensure-today', {method:'POST', body:'{}'})
@@ -7943,8 +8010,10 @@ Source prompt:
     }
 
     async function refreshSelfie(notify = false) {
+      const mutationSeq = SELFIE_MUTATION_SEQ;
       try {
         const res = await api('/api/selfie-reference');
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         const data = res.data || {};
         SELFIE_REFERENCE_DATA_URL = data.has_image && String(data.image || '').startsWith('data:image/')
           ? String(data.image)
@@ -7962,6 +8031,7 @@ Source prompt:
         let scheduleError = '';
         if (!Array.isArray(dailySchedule?.schedule?.events) || !dailySchedule.schedule.events.length) {
           const ensured = await loadSelfieDailySchedule();
+          if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
           dailySchedule = ensured.schedule || dailySchedule;
           scheduleError = ensured.error || (
             Array.isArray(ensured.schedule?.schedule?.events) && ensured.schedule.schedule.events.length
@@ -7969,6 +8039,7 @@ Source prompt:
           );
           if (ensured.wardrobe) data.wardrobe = ensured.wardrobe;
         }
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         renderSelfieDailySchedule(dailySchedule, scheduleError);
         renderWardrobe(data.wardrobe);
         if ($('selfieAppearanceType')) {
@@ -8042,6 +8113,7 @@ Source prompt:
       const select = $('wardrobeSelectionMode');
       select.disabled = true;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-wardrobe/settings', {method:'POST', body: JSON.stringify({selection_mode:select.value})});
         renderWardrobe(res.data);
         showToast('轮换方式已保存，今天的服装保留', 'ok');
@@ -8052,6 +8124,7 @@ Source prompt:
       const id = button.closest('[data-wardrobe-id]').dataset.wardrobeId;
       button.disabled = true;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-wardrobe/select', {method:'POST', body: JSON.stringify({id})});
         renderSelfieDailySchedule(res.data?.daily_schedule);
         renderWardrobe(res.data?.wardrobe);
@@ -8063,6 +8136,7 @@ Source prompt:
       const row = document.querySelector(`[data-wardrobe-id="${CSS.escape(id)}"]`);
       if (!row) return;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/update', {method:'POST', body: JSON.stringify({id, name: row.querySelector('.wardrobe-name')?.value || ''})});
         await refreshSelfie();
         showToast('衣橱服装已更新', 'ok');
@@ -8071,6 +8145,7 @@ Source prompt:
     async function toggleWardrobe(id) {
       const item = (window.__selfieWardrobeItems || []).find(value => String(value.id) === String(id));
       try {
+        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/toggle', {method:'POST', body: JSON.stringify({id, enabled: !(item && item.enabled)})});
         await refreshSelfie();
       } catch (e) { showToast(e.message || '衣橱服装状态更新失败', 'bad'); }
@@ -8078,6 +8153,7 @@ Source prompt:
     async function deleteWardrobe(id) {
       if (!await confirmAction('确定删除这套衣橱服装吗？', {title:'删除衣橱服装', confirmText:'删除'})) return;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         await api('/api/selfie-wardrobe/delete', {method:'POST', body: JSON.stringify({id})});
         await refreshSelfie();
         showToast('衣橱服装已删除', 'ok');
@@ -8086,6 +8162,7 @@ Source prompt:
     async function refreshDailySelfieLocal() {
       if (!await confirmAction('重新生成会替换今天已有的安排，不会清空衣橱中的服装。', {title:'重新生成今日日程', confirmText:'重新生成'})) return;
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
         renderSelfieDailySchedule(res.data && res.data.daily_schedule);
         renderWardrobe(res.data && res.data.wardrobe);
@@ -8098,6 +8175,7 @@ Source prompt:
       const file = $('selfieFile').files[0];
       if (!file) { showToast('请选择图片', 'bad'); return; }
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const image = await readFileDataUrl(file);
         await api('/api/selfie-reference', {method:'POST', body: JSON.stringify({image, mime_type:file.type, filename:file.name})});
         await refreshSelfie();
@@ -8106,11 +8184,12 @@ Source prompt:
     }
     async function clearSelfie() {
       if (!await confirmAction('确定清除当前自拍形象参考图吗？清除后后续生成将不再使用这张形象图。', {title:'清除形象参考图', confirmText:'清除参考图'})) return;
-      try { await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
+      try { SELFIE_MUTATION_SEQ += 1; await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
       catch (e) { showToast(e.message || '参考图清除失败', 'bad'); }
     }
     async function saveAppearanceType() {
       try {
+        SELFIE_MUTATION_SEQ += 1;
         const appearance_type = ($('selfieAppearanceType') && $('selfieAppearanceType').value) || 'auto';
         const res = await api('/api/selfie-appearance-type', {method:'POST', body: JSON.stringify({appearance_type})});
         const data = res.data || {};
@@ -8164,6 +8243,7 @@ Source prompt:
         document.body.classList.add('authed');
         if (isDashboardPage()) {
           document.body.classList.add('dashboard-embedded');
+          document.documentElement.classList.add('embedded-dashboard', 'embedded-dashboard-ready');
           if ($('loginPage')) $('loginPage').style.display = 'none';
           if ($('logoutBtn')) $('logoutBtn').style.display = 'none';
         }
@@ -8180,15 +8260,12 @@ Source prompt:
         document.body.classList.remove('authed');
         const message = e.message || '登录失败';
         if (isDashboardPage()) {
-          // Keep a visible error instead of falling back to token login.
-          if ($('loginPage')) {
-            $('loginPage').style.display = '';
-            const box = $('loginPage').querySelector('.login-box');
-            if (box) {
-              box.innerHTML = `<h1>管理页加载失败</h1><p class="muted">请刷新后重试。</p><div class="status">${escapeHtml(message)}</div>`;
-            }
-          }
-          if ($('loginStatus')) $('loginStatus').textContent = message;
+          document.documentElement.classList.add('embedded-dashboard');
+          document.documentElement.classList.remove('embedded-dashboard-ready');
+          if ($('loginPage')) $('loginPage').style.display = 'none';
+          if ($('embeddedBootPage')) $('embeddedBootPage').style.display = '';
+          if ($('embeddedBootMessage')) $('embeddedBootMessage').textContent = message;
+          if ($('embeddedBootRetry')) $('embeddedBootRetry').hidden = false;
           return;
         }
         if (!silent || AUTH_TOKEN) {
@@ -8266,6 +8343,9 @@ Source prompt:
     let BACKUP_OPTIONS = [];
     let BACKUP_BUSY = false;
     let BACKUP_RESTORE_PENDING = false;
+    let BACKUP_LOAD_SEQ = 0;
+    let BACKUP_MUTATION_SEQ = 0;
+    let BACKUP_LOAD_REQUEST = null;
     let BACKUP_LIST = [];
     let BACKUP_CAN_UPLOAD = true;
     let BACKUP_RESTORE_FOCUS = null;
@@ -8443,14 +8523,31 @@ Source prompt:
     }
 
     async function loadBackupManager() {
-      try {
-        const [options, list] = await Promise.all([api('/api/backups/options'), api('/api/backups')]);
-        BACKUP_OPTIONS = Array.isArray(options.data?.items) ? options.data.items : [];
-        renderBackupOptions();
-        renderBackupList(list.data || {});
-      } catch (error) {
-        showToast(error.message || '备份列表读取失败', 'bad');
-      }
+      if (BACKUP_LOAD_REQUEST) return BACKUP_LOAD_REQUEST;
+      const loadSeq = ++BACKUP_LOAD_SEQ;
+      const mutationSeq = BACKUP_MUTATION_SEQ;
+      const request = (async () => {
+        try {
+          const [options, list] = await Promise.all([api('/api/backups/options'), api('/api/backups')]);
+          if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
+          BACKUP_OPTIONS = Array.isArray(options.data?.items) ? options.data.items : [];
+          renderBackupOptions();
+          renderBackupList(list.data || {});
+        } catch (error) {
+          if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
+          const message = error.message || '备份列表读取失败';
+          const root = $('backupList');
+          if (root) {
+            root.innerHTML = `<div class="muted">读取失败：${escapeHtml(message)}</div><div class="actions"><button class="secondary mini" id="backupListRetry" type="button">重试</button></div>`;
+            $('backupListRetry').onclick = () => void loadBackupManager();
+          }
+          showToast(message, 'bad');
+        }
+      })().finally(() => {
+        if (BACKUP_LOAD_REQUEST === request) BACKUP_LOAD_REQUEST = null;
+      });
+      BACKUP_LOAD_REQUEST = request;
+      return request;
     }
 
     async function waitBackupTask(taskId, label) {
@@ -8475,12 +8572,12 @@ Source prompt:
       const selected = [...document.querySelectorAll('#backupOptions input[type="checkbox"]:checked')].map(input => input.value);
       setBackupBusy(true);
       try {
+        BACKUP_MUTATION_SEQ += 1;
         const response = await api('/api/backups', {method:'POST', body: JSON.stringify({selected})});
         await waitBackupTask(response.data?.task_id, '正在创建备份');
         showToast('备份已完成', 'ok');
-        await loadBackupManager();
       } catch (error) { showToast(error.message || '创建备份失败', 'bad'); }
-      finally { setBackupBusy(false); setBackupProgress(100, '就绪', false); loadBackupManager(); }
+      finally { setBackupBusy(false); setBackupProgress(100, '就绪', false); await loadBackupManager(); }
     }
 
     function setBackupBusy(busy) {
@@ -8542,6 +8639,7 @@ Source prompt:
         if (!await confirmAction(`从 ${name} 恢复：${labels}。\n所选数据将被覆盖，重启插件后生效。是否继续？`, {title:'确认恢复备份', confirmText:file ? '上传并恢复' : '确认恢复'})) return;
         $('backupRestoreModal').classList.remove('show');
         $('backupUploadFile').value = '';
+        BACKUP_MUTATION_SEQ += 1;
         const response = file ? await uploadArchiveFile(file, 'backup', {selected})
           : await api(`/api/backups/${encodeURIComponent(id)}/restore`, {method:'POST', body:JSON.stringify({selected})});
         await waitBackupTask(response.data?.task_id, '正在校验并准备恢复');
@@ -8557,6 +8655,7 @@ Source prompt:
       try {
         const name = BACKUP_LIST.find(item => item.id === id)?.filename || id;
         if (!await confirmAction(`删除 ${name}？删除后无法找回此备份。`, {title:'确认删除备份', confirmText:'确认删除'})) return;
+        BACKUP_MUTATION_SEQ += 1;
         const response = await api('/api/backups/delete', {method:'POST', body: JSON.stringify({id})});
         renderBackupList(response.data || {});
         showToast('备份已删除', 'ok');
@@ -11189,6 +11288,7 @@ Source prompt:
       card.addEventListener('click', () => navigateToTab(card.dataset.navTarget));
     });
     $('loginBtn').onclick = enterApp;
+    $('embeddedBootRetry')?.addEventListener('click', () => void initializeEmbeddedDashboard());
     $('refreshGroupsBtn')?.addEventListener('click', () => loadQQGroups(true));
     $('saveGroupsBtn')?.addEventListener('click', saveQQGroups);
     $('groupUsableEnabled')?.addEventListener('change', updateGlobalUsableGateUi);
@@ -11278,6 +11378,7 @@ Source prompt:
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;
+    $('manualFillNai').onclick = fillNovelAIModels;
     $('modalProvider').onchange = modalProviderChanged;
     $('modalRefreshModels').onclick = () => refreshChannelModels();
     $('modalEnableAll').onclick = () => { removeAllEnabledModels(); };
@@ -11446,6 +11547,29 @@ Source prompt:
     if ($('assetStudioPresetNext')) $('assetStudioPresetNext').onclick = () =>
       void loadAssetStudioPresets(ASSET_STUDIO_PRESET_PAGE + 1);
 
+    let EMBEDDED_BOOT_BUSY = false;
+    async function initializeEmbeddedDashboard() {
+      if (EMBEDDED_BOOT_BUSY) return;
+      EMBEDDED_BOOT_BUSY = true;
+      const retry = $('embeddedBootRetry');
+      const message = $('embeddedBootMessage');
+      if (retry) { retry.hidden = true; retry.disabled = true; }
+      if (message) message.textContent = '正在连接 AstrBot 管理通道…';
+      try {
+        DASHBOARD_BRIDGE = await waitForDashboardBridge(120000);
+        if (typeof DASHBOARD_BRIDGE.ready === 'function') await DASHBOARD_BRIDGE.ready();
+        if (message) message.textContent = '通道已连接，正在读取管理配置…';
+        await enterApp(true);
+        if (!document.body.classList.contains('authed')) throw new Error(message?.textContent || '管理配置读取失败');
+      } catch (e) {
+        if (message) message.textContent = e.message || '管理通道暂不可用';
+        if (retry) retry.hidden = false;
+      } finally {
+        EMBEDDED_BOOT_BUSY = false;
+        if (retry) retry.disabled = false;
+      }
+    }
+
     (async function init() {
       for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, '自动');
       setupAutoSave();
@@ -11455,22 +11579,9 @@ Source prompt:
         || String(window.location.pathname || '').startsWith('/api/plugin/page/content/')
         || Boolean(window.AstrBotPluginPage);
       if (embedded) {
+        document.documentElement.classList.add('embedded-dashboard');
         if ($('loginPage')) $('loginPage').style.display = 'none';
-        if ($('loginStatus')) $('loginStatus').textContent = '正在连上 AstrBot 管理通道…';
-        if ($('loginHint')) $('loginHint').textContent = '插件页会沿用后台登录，不必再输管理口令。';
-        try {
-          DASHBOARD_BRIDGE = await waitForDashboardBridge(12000);
-          if (typeof DASHBOARD_BRIDGE.ready === 'function') await DASHBOARD_BRIDGE.ready();
-        } catch (e) {
-          if ($('loginPage')) $('loginPage').style.display = '';
-          if ($('loginStatus')) $('loginStatus').textContent = e.message || '管理页连接未就绪';
-          const box = $('loginPage') && $('loginPage').querySelector('.login-box');
-          if (box) {
-            box.innerHTML = `<h1>管理页加载失败</h1><p class="muted">请刷新页面或稍后重试。</p><div class="status">${escapeHtml(e.message || '连接未就绪')}</div>`;
-          }
-          return;
-        }
-        await enterApp(true);
+        void initializeEmbeddedDashboard();
         return;
       }
       // Do not probe protected endpoints before the user supplies a token.

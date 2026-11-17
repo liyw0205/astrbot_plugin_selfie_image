@@ -115,6 +115,12 @@ async function main() {
       await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500});
       await cdp.send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/${embedded?'host':'fixture'}`});
       await new Promise(resolve=>setTimeout(resolve,350));await until("typeof navigateToTab==='function'");
+      if(embedded) {
+        await check(label+' embedded login stays hidden',`document.documentElement.classList.contains('embedded-dashboard')&&getComputedStyle($('loginPage')).display==='none'`);
+        await evaluate("document.documentElement.classList.add('embedded-dashboard-ready');");
+      }
+      await evaluate('CONFIG={};fillForms();');
+      await check(label+' alert thresholds have defaults after config load',`$('alertRecordSuccessRate').value==='80'&&$('alertGenerationP95').value==='60'&&$('alertCacheOrphanGrowth').value==='10'`);
       await evaluate(`CONFIG=${JSON.stringify(config)};renderAllChannelLists();navigateToTab('channels');`);
       await screenshot(label+'-channels');
       await check(label+' channel titles',`[...document.querySelectorAll('.channel-row b')].every(el=>{const range=document.createRange();range.selectNodeContents(el);const box=el.parentElement.getBoundingClientRect();return [...range.getClientRects()].every(r=>r.left>=box.left-1&&r.right<=box.right+1);})`);
@@ -139,6 +145,15 @@ async function main() {
       await check(label+' channel status',modalFits('channelModal'));
       await check(label+' channel controls',`[...document.querySelectorAll('#channelModal .modal-footer button, #channelModal .between > button')].every(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.width>=28&&r.height>=28;})`);
       await click('#channelModal button[onclick="closeChannelModal()"]');await until("!$('channelModal').classList.contains('show')");
+      await click('[data-channel-add="image"]');await until("$('channelModal').classList.contains('show')");
+      await evaluate("$('modalProvider').value='novelai';$('modalProvider').dispatchEvent(new Event('change'));");
+      assert.equal(await evaluate("$('manualFillNai').style.display !== 'none'"),true,'NovelAI fill button should be visible');
+      await click('#manualFillNai');await click('#manualFillNai');
+      assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#enabledModels .name')).map(el=>el.textContent)"),
+        ['nai-diffusion-4-5-full','nai-diffusion-5-full'],'filling twice should add each NovelAI model once');
+      await evaluate("$('modalProvider').value='openai';$('modalProvider').dispatchEvent(new Event('change'));");
+      assert.equal(await evaluate("$('manualFillNai').style.display === 'none'"),true,'non-NovelAI fill button should be hidden');
+      await click('#channelModal button[onclick="closeChannelModal()"]');await until("!$('channelModal').classList.contains('show')");
       await evaluate(`openTaskDetail(${JSON.stringify(task.task_id)})`);
       await until("$('taskDetailBody').textContent.includes('UPSTREAM_TIMEOUT')");
       await screenshot(label+'-task');
@@ -148,6 +163,12 @@ async function main() {
       await check(label+' linked records',`[...document.querySelectorAll('.task-record-open')].every(el=>{const r=el.getBoundingClientRect(),body=$('taskModal').querySelector('.modal-body').getBoundingClientRect();return r.left>=body.left&&r.right<=body.right+1&&el.scrollWidth<=el.clientWidth+1;})`);
       await check(label+' attempt cells',`[...document.querySelectorAll('#taskDetailBody table td')].every(el=>el.scrollWidth<=el.clientWidth+1)&&document.querySelector('#taskDetailBody table td:nth-child(2)').getBoundingClientRect().width>=100`);
       await click('#taskModal button[onclick="closeTaskDetail()"]');await until("!$('taskModal').classList.contains('show')");
+      if(embedded) {
+        await evaluate("document.documentElement.classList.remove('embedded-dashboard-ready');void initializeEmbeddedDashboard();");
+        await until("$('embeddedBootRetry') && !$('embeddedBootRetry').hidden");
+        assert.equal(await evaluate("getComputedStyle($('loginPage')).display === 'none'"),true,'embedded errors must not show token login');
+        assert.equal(await evaluate("getComputedStyle($('embeddedBootPage')).display !== 'none'"),true,'embedded errors should show connection retry');
+      }
       await check(label+' page width','document.documentElement.scrollWidth<=innerWidth+1');
       console.log(`[content-smoke] ${label} ${width}x${height}: checked channels, model editor, status and task details`);
     }

@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Iterable, Mapping
 from typing import Any, Dict, List
 
-from ..core.utils import load_json_file, save_json_file
+from ..core.utils import load_json_file_result, save_json_file
 
 MAX_COLLECTIONS = 100
 MAX_ITEMS = 500
@@ -34,10 +34,22 @@ class AssetCollectionStore:
         # Only the digest is persisted.  The clear token returned by delete()
         # is therefore both short-lived and useless if copied from disk.
         self._undo_snapshots: Dict[str, Dict[str, Any]] = {}
+        self._storage_status: Dict[str, Any] = {"ok": True, "status": "missing", "source": self.path}
+        self._storage_blocked = False
         self._load()
 
     def _load(self) -> None:
-        raw = load_json_file(self.path)
+        result = load_json_file_result(self.path)
+        self._storage_status = {
+            "ok": result.ok,
+            "status": result.status,
+            "error": result.error,
+            "source": self.path,
+        }
+        self._storage_blocked = not result.ok
+        if not result.ok:
+            return
+        raw = result.data
         rows = raw.get("collections") if isinstance(raw, Mapping) else []
         if isinstance(rows, Mapping):
             rows = list(rows.values())
@@ -90,6 +102,8 @@ class AssetCollectionStore:
         collections: Mapping[str, Mapping[str, Any]] | None = None,
         undo_snapshots: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
+        if self._storage_blocked:
+            raise RuntimeError("资产集合存储读取失败，已停止覆盖原文件")
         active = self._collections if collections is None else collections
         undo = self._undo_snapshots if undo_snapshots is None else undo_snapshots
         rows = sorted(
@@ -123,6 +137,11 @@ class AssetCollectionStore:
                 "updated_at": time.time(),
             },
         )
+        self._storage_status = {"ok": True, "status": "ok", "source": self.path}
+
+    def storage_status(self) -> Dict[str, Any]:
+        with self._lock:
+            return dict(self._storage_status)
 
     def list(self) -> List[Dict[str, Any]]:
         with self._lock:
@@ -146,8 +165,10 @@ class AssetCollectionStore:
                 raise ValueError("集合名称已存在")
             now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             item = {"id": f"collection-{uuid.uuid4().hex[:16]}", "name": text, "note": str(note or "")[:500], "record_ids": self._normalize_ids(record_ids), "created_at": now, "updated_at": now}
-            self._collections[item["id"]] = item
-            self._persist()
+            next_collections = copy.deepcopy(self._collections)
+            next_collections[item["id"]] = item
+            self._persist(next_collections, self._undo_snapshots)
+            self._collections = next_collections
             return copy.deepcopy(item)
 
     def update(self, collection_id: str, *, name: Any = None, note: Any = None) -> Dict[str, Any]:
@@ -155,6 +176,8 @@ class AssetCollectionStore:
             item = self._collections.get(str(collection_id or "").strip())
             if not item:
                 raise ValueError("资产集合不存在")
+            next_collections = copy.deepcopy(self._collections)
+            item = next_collections[str(collection_id or "").strip()]
             if name is not None:
                 text = str(name or "").strip()[:80]
                 if not text:
@@ -163,7 +186,8 @@ class AssetCollectionStore:
             if note is not None:
                 item["note"] = str(note or "")[:500]
             item["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            self._persist()
+            self._persist(next_collections, self._undo_snapshots)
+            self._collections = next_collections
             return copy.deepcopy(item)
 
     def delete(self, collection_id: str) -> Dict[str, Any]:
@@ -241,24 +265,32 @@ class AssetCollectionStore:
 
     def add(self, collection_id: str, record_ids: Iterable[Any]) -> Dict[str, Any]:
         with self._lock:
-            item = self._collections.get(str(collection_id or "").strip())
+            cid = str(collection_id or "").strip()
+            item = self._collections.get(cid)
             if not item:
                 raise ValueError("资产集合不存在")
-            item["record_ids"] = self._normalize_ids([*(item.get("record_ids") or []), *self._normalize_ids(record_ids)])
-            item["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            self._persist()
-            return copy.deepcopy(item)
+            next_collections = copy.deepcopy(self._collections)
+            next_item = next_collections[cid]
+            next_item["record_ids"] = self._normalize_ids([*(next_item.get("record_ids") or []), *self._normalize_ids(record_ids)])
+            next_item["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            self._persist(next_collections, self._undo_snapshots)
+            self._collections = next_collections
+            return copy.deepcopy(next_item)
 
     def remove(self, collection_id: str, record_ids: Iterable[Any]) -> Dict[str, Any]:
         with self._lock:
-            item = self._collections.get(str(collection_id or "").strip())
+            cid = str(collection_id or "").strip()
+            item = self._collections.get(cid)
             if not item:
                 raise ValueError("资产集合不存在")
             removed = {str(x).strip() for x in (record_ids or ()) if str(x).strip()}
-            item["record_ids"] = [x for x in item.get("record_ids") or [] if x not in removed]
-            item["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            self._persist()
-            return copy.deepcopy(item)
+            next_collections = copy.deepcopy(self._collections)
+            next_item = next_collections[cid]
+            next_item["record_ids"] = [x for x in next_item.get("record_ids") or [] if x not in removed]
+            next_item["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            self._persist(next_collections, self._undo_snapshots)
+            self._collections = next_collections
+            return copy.deepcopy(next_item)
 
     def export(self) -> Dict[str, Any]:
         return {"format": "selfie-image-asset-collections", "version": 1, "collections": self.list()}

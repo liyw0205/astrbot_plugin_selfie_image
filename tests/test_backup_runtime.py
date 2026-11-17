@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import threading
 from concurrent.futures import Future
 from types import SimpleNamespace
 
@@ -12,6 +13,25 @@ from astrbot_plugin_selfie_image.features.backup_manager import BackupManager
 from astrbot_plugin_selfie_image.generation.record_database import RecordDatabase
 from astrbot_plugin_selfie_image.tests.test_backup_manager import _root, _wait
 from astrbot_plugin_selfie_image.tests.test_repository_fixes import runtime_plugin
+
+
+def test_initialize_runs_cache_cleanup_off_event_loop_thread(tmp_path, monkeypatch):
+    plugin = object.__new__(main.SelfieImagePlugin)
+    plugin.data_dir = str(tmp_path)
+    plugin._bundled_logo_path = ""
+    plugin._status_report_font = lambda _size: None
+    plugin.log_config_preflight = lambda: None
+    calls = []
+    monkeypatch.setattr(main, "ensure_help_images", lambda *_args, **_kwargs: {})
+    plugin._cleanup_image_cache_if_needed = lambda: calls.append(("cleanup", threading.get_ident())) or {}
+    plugin._start_web_server = lambda: calls.append(("server", threading.get_ident()))
+
+    loop_thread = threading.get_ident()
+    asyncio.run(main.SelfieImagePlugin.initialize(plugin))
+
+    assert calls[0][0] == "cleanup"
+    assert calls[0][1] != loop_thread
+    assert calls[1][0] == "server"
 
 
 @pytest.mark.parametrize("busy", [

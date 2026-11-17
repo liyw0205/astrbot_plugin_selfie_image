@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="logo.png">
   <title>Selfie Image 管理面板</title>
+  <script>
+    try {
+      if ((window.parent && window.parent !== window)
+        || String(window.location.pathname || '').startsWith('/api/plugin/page/content/')) {
+        document.documentElement.classList.add('embedded-dashboard');
+      }
+    } catch (_) {}
+  </script>
   <style>
 <!-- dashboard-source: styles.css -->
   </style>
@@ -24,6 +32,14 @@
         <button id="loginBtn" class="ok">进入</button>
       </div>
       <div id="loginStatus" class="status"></div>
+    </div>
+  </div>
+  <div id="embeddedBootPage" class="login-page" role="status" aria-live="polite">
+    <div class="login-box">
+      <p class="header-eyebrow">Selfie Image</p>
+      <h1>管理页连接中</h1>
+      <p id="embeddedBootMessage" class="muted">正在连接 AstrBot 管理通道…</p>
+      <button id="embeddedBootRetry" class="secondary" type="button" hidden>重新连接</button>
     </div>
   </div>
 
@@ -741,7 +757,7 @@
           </div>
           <div class="grid">
             <div><label>手动添加模型</label><input id="manualModel" placeholder="model-id"></div>
-            <div><label>操作</label><button class="secondary" type="button" id="manualAdd">添加</button></div>
+            <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" id="manualAdd">添加</button><button class="secondary" type="button" id="manualFillNai" style="display:none">填充</button></div></div>
           </div>
           <div id="enabledModels" class="model-list"></div>
         </div>

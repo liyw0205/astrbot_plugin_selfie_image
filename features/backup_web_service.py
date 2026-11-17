@@ -43,7 +43,10 @@ class BackupWebService:
         return {"items": self.plugin.backup_manager.options(), "max": 5, "restart_required": True}
 
     def list(self) -> dict[str, Any]:
-        return self.plugin.backup_manager.list_backups()
+        # Listing only needs the bounded manifest metadata. Full archive
+        # checksums remain enforced by restore/download paths, so opening the
+        # backup page does not hash every stored file on Windows.
+        return self.plugin.backup_manager.list_backups(verify=False)
 
     def create(self, payload: Any) -> dict[str, Any]:
         body = payload if isinstance(payload, Mapping) else {}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -742,9 +743,11 @@ async def run_image_generation_workflow(
     record_channel_health = getattr(self, "_record_channel_health", None)
     if callable(record_channel_health):
         try:
-            record_channel_health(result.attempts, trace_id=trace_id)
+            await asyncio.to_thread(
+                record_channel_health, result.attempts, trace_id=trace_id
+            )
         except TypeError:
-            record_channel_health(result.attempts)
+            await asyncio.to_thread(record_channel_health, result.attempts)
 
     if not result.error and result.images:
         used_target = next(

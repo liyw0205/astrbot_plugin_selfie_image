@@ -30,6 +30,7 @@
       card.addEventListener('click', () => navigateToTab(card.dataset.navTarget));
     });
     $('loginBtn').onclick = enterApp;
+    $('embeddedBootRetry')?.addEventListener('click', () => void initializeEmbeddedDashboard());
     $('refreshGroupsBtn')?.addEventListener('click', () => loadQQGroups(true));
     $('saveGroupsBtn')?.addEventListener('click', saveQQGroups);
     $('groupUsableEnabled')?.addEventListener('change', updateGlobalUsableGateUi);
@@ -119,6 +120,7 @@
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;
+    $('manualFillNai').onclick = fillNovelAIModels;
     $('modalProvider').onchange = modalProviderChanged;
     $('modalRefreshModels').onclick = () => refreshChannelModels();
     $('modalEnableAll').onclick = () => { removeAllEnabledModels(); };
@@ -287,6 +289,29 @@
     if ($('assetStudioPresetNext')) $('assetStudioPresetNext').onclick = () =>
       void loadAssetStudioPresets(ASSET_STUDIO_PRESET_PAGE + 1);
 
+    let EMBEDDED_BOOT_BUSY = false;
+    async function initializeEmbeddedDashboard() {
+      if (EMBEDDED_BOOT_BUSY) return;
+      EMBEDDED_BOOT_BUSY = true;
+      const retry = $('embeddedBootRetry');
+      const message = $('embeddedBootMessage');
+      if (retry) { retry.hidden = true; retry.disabled = true; }
+      if (message) message.textContent = '正在连接 AstrBot 管理通道…';
+      try {
+        DASHBOARD_BRIDGE = await waitForDashboardBridge(120000);
+        if (typeof DASHBOARD_BRIDGE.ready === 'function') await DASHBOARD_BRIDGE.ready();
+        if (message) message.textContent = '通道已连接，正在读取管理配置…';
+        await enterApp(true);
+        if (!document.body.classList.contains('authed')) throw new Error(message?.textContent || '管理配置读取失败');
+      } catch (e) {
+        if (message) message.textContent = e.message || '管理通道暂不可用';
+        if (retry) retry.hidden = false;
+      } finally {
+        EMBEDDED_BOOT_BUSY = false;
+        if (retry) retry.disabled = false;
+      }
+    }
+
     (async function init() {
       for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, '自动');
       setupAutoSave();
@@ -296,22 +321,9 @@
         || String(window.location.pathname || '').startsWith('/api/plugin/page/content/')
         || Boolean(window.AstrBotPluginPage);
       if (embedded) {
+        document.documentElement.classList.add('embedded-dashboard');
         if ($('loginPage')) $('loginPage').style.display = 'none';
-        if ($('loginStatus')) $('loginStatus').textContent = '正在连上 AstrBot 管理通道…';
-        if ($('loginHint')) $('loginHint').textContent = '插件页会沿用后台登录，不必再输管理口令。';
-        try {
-          DASHBOARD_BRIDGE = await waitForDashboardBridge(12000);
-          if (typeof DASHBOARD_BRIDGE.ready === 'function') await DASHBOARD_BRIDGE.ready();
-        } catch (e) {
-          if ($('loginPage')) $('loginPage').style.display = '';
-          if ($('loginStatus')) $('loginStatus').textContent = e.message || '管理页连接未就绪';
-          const box = $('loginPage') && $('loginPage').querySelector('.login-box');
-          if (box) {
-            box.innerHTML = `<h1>管理页加载失败</h1><p class="muted">请刷新页面或稍后重试。</p><div class="status">${escapeHtml(e.message || '连接未就绪')}</div>`;
-          }
-          return;
-        }
-        await enterApp(true);
+        void initializeEmbeddedDashboard();
         return;
       }
       // Do not probe protected endpoints before the user supplies a token.

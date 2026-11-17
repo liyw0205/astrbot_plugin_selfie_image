@@ -1373,7 +1373,9 @@ class WebTaskMixin:
         if notification_event:
             self._log_task_notification_event(*notification_event)
 
-    def _reconcile_task_terminal_evidence_locked(self, task: Dict[str, Any]) -> bool:
+    def _reconcile_task_terminal_evidence_locked(
+        self, task: Dict[str, Any], *, persist: bool = True,
+    ) -> bool:
         """Promote a stale active snapshot when its result is already final.
 
         The runner writes the result before publishing the outer task status.
@@ -1420,7 +1422,8 @@ class WebTaskMixin:
                 "updated_at": self._web_task_timestamp(),
             }
         )
-        self._persist_web_tasks_locked()
+        if persist:
+            self._persist_web_tasks_locked()
         current_status = str(task.get("status") or "").strip().lower()
         if previous_status != current_status:
             self._log_task_lifecycle_event(
@@ -1432,14 +1435,10 @@ class WebTaskMixin:
             )
         return True
 
-    def get_web_image_task(self, task_id: str) -> Dict[str, Any]:
-        with self._web_task_lock:
-            task = self._web_tasks.get(str(task_id or "").strip())
-            if not task:
-                raise ValueError("任务不存在或已清理")
-            self._reconcile_task_terminal_evidence_locked(task)
-            data = copy.deepcopy(task)
-        now = time.time()
+    def _add_web_task_runtime_fields(
+        self, data: Dict[str, Any], *, now: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        now = time.time() if now is None else float(now)
         if data.get("status") in {"queued", "running"}:
             started = float(data.get("started_ts") or data.get("created_ts") or now)
             data["running_seconds"] = round(max(0.0, now - started), 2)
@@ -1460,8 +1459,6 @@ class WebTaskMixin:
                     )
                 except (TypeError, ValueError):
                     pass
-            request = data.get("request_data") if isinstance(data.get("request_data"), Mapping) else {}
-            media_type = self._task_media_type(data)
             config = getattr(self, "config", None)
             timeout = getattr(config, "image_global_timeout", 180)
             try:
@@ -1480,6 +1477,16 @@ class WebTaskMixin:
                 warning_code = "timeout_near"
             data["timeout_warning"] = warning
             data["timeout_warning_code"] = warning_code
+        return data
+
+    def get_web_image_task(self, task_id: str) -> Dict[str, Any]:
+        with self._web_task_lock:
+            task = self._web_tasks.get(str(task_id or "").strip())
+            if not task:
+                raise ValueError("任务不存在或已清理")
+            self._reconcile_task_terminal_evidence_locked(task)
+            data = copy.deepcopy(task)
+        data = self._add_web_task_runtime_fields(data)
         return redact_sensitive_data(data)
 
     @staticmethod
@@ -1991,87 +1998,90 @@ class WebTaskMixin:
             raise ValueError("end_ts 必须是时间戳") from None
         if start_value is not None and end_value is not None and start_value > end_value:
             raise ValueError("开始时间不能晚于结束时间")
+        active = {"queued", "running"}
+        rows = []
+        filtered_total = 0
+        page_end = page_offset + page_limit
+        now = time.time()
         with self._web_task_lock:
+            reconciled = False
             for task in self._web_tasks.values():
                 if isinstance(task, dict):
-                    self._reconcile_task_terminal_evidence_locked(task)
+                    reconciled = self._reconcile_task_terminal_evidence_locked(
+                        task, persist=False
+                    ) or reconciled
+            if reconciled:
+                self._persist_web_tasks_locked()
             raw_tasks = sorted(
-                (copy.deepcopy(item) for item in self._web_tasks.values() if isinstance(item, dict)),
+                (item for item in self._web_tasks.values() if isinstance(item, dict)),
                 key=lambda item: float(item.get("created_ts") or 0),
                 reverse=True,
             )
-        active = {"queued", "running"}
-        filtered_tasks = []
-        for raw in raw_tasks:
-            if not include_finished and raw.get("status") not in active:
-                continue
-            if wanted and self._task_media_type(raw) != wanted:
-                continue
-            raw_status = str(raw.get("status") or "").strip().lower()
-            if status_values and raw_status not in status_values:
-                continue
-            if source_query:
-                source_text = " ".join(
-                    (
-                        str(raw.get("source") or ""),
-                        task_source_label(raw),
-                    )
-                ).lower()
-                if source_query not in source_text:
-                    continue
-            if model_query:
-                request = raw.get("request_data") if isinstance(raw.get("request_data"), Mapping) else {}
-                result = raw.get("result") if isinstance(raw.get("result"), Mapping) else {}
-                model_text = " ".join(
-                    (
-                        str(raw.get("used_model") or ""),
-                        str(request.get("model") or ""),
-                        str(result.get("used_model") or ""),
-                    )
-                ).lower()
-                if model_query not in model_text:
-                    continue
-            if keyword_query:
-                request = raw.get("request_data") if isinstance(raw.get("request_data"), Mapping) else {}
-                result = raw.get("result") if isinstance(raw.get("result"), Mapping) else {}
-                keyword_text = " ".join(
-                    (
-                        self._task_prompt_summary(raw, limit=10000),
-                        str(raw.get("error") or ""),
-                        str(request.get("original_prompt") or request.get("prompt") or ""),
-                        str(result.get("error") or ""),
-                    )
-                ).lower()
-                if keyword_query not in keyword_text:
-                    continue
-            try:
-                created_ts = float(raw.get("created_ts") or 0)
-            except (TypeError, ValueError):
-                created_ts = 0.0
-            if start_value is not None and created_ts < start_value:
-                continue
-            if end_value is not None and created_ts > end_value:
-                continue
-            filtered_tasks.append(raw)
+            all_active = [item for item in raw_tasks if item.get("status") in active]
+            status_counts: Dict[str, int] = {}
+            media_counts: Dict[str, Dict[str, int]] = {}
+            for item in all_active:
+                task_status = str(item.get("status") or "unknown")
+                status_counts[task_status] = status_counts.get(task_status, 0) + 1
+                media = self._task_media_type(item)
+                bucket = media_counts.setdefault(media, {"queued": 0, "running": 0})
+                if task_status in bucket:
+                    bucket[task_status] += 1
 
-        rows = []
-        for raw in filtered_tasks[page_offset : page_offset + page_limit]:
-            try:
-                row = self.get_web_image_task(str(raw.get("task_id") or ""))
-            except Exception:
-                row = redact_sensitive_data(raw)
-            rows.append(self._task_list_row(row))
-
-        all_active = [item for item in raw_tasks if item.get("status") in active]
-        status_counts: Dict[str, int] = {}
-        media_counts: Dict[str, Dict[str, int]] = {}
-        for item in all_active:
-            status = str(item.get("status") or "unknown")
-            status_counts[status] = status_counts.get(status, 0) + 1
-            media = self._task_media_type(item)
-            bucket = media_counts.setdefault(media, {"queued": 0, "running": 0})
-            if status in bucket:
-                bucket[status] += 1
+            for raw in raw_tasks:
+                if not include_finished and raw.get("status") not in active:
+                    continue
+                if wanted and self._task_media_type(raw) != wanted:
+                    continue
+                raw_status = str(raw.get("status") or "").strip().lower()
+                if status_values and raw_status not in status_values:
+                    continue
+                if source_query:
+                    source_text = " ".join(
+                        (
+                            str(raw.get("source") or ""),
+                            task_source_label(raw),
+                        )
+                    ).lower()
+                    if source_query not in source_text:
+                        continue
+                if model_query:
+                    request = raw.get("request_data") if isinstance(raw.get("request_data"), Mapping) else {}
+                    result = raw.get("result") if isinstance(raw.get("result"), Mapping) else {}
+                    model_text = " ".join(
+                        (
+                            str(raw.get("used_model") or ""),
+                            str(request.get("model") or ""),
+                            str(result.get("used_model") or ""),
+                        )
+                    ).lower()
+                    if model_query not in model_text:
+                        continue
+                if keyword_query:
+                    request = raw.get("request_data") if isinstance(raw.get("request_data"), Mapping) else {}
+                    result = raw.get("result") if isinstance(raw.get("result"), Mapping) else {}
+                    keyword_text = " ".join(
+                        (
+                            self._task_prompt_summary(raw, limit=10000),
+                            str(raw.get("error") or ""),
+                            str(request.get("original_prompt") or request.get("prompt") or ""),
+                            str(result.get("error") or ""),
+                        )
+                    ).lower()
+                    if keyword_query not in keyword_text:
+                        continue
+                try:
+                    created_ts = float(raw.get("created_ts") or 0)
+                except (TypeError, ValueError):
+                    created_ts = 0.0
+                if start_value is not None and created_ts < start_value:
+                    continue
+                if end_value is not None and created_ts > end_value:
+                    continue
+                if page_offset <= filtered_total < page_end:
+                    row_snapshot = self._add_web_task_runtime_fields(dict(raw), now=now)
+                    rows.append(self._task_list_row(row_snapshot))
+                filtered_total += 1
 
         image_scheduler = getattr(self, "_image_scheduler", None)
         try:
@@ -2084,7 +2094,7 @@ class WebTaskMixin:
             "tasks": rows,
             "summary": {
                 "total_active": len(all_active),
-                "filtered_total": len(filtered_tasks),
+                "filtered_total": filtered_total,
                 "queued": status_counts.get("queued", 0),
                 "running": status_counts.get("running", 0),
                 "by_media_type": media_counts,
@@ -2094,7 +2104,7 @@ class WebTaskMixin:
             "offset": page_offset,
             "limit": page_limit,
             "total": len(raw_tasks),
-            "filtered_total": len(filtered_tasks),
+            "filtered_total": filtered_total,
             "filters": {
                 "include_finished": bool(include_finished),
                 "media_type": wanted,

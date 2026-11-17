@@ -1,6 +1,9 @@
     let BACKUP_OPTIONS = [];
     let BACKUP_BUSY = false;
     let BACKUP_RESTORE_PENDING = false;
+    let BACKUP_LOAD_SEQ = 0;
+    let BACKUP_MUTATION_SEQ = 0;
+    let BACKUP_LOAD_REQUEST = null;
     let BACKUP_LIST = [];
     let BACKUP_CAN_UPLOAD = true;
     let BACKUP_RESTORE_FOCUS = null;
@@ -178,14 +181,31 @@
     }
 
     async function loadBackupManager() {
-      try {
-        const [options, list] = await Promise.all([api('/api/backups/options'), api('/api/backups')]);
-        BACKUP_OPTIONS = Array.isArray(options.data?.items) ? options.data.items : [];
-        renderBackupOptions();
-        renderBackupList(list.data || {});
-      } catch (error) {
-        showToast(error.message || '备份列表读取失败', 'bad');
-      }
+      if (BACKUP_LOAD_REQUEST) return BACKUP_LOAD_REQUEST;
+      const loadSeq = ++BACKUP_LOAD_SEQ;
+      const mutationSeq = BACKUP_MUTATION_SEQ;
+      const request = (async () => {
+        try {
+          const [options, list] = await Promise.all([api('/api/backups/options'), api('/api/backups')]);
+          if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
+          BACKUP_OPTIONS = Array.isArray(options.data?.items) ? options.data.items : [];
+          renderBackupOptions();
+          renderBackupList(list.data || {});
+        } catch (error) {
+          if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
+          const message = error.message || '备份列表读取失败';
+          const root = $('backupList');
+          if (root) {
+            root.innerHTML = `<div class="muted">读取失败：${escapeHtml(message)}</div><div class="actions"><button class="secondary mini" id="backupListRetry" type="button">重试</button></div>`;
+            $('backupListRetry').onclick = () => void loadBackupManager();
+          }
+          showToast(message, 'bad');
+        }
+      })().finally(() => {
+        if (BACKUP_LOAD_REQUEST === request) BACKUP_LOAD_REQUEST = null;
+      });
+      BACKUP_LOAD_REQUEST = request;
+      return request;
     }
 
     async function waitBackupTask(taskId, label) {
@@ -210,12 +230,12 @@
       const selected = [...document.querySelectorAll('#backupOptions input[type="checkbox"]:checked')].map(input => input.value);
       setBackupBusy(true);
       try {
+        BACKUP_MUTATION_SEQ += 1;
         const response = await api('/api/backups', {method:'POST', body: JSON.stringify({selected})});
         await waitBackupTask(response.data?.task_id, '正在创建备份');
         showToast('备份已完成', 'ok');
-        await loadBackupManager();
       } catch (error) { showToast(error.message || '创建备份失败', 'bad'); }
-      finally { setBackupBusy(false); setBackupProgress(100, '就绪', false); loadBackupManager(); }
+      finally { setBackupBusy(false); setBackupProgress(100, '就绪', false); await loadBackupManager(); }
     }
 
     function setBackupBusy(busy) {
@@ -277,6 +297,7 @@
         if (!await confirmAction(`从 ${name} 恢复：${labels}。\n所选数据将被覆盖，重启插件后生效。是否继续？`, {title:'确认恢复备份', confirmText:file ? '上传并恢复' : '确认恢复'})) return;
         $('backupRestoreModal').classList.remove('show');
         $('backupUploadFile').value = '';
+        BACKUP_MUTATION_SEQ += 1;
         const response = file ? await uploadArchiveFile(file, 'backup', {selected})
           : await api(`/api/backups/${encodeURIComponent(id)}/restore`, {method:'POST', body:JSON.stringify({selected})});
         await waitBackupTask(response.data?.task_id, '正在校验并准备恢复');
@@ -292,6 +313,7 @@
       try {
         const name = BACKUP_LIST.find(item => item.id === id)?.filename || id;
         if (!await confirmAction(`删除 ${name}？删除后无法找回此备份。`, {title:'确认删除备份', confirmText:'确认删除'})) return;
+        BACKUP_MUTATION_SEQ += 1;
         const response = await api('/api/backups/delete', {method:'POST', body: JSON.stringify({id})});
         renderBackupList(response.data || {});
         showToast('备份已删除', 'ok');

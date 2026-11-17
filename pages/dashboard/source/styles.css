@@ -56,6 +56,10 @@
     body.authed main.app-shell { display: grid; }
     .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 18px; }
     body.authed .login-page { display: none; }
+    #embeddedBootPage { display: none; }
+    html.embedded-dashboard #loginPage { display: none !important; }
+    html.embedded-dashboard:not(.embedded-dashboard-ready) #embeddedBootPage { display: flex; }
+    html.embedded-dashboard-ready #embeddedBootPage { display: none !important; }
     .login-box {
       width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line);
       border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow);

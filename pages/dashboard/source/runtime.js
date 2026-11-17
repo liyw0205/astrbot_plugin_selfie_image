@@ -69,6 +69,8 @@
     }
     function requestTraceSnapshot() { return REQUEST_TRACE.map(item => Object.assign({}, item)); }
     let CONFIG = {};
+    let CONFIG_LOAD_SEQ = 0;
+    let CONFIG_MUTATION_SEQ = 0;
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
     let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0, viewportFittedForSession: false };
@@ -94,6 +96,10 @@
     let METRICS_CONTENTS = {};
     let ACTIVE_METRICS_CATEGORY = '';
     const TASK_REQUESTS = new Map();
+    // A query-key cache prevents duplicate work, but different filters can
+    // still overlap.  Keep a generation so an older response cannot repaint
+    // the task table after the user has changed filters or pages.
+    let TASK_LOAD_SEQ = 0;
     // Invalidate slower task-detail responses when the user switches or closes a detail view.
     let TASK_DETAIL_REQUEST_SEQ = 0;
     let RECORD_LOADING = false;
@@ -483,6 +489,7 @@ Source prompt:
         normalizeChannels();
         normalizeAuditChannels();
         const p = CONFIG.permission, img = CONFIG.image;
+        syncMetricAlertForm(true);
         setTextList('groupUsableUsers', p.usable_users);
         $('groupUsableEnabled').checked = !!p.usable_users_enabled;
         setTextList('groupBlockedUsers', p.blocked_users);

@@ -290,14 +290,21 @@
     }
     function taskQueueFilterChanged() {
       clearTimeout(TASK_FILTER_TIMER);
+      // A reverted filter can produce the same URL while the old request is
+      // still pending.  Drop the dedupe entry so the new generation gets its
+      // own response and the old one is ignored by TASK_LOAD_SEQ.
+      TASK_LOAD_SEQ += 1;
+      TASK_REQUESTS.clear();
       TASK_PAGE = 1;
-      TASK_FILTER_TIMER = setTimeout(() => loadTasks(false), 260);
+      TASK_FILTER_TIMER = setTimeout(() => loadTasks(true), 260);
     }
     function setTaskPage(page) {
       const total = Number($('taskQueuePager')?.dataset.total || 0);
       const pages = Math.max(1, Math.ceil(total / TASK_PAGE_SIZE));
       TASK_PAGE = Math.min(Math.max(1, Number(page) || 1), pages);
-      loadTasks(false);
+      TASK_LOAD_SEQ += 1;
+      TASK_REQUESTS.clear();
+      loadTasks(true);
     }
     function selectedTaskIds() {
       return Array.from(TASK_SELECTION).filter(Boolean);
@@ -500,9 +507,11 @@
       }
     }
     async function loadTasksNow(schedule = true) {
+      const loadSeq = ++TASK_LOAD_SEQ;
       try {
         const scope = taskQueueScope();
         const res = await api(taskQueueQueryPath());
+        if (loadSeq !== TASK_LOAD_SEQ) return;
         const data = res.data || {};
         const summary = data.summary || {};
         const prefix = scope === 'recent' ? '最近任务' : '活动任务';
@@ -512,6 +521,7 @@
           TASK_PAGE = pageCount;
           if (filteredTotal && !(Array.isArray(data.tasks) && data.tasks.length)) return loadTasks(false);
         }
+        if (loadSeq !== TASK_LOAD_SEQ) return;
         $('taskQueueSummary').textContent = `${prefix} · 第 ${TASK_PAGE}/${pageCount} 页 · 匹配 ${filteredTotal} · 排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)}`;
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
         $('taskQueueTable').innerHTML = rows.length ? `<thead><tr><th></th><th>任务</th><th>来源</th><th>类型</th><th>状态</th><th>提示词</th><th>模型/原因</th><th></th></tr></thead><tbody>${rows.map(task => {
@@ -556,9 +566,9 @@
         });
         updateTaskSelectionStatus(rows);
       } catch (e) {
-        if ($('taskQueueSummary')) $('taskQueueSummary').textContent = e.message || '任务队列读取失败';
+        if (loadSeq === TASK_LOAD_SEQ && $('taskQueueSummary')) $('taskQueueSummary').textContent = e.message || '任务队列读取失败';
       } finally {
-        if (schedule) {
+        if (schedule && loadSeq === TASK_LOAD_SEQ) {
           clearTimeout(TASK_LOAD_TIMER);
           TASK_LOAD_TIMER = setTimeout(() => loadTasks(true), 4000);
         }

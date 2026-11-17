@@ -72,6 +72,17 @@ def test_selectable_backup_uses_storage_requirements_and_wardrobe_is_optional(tm
     assert listing["items"][0]["selected"] == ["config"]
 
 
+def test_directory_sync_is_skipped_on_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(backup_module.os, "name", "nt")
+    monkeypatch.setattr(
+        backup_module.os,
+        "open",
+        lambda *_args, **_kwargs: pytest.fail("Windows must not open directories through os.open"),
+    )
+
+    BackupManager._sync_directory(tmp_path)
+
+
 def test_backup_limit_is_enforced_before_background_work(tmp_path):
     manager = BackupManager(_root(tmp_path))
     for _ in range(MAX_BACKUPS):
@@ -167,6 +178,24 @@ def test_tampered_backup_is_rejected(tmp_path):
             output.writestr(item, data)
     temporary.replace(archive)
     assert manager.list_backups()["count"] == 0
+
+
+def test_web_backup_listing_can_skip_full_checksum_scan(tmp_path):
+    manager = BackupManager(_root(tmp_path))
+    task = manager.start_backup(["config"])
+    result = _wait(manager, task["task_id"])["result"]
+    verify = manager._verify_archive_checksums
+    calls = []
+
+    def counted(*args):
+        calls.append(True)
+        return verify(*args)
+
+    manager._verify_archive_checksums = counted
+    assert manager.list_backups(verify=False)["count"] == 1
+    assert calls == []
+    assert manager.download_file(result["id"])["filename"] == result["filename"]
+    assert calls == [True]
 
 
 @pytest.mark.parametrize("failed_root", ["selfie_image_config.json", "wardrobe"])

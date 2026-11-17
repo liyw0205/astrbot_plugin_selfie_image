@@ -458,19 +458,30 @@ class BackupManager:
             with tempfile.TemporaryDirectory(prefix=".backup-", dir=self.backup_root) as temporary:
                 staged = Path(temporary) / destination.name
                 manifest = self._build_archive(staged, names, task_id=task["task_id"])
-                with staged.open("rb") as incoming:
-                    os.fsync(incoming.fileno())
+                with staged.open("r+b") as output:
+                    output.flush()
+                    os.fsync(output.fileno())
                 os.replace(staged, destination)
                 self._sync_directory(self.backup_root)
             return self._summary(manifest, destination)
 
         return self._submit(task, worker)
 
-    def list_backups(self) -> dict[str, Any]:
+    def list_backups(self, *, verify: bool = True) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
-        for archive in sorted(self.backup_root.glob("*.zip"), key=lambda item: item.stat().st_mtime, reverse=True):
+        archives: list[tuple[Path, int]] = []
+        for archive in self.backup_root.glob("*.zip"):
             try:
-                manifest = self._read_manifest(archive)
+                if archive.is_file():
+                    archives.append((archive, int(archive.stat().st_mtime_ns)))
+            except OSError:
+                # A concurrent cleanup or Windows file-sharing transition may
+                # remove/lock an entry between glob and stat.
+                continue
+        archives.sort(key=lambda item: item[1], reverse=True)
+        for archive, _mtime_ns in archives:
+            try:
+                manifest = self._read_manifest(archive, verify=verify)
                 rows.append(self._summary(manifest, archive))
             except Exception:
                 continue
@@ -675,6 +686,10 @@ class BackupManager:
 
     @staticmethod
     def _sync_directory(path: Path) -> None:
+        # The Windows CRT cannot open directory handles through os.open.
+        # File contents are synced before replace; directory fsync is POSIX-only here.
+        if os.name == "nt":
+            return
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(descriptor)
@@ -804,7 +819,7 @@ class BackupManager:
             if not archive.is_file():
                 raise BackupManagerError("备份不存在")
             archive.unlink()
-        return self.list_backups()
+        return self.list_backups(verify=False)
 
     def download_backup(self, backup_id: str) -> dict[str, Any]:
         info = self.download_file(backup_id)

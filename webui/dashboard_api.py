@@ -376,6 +376,33 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
         return self._ok(result.data, **result.extra)
 
+    async def _threaded_result(self, call: Any) -> Any:
+        """Run synchronous controller work away from AstrBot's event loop.
+
+        File/SQLite backed reads are cheap on a warm Linux cache but can block
+        for seconds on Windows while another process has a file open.  The
+        embedded Dashboard shares the host loop, so keep the adapter boundary
+        non-blocking just like the standalone Flask worker thread.
+        """
+        try:
+            result = await asyncio.to_thread(call)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        extra = getattr(result, "extra", {})
+        return self._ok(result.data, **(extra if isinstance(extra, dict) else {}))
+
+    async def _threaded_task_result(self, call: Any, *, include_message: bool = False) -> Any:
+        try:
+            result: TaskControllerResult = await asyncio.to_thread(call)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        extra = {"message": result.message} if include_message else {}
+        return self._ok(result.data, **extra)
+
     async def _proxy_result(self, call: Any) -> Any:
         try:
             result = call()
@@ -396,14 +423,18 @@ class SelfieImageDashboardAPI:
         extra = {"message": result.message} if include_message else {}
         return self._ok(result.data, **extra)
 
-    def _task_status(self, task_id: str) -> Any:
-        return self._task_result(lambda: self._task_controller.status(task_id))
+    async def _task_status(self, task_id: str) -> Any:
+        # Status polling reads the task snapshot and may reconcile terminal
+        # evidence, so keep it off AstrBot's event loop just like task lists.
+        return await self._threaded_task_result(
+            lambda: self._task_controller.status(task_id)
+        )
 
-    def _gallery(self) -> Any:
+    async def _gallery(self) -> Any:
         limit, offset = gallery_pagination(
             self._query_value("limit"), self._query_value("offset")
         )
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.gallery(limit, offset)
         )
     async def page_auth_check(self) -> Any:
@@ -414,20 +445,23 @@ class SelfieImageDashboardAPI:
 
     async def page_health_history(self) -> Any:
         try:
-            result: HealthControllerResult = self._health_controller.history(request.query)
+            params = dict(request.query)
+            result: HealthControllerResult = await asyncio.to_thread(
+                self._health_controller.history, params
+            )
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 500)
         return self._ok(result.data)
     async def page_storage_consistency(self) -> Any:
-        return self._record_result(lambda: self._record_controller.consistency())
+        return await self._threaded_result(lambda: self._record_controller.consistency())
 
     async def page_storage_consistency_repair(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._record_result(
+        return await self._threaded_result(
             lambda: self._record_controller.repair_consistency(payload)
         )
 
@@ -448,24 +482,25 @@ class SelfieImageDashboardAPI:
         return await self._proxy_result(lambda: self._proxy_controller.quality(payload))
 
     async def page_config_get(self) -> Any:
-        return self._config_result(lambda: self._config_controller.get())
+        return await self._threaded_result(lambda: self._config_controller.get())
 
     async def page_config_post(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._config_result(lambda: self._config_controller.update(payload))
+        return await self._threaded_result(lambda: self._config_controller.update(payload))
 
     async def page_config_export(self) -> Any:
-        return self._config_result(
-            lambda: self._config_controller.export(self._query_value("mode"))
+        mode = self._query_value("mode")
+        return await self._threaded_result(
+            lambda: self._config_controller.export(mode)
         )
 
     async def page_config_import_preview(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._config_result(
+        return await self._threaded_result(
             lambda: self._config_controller.preview_import(payload)
         )
 
@@ -473,7 +508,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._config_result(
+        return await self._threaded_result(
             lambda: self._config_controller.import_config(payload)
         )
 
@@ -490,60 +525,34 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            result: QQGroupControllerResult = self._qq_group_controller.update(payload)
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-        return self._ok(result.data)
+        return await self._threaded_result(lambda: self._qq_group_controller.update(payload))
 
     async def page_selfie_reference_get(self) -> Any:
-        try:
-            result: SelfieProfileControllerResult = self._selfie_profile_controller.get_reference()
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-        return self._ok(result.data, **result.extra)
+        return await self._threaded_result(self._selfie_profile_controller.get_reference)
 
     async def page_selfie_reference_post(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
         assert payload is not None
-        try:
-            result: SelfieProfileControllerResult = self._selfie_profile_controller.save_reference(payload)
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-        return self._ok(result.data, **result.extra)
+        return await self._threaded_result(
+            lambda: self._selfie_profile_controller.save_reference(payload)
+        )
 
     async def page_selfie_reference_clear(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            result: SelfieProfileControllerResult = self._selfie_profile_controller.clear_reference()
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-        return self._ok(result.data, **result.extra)
+        return await self._threaded_result(self._selfie_profile_controller.clear_reference)
 
     async def page_selfie_appearance_type(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
         assert payload is not None
-        try:
-            result: SelfieProfileControllerResult = self._selfie_profile_controller.set_appearance_type(payload)
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-        return self._ok(result.data, **result.extra)
+        return await self._threaded_result(
+            lambda: self._selfie_profile_controller.set_appearance_type(payload)
+        )
 
     async def page_selfie_profile_ensure_today(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -570,13 +579,7 @@ class SelfieImageDashboardAPI:
         return self._ok(result.data, **result.extra)
 
     async def page_selfie_wardrobe_get(self) -> Any:
-        try:
-            result: SelfieProfileControllerResult = self._selfie_profile_controller.wardrobe_get()
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-        return self._ok(result.data, **result.extra)
+        return await self._threaded_result(self._selfie_profile_controller.wardrobe_get)
 
     async def _page_selfie_wardrobe_mutation(self, method: str) -> Any:
         payload, error = await self._json_object_payload()
@@ -587,10 +590,8 @@ class SelfieImageDashboardAPI:
             handler = getattr(self._selfie_profile_controller, method)
             if method in self._selfie_profile_controller.ASYNC_WARDROBE_MUTATIONS:
                 result = await handler(payload)
-            elif method == "wardrobe_import":
-                result = await asyncio.to_thread(handler, payload)
             else:
-                result = handler(payload)
+                result = await asyncio.to_thread(handler, payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
@@ -631,9 +632,11 @@ class SelfieImageDashboardAPI:
 
     async def page_backups_options(self) -> Any:
         try:
-            result = self._backup_controller.options()
+            result = await asyncio.to_thread(self._backup_controller.options)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
         return self._ok(result)
 
     async def page_backups_list(self) -> Any:
@@ -641,6 +644,8 @@ class SelfieImageDashboardAPI:
             result = await asyncio.to_thread(self._backup_controller.list)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
         return self._ok(result)
 
     async def page_backups_create(self) -> Any:
@@ -648,24 +653,29 @@ class SelfieImageDashboardAPI:
         if error:
             return error
         try:
-            result = self._backup_controller.create(payload)
+            result = await asyncio.to_thread(self._backup_controller.create, payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
         return self._ok(result)
 
     async def page_backups_task(self, task_id: str) -> Any:
         try:
-            result = self._backup_controller.task(task_id)
+            result = await asyncio.to_thread(self._backup_controller.task, task_id)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
         return self._ok(result)
 
     async def page_backups_download(self, backup_id: str) -> Any:
+        query = dict(request.query)
         try:
-            result = await asyncio.to_thread(self._backup_controller.download, backup_id, request.query)
+            result = await asyncio.to_thread(self._backup_controller.download, backup_id, query)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
-        if self._query_value("format") == "file":
+        if str(query.get("format") or "") == "file":
             return file_response(result["path"], filename=result["filename"], content_type="application/zip")
         return self._ok(result)
 
@@ -677,6 +687,8 @@ class SelfieImageDashboardAPI:
             result = await asyncio.to_thread(self._backup_controller.restore, backup_id, payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
         return self._ok(result)
 
     async def page_backups_delete(self) -> Any:
@@ -684,9 +696,11 @@ class SelfieImageDashboardAPI:
         if error:
             return error
         try:
-            result = self._backup_controller.delete(payload)
+            result = await asyncio.to_thread(self._backup_controller.delete, payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
         return self._ok(result)
 
     async def page_backups_upload(self) -> Any:
@@ -697,6 +711,8 @@ class SelfieImageDashboardAPI:
             result = await asyncio.to_thread(self._backup_controller.upload, payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
         return self._ok(result)
 
     async def _page_archive_transfer(self, operation: str, transfer_id: str = "") -> Any:
@@ -713,6 +729,8 @@ class SelfieImageDashboardAPI:
             result = await asyncio.to_thread(self._backup_controller.transfer, operation, transfer_id, payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
         return self._ok(result)
 
     async def page_archive_upload_start(self) -> Any:
@@ -731,11 +749,12 @@ class SelfieImageDashboardAPI:
         return await self._page_archive_transfer("export")
 
     async def page_archive_export_download(self, transfer_id: str) -> Any:
+        query = dict(request.query)
         try:
-            result = await asyncio.to_thread(self._backup_controller.export_download, transfer_id, request.query)
+            result = await asyncio.to_thread(self._backup_controller.export_download, transfer_id, query)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
-        if self._query_value("format") == "file":
+        if str(query.get("format") or "") == "file":
             return file_response(result["path"], filename=result["filename"], content_type="application/zip")
         return self._ok(result)
 
@@ -758,7 +777,9 @@ class SelfieImageDashboardAPI:
             return error
         assert payload is not None
         try:
-            result: ImageChannelControllerResult = self._image_channel_controller.start_task(payload)
+            result: ImageChannelControllerResult = await asyncio.to_thread(
+                self._image_channel_controller.start_task, payload
+            )
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
@@ -766,10 +787,12 @@ class SelfieImageDashboardAPI:
         return self._ok(result.data, **result.extra)
 
     async def page_test_image_task_status(self, task_id: str) -> Any:
-        return self._task_status(task_id)
+        return await self._task_status(task_id)
 
     async def page_task_cancel(self, task_id: str) -> Any:
-        return self._task_result(lambda: self._task_controller.cancel(task_id), include_message=True)
+        return await self._threaded_task_result(
+            lambda: self._task_controller.cancel(task_id), include_message=True
+        )
 
     async def page_refresh_image_models(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -785,7 +808,8 @@ class SelfieImageDashboardAPI:
         return self._ok(result.data, **result.extra)
 
     async def page_records(self) -> Any:
-        return self._record_result(lambda: self._record_controller.list(request.query))
+        params = dict(request.query)
+        return await self._threaded_result(lambda: self._record_controller.list(params))
 
     async def page_channel_health_clear(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -796,58 +820,71 @@ class SelfieImageDashboardAPI:
         return self._ok(self.plugin.clear_channel_health(channel), message="渠道健康状态已清除")
 
     async def page_metrics(self) -> Any:
-        return self._record_result(
-            lambda: self._record_controller.metrics(self._query_value("window"))
+        window = self._query_value("window")
+        return await self._threaded_result(
+            lambda: self._record_controller.metrics(window)
         )
 
     async def page_tasks(self) -> Any:
-        return self._task_result(lambda: self._task_controller.list_tasks(request.query))
+        params = dict(request.query)
+        return await self._threaded_task_result(
+            lambda: self._task_controller.list_tasks(params)
+        )
 
     async def page_task_detail(self, task_id: str) -> Any:
         """Return the redacted task detail used by the embedded dashboard."""
-        return self._task_result(lambda: self._task_controller.detail(task_id))
+        return await self._threaded_task_result(
+            lambda: self._task_controller.detail(task_id)
+        )
 
     @staticmethod
     def _task_ids_from_payload(payload: Any) -> tuple[Optional[list[str]], Any]:
         return normalize_task_ids(payload, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
 
     async def page_tasks_export(self) -> Any:
-        return self._task_result(lambda: self._task_controller.export(self._query_value("ids")))
+        task_ids = self._query_value("ids")
+        return await self._threaded_task_result(
+            lambda: self._task_controller.export(task_ids)
+        )
 
     async def page_tasks_delete(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._task_result(lambda: self._task_controller.delete(payload), include_message=True)
+        return await self._threaded_task_result(
+            lambda: self._task_controller.delete(payload), include_message=True
+        )
 
     async def page_tasks_retry(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._task_result(lambda: self._task_controller.retry(payload), include_message=True)
+        return await self._threaded_task_result(
+            lambda: self._task_controller.retry(payload), include_message=True
+        )
 
     async def page_record_detail(self, record_id: str) -> Any:
-        return self._record_result(lambda: self._record_controller.detail(record_id))
+        return await self._threaded_result(lambda: self._record_controller.detail(record_id))
 
     async def page_record_media_sources(self, record_id: str) -> Any:
-        return self._record_result(lambda: self._record_controller.media_sources(record_id))
+        return await self._threaded_result(lambda: self._record_controller.media_sources(record_id))
 
     async def page_record_metadata(self, record_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._record_result(
+        return await self._threaded_result(
             lambda: self._record_controller.update_metadata(record_id, payload)
         )
 
     async def page_record_reuse(self, record_id: str) -> Any:
-        return self._record_result(lambda: self._record_controller.reuse(record_id))
+        return await self._threaded_result(lambda: self._record_controller.reuse(record_id))
 
     async def page_record_retry(self, record_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._record_result(
+        return await self._threaded_result(
             lambda: self._record_controller.retry(record_id, payload)
         )
 
@@ -855,24 +892,25 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._record_result(lambda: self._record_controller.compare(payload))
+        return await self._threaded_result(lambda: self._record_controller.compare(payload))
 
     async def page_assets(self) -> Any:
-        return self._asset_result(lambda: self._asset_controller.list(request.query))
+        params = dict(request.query)
+        return await self._threaded_result(lambda: self._asset_controller.list(params))
 
     async def page_asset_collections(self) -> Any:
-        return self._asset_result(lambda: self._asset_collection_controller.list())
+        return await self._threaded_result(lambda: self._asset_collection_controller.list())
 
     async def page_asset_collection_create(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.create(payload)
         )
 
     async def page_asset_collections_export(self) -> Any:
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.export()
         )
 
@@ -880,7 +918,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.import_data(payload)
         )
 
@@ -888,17 +926,17 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.update(collection_id, payload)
         )
 
     async def page_asset_collection_detail(self, collection_id: str) -> Any:
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.detail(collection_id)
         )
 
     async def page_asset_collection_delete(self, collection_id: str) -> Any:
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.delete(collection_id)
         )
 
@@ -906,7 +944,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.restore(payload)
         )
 
@@ -914,7 +952,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.update_records(
                 collection_id, payload, remove=remove
             )
@@ -930,7 +968,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_collection_controller.studio(collection_id, payload)
         )
 
@@ -938,23 +976,24 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_controller.update_metadata(payload)
         )
 
     async def page_assets_tags(self) -> Any:
-        return self._asset_result(lambda: self._asset_controller.tags())
+        return await self._threaded_result(lambda: self._asset_controller.tags())
 
     async def page_assets_export(self) -> Any:
-        return self._asset_result(
-            lambda: self._asset_controller.export(self._query_value("ids"))
+        record_ids = self._query_value("ids")
+        return await self._threaded_result(
+            lambda: self._asset_controller.export(record_ids)
         )
 
     async def page_assets_import(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_controller.import_metadata(payload)
         )
 
@@ -962,13 +1001,13 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(lambda: self._asset_controller.delete(payload))
+        return await self._threaded_result(lambda: self._asset_controller.delete(payload))
 
     async def page_asset_studio(self, record_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_controller.studio_one(record_id, payload)
         )
 
@@ -976,7 +1015,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._asset_result(
+        return await self._threaded_result(
             lambda: self._asset_controller.studio_many(payload)
         )
 
@@ -984,13 +1023,13 @@ class SelfieImageDashboardAPI:
         _, error = await self._json_object_payload()
         if error:
             return error
-        return self._record_result(lambda: self._record_controller.clear())
+        return await self._threaded_result(lambda: self._record_controller.clear())
 
     async def page_cache_cleanup(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._cache_result(lambda: self._cache_controller.cleanup(payload))
+        return await self._threaded_result(lambda: self._cache_controller.cleanup(payload))
 
     async def page_cache_image_file(self) -> Any:
         try:
@@ -1004,8 +1043,9 @@ class SelfieImageDashboardAPI:
         )
 
     async def page_cache_image_preview(self) -> Any:
-        return self._cache_result(lambda: self._cache_controller.preview(
-            self._query_value("path"), fallback_mime="image/png",
+        path = self._query_value("path")
+        return await self._threaded_result(lambda: self._cache_controller.preview(
+            path, fallback_mime="image/png",
         ))
 
     async def page_cache_image_thumbnail(self) -> Any:
@@ -1020,7 +1060,7 @@ class SelfieImageDashboardAPI:
         return self._ok(result.data, **result.extra)
 
     async def page_studio_list(self) -> Any:
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_list(include_metadata=False)
         )
 
@@ -1028,7 +1068,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_create(payload)
         )
 
@@ -1036,12 +1076,12 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_copy(session_id, payload)
         )
 
     async def page_studio_get(self, session_id: str) -> Any:
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_get(session_id)
         )
 
@@ -1049,12 +1089,12 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_update(session_id, payload)
         )
 
     async def page_studio_canvas_get(self, session_id: str) -> Any:
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_canvas(session_id)
         )
 
@@ -1062,7 +1102,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_canvas_update(session_id, payload)
         )
 
@@ -1070,12 +1110,12 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_canvas_node_create(session_id, payload)
         )
 
     async def page_studio_canvas_node_delete(self, session_id: str, node_id: str) -> Any:
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_canvas_node_delete(session_id, node_id)
         )
 
@@ -1083,7 +1123,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_canvas_node_connect(
                 session_id, node_id, payload
             )
@@ -1093,7 +1133,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_delete(session_id)
         )
 
@@ -1101,7 +1141,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_set_slot(session_id, slot_id, payload)
         )
 
@@ -1109,7 +1149,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_add_slot(session_id, payload)
         )
 
@@ -1117,7 +1157,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_reorder(session_id, payload)
         )
 
@@ -1125,7 +1165,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_promote(session_id, payload)
         )
 
@@ -1133,18 +1173,18 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.studio_run(session_id, payload)
         )
 
     async def page_studio_task(self, task_id: str) -> Any:
-        return self._task_status(task_id)
+        return await self._task_status(task_id)
 
     async def page_studio_gallery(self) -> Any:
-        return self._gallery()
+        return await self._gallery()
 
     async def page_creative_canvas_list(self) -> Any:
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_list(include_metadata=False)
         )
 
@@ -1152,12 +1192,12 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_create(payload)
         )
 
     async def page_creative_canvas_get(self, session_id: str) -> Any:
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_get(session_id)
         )
 
@@ -1165,7 +1205,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_update(session_id, payload)
         )
 
@@ -1173,7 +1213,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_delete(session_id)
         )
 
@@ -1181,7 +1221,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_set_slot(
                 session_id, slot_id, payload
             )
@@ -1191,7 +1231,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_add_slot(session_id, payload)
         )
 
@@ -1199,7 +1239,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_reorder(session_id, payload)
         )
 
@@ -1207,7 +1247,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_promote(session_id, payload)
         )
 
@@ -1215,22 +1255,22 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._canvas_result(
+        return await self._threaded_result(
             lambda: self._canvas_controller.creative_canvas_run(session_id, payload)
         )
 
     async def page_creative_canvas_gallery(self) -> Any:
-        return self._gallery()
+        return await self._gallery()
 
     async def page_prompt_presets(self) -> Any:
-        query = getattr(request, "query", {}) or {}
-        return self._prompt_catalog_result(
+        query = dict(getattr(request, "query", {}) or {})
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.list_presets(query)
         )
 
     async def page_prompt_presets_manage(self) -> Any:
-        query = getattr(request, "query", {}) or {}
-        return self._prompt_catalog_result(
+        query = dict(getattr(request, "query", {}) or {})
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.list_presets(query, managed=True)
         )
 
@@ -1238,7 +1278,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.save_preset(payload)
         )
 
@@ -1246,7 +1286,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.delete_preset(payload)
         )
 
@@ -1254,18 +1294,18 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.import_presets(payload)
         )
 
     async def page_cos_look_sets(self) -> Any:
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             self._prompt_catalog_controller.list_cos_look_sets
         )
 
     async def page_cos_pools(self) -> Any:
-        query = getattr(request, "query", {}) or {}
-        return self._prompt_catalog_result(
+        query = dict(getattr(request, "query", {}) or {})
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.list_cos_pools(query)
         )
 
@@ -1273,7 +1313,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.favorite_cos(payload)
         )
 
@@ -1281,7 +1321,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.save_custom_cos(payload)
         )
 
@@ -1289,18 +1329,18 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.delete_custom_cos(payload)
         )
 
     async def page_cos_pool_export(self) -> Any:
-        return self._prompt_catalog_result(self._prompt_catalog_controller.export_cos)
+        return await self._threaded_result(self._prompt_catalog_controller.export_cos)
 
     async def page_cos_pool_import(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.import_cos(payload)
         )
 
@@ -1308,7 +1348,7 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.render_template(payload)
         )
 
@@ -1316,6 +1356,6 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._prompt_catalog_result(
+        return await self._threaded_result(
             lambda: self._prompt_catalog_controller.variations(payload)
         )

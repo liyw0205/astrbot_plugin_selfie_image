@@ -147,15 +147,38 @@ class GenerationStoreMixin(PromptLookupMixin):
         data_dir = str(getattr(self, "data_dir", "") or "").strip()
         return os.path.join(data_dir, "channel_health_history.json") if data_dir else ""
 
+    def _channel_health_history_mutex(self) -> threading.RLock:
+        lock = getattr(self, "_channel_health_history_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._channel_health_history_lock = lock
+        return lock
+
     def _load_channel_health_history(self) -> List[Dict[str, Any]]:
         path = self._channel_health_history_path()
         if not path:
             return []
-        raw = load_json_file(path)
-        rows = raw.get("events") if isinstance(raw, Mapping) else []
-        if not isinstance(rows, list):
-            rows = []
-        return [dict(item) for item in rows if isinstance(item, Mapping)][-CHANNEL_HEALTH_HISTORY_LIMIT:]
+        try:
+            stat_result = os.stat(path)
+            signature = (int(stat_result.st_mtime_ns), int(stat_result.st_size))
+        except OSError:
+            signature = None
+        lock = self._channel_health_history_mutex()
+        with lock:
+            cached_signature = getattr(self, "_channel_health_history_signature", None)
+            cached_rows = getattr(self, "_channel_health_history_cache", None)
+            if signature is not None and signature == cached_signature and isinstance(cached_rows, list):
+                return [dict(item) for item in cached_rows]
+            if signature is None and cached_signature is None and isinstance(cached_rows, list):
+                return [dict(item) for item in cached_rows]
+            raw = load_json_file(path)
+            rows = raw.get("events") if isinstance(raw, Mapping) else []
+            if not isinstance(rows, list):
+                rows = []
+            normalized = [dict(item) for item in rows if isinstance(item, Mapping)][-CHANNEL_HEALTH_HISTORY_LIMIT:]
+            self._channel_health_history_cache = normalized
+            self._channel_health_history_signature = signature
+            return [dict(item) for item in normalized]
 
     def get_channel_health_history(
         self,
@@ -2777,69 +2800,79 @@ class GenerationStoreMixin(PromptLookupMixin):
     ) -> None:
         now = time.time()
         safe_trace_id = redact_sensitive_text(str(trace_id or "").strip())[:80]
-        history = self._load_channel_health_history()
-        for attempt in attempts:
-            channel = str(attempt.get("channel") or "").strip()
-            if not channel:
-                continue
-            category = str(attempt.get("error_category") or "").strip()
-            success = bool(attempt.get("success"))
-            with self._channel_health_lock:
-                state = self._channel_health.setdefault(
-                    channel,
-                    {
-                        "consecutive_failures": 0,
-                        "last_error_category": "",
-                        "attempts": 0,
-                        "successes": 0,
-                        "failures": 0,
-                        "total_elapsed_seconds": 0.0,
-                    },
-                )
-                state["attempts"] = int(state.get("attempts") or 0) + 1
-                try:
-                    state["total_elapsed_seconds"] = float(state.get("total_elapsed_seconds") or 0) + max(
-                        0.0, float(attempt.get("elapsed_seconds") or 0)
+        lock = self._channel_health_history_mutex()
+        with lock:
+            history = self._load_channel_health_history()
+            for attempt in attempts:
+                channel = str(attempt.get("channel") or "").strip()
+                if not channel:
+                    continue
+                category = str(attempt.get("error_category") or "").strip()
+                success = bool(attempt.get("success"))
+                with self._channel_health_lock:
+                    state = self._channel_health.setdefault(
+                        channel,
+                        {
+                            "consecutive_failures": 0,
+                            "last_error_category": "",
+                            "attempts": 0,
+                            "successes": 0,
+                            "failures": 0,
+                            "total_elapsed_seconds": 0.0,
+                        },
                     )
-                except (TypeError, ValueError):
-                    pass
-                if success:
-                    state["successes"] = int(state.get("successes") or 0) + 1
-                    state["consecutive_failures"] = 0
-                    state["last_success_ts"] = now
-                    state.pop("cooldown_until", None)
-                else:
-                    state["failures"] = int(state.get("failures") or 0) + 1
-                    state["last_error_category"] = category
-                    state["last_error"] = redact_sensitive_text(
-                        str(attempt.get("error_user_message") or attempt.get("error") or "")
-                    )[:240]
-                    state["last_error_ts"] = now
-                    if category not in CHANNEL_TRANSIENT_ERROR_CATEGORIES:
+                    state["attempts"] = int(state.get("attempts") or 0) + 1
+                    try:
+                        state["total_elapsed_seconds"] = float(state.get("total_elapsed_seconds") or 0) + max(
+                            0.0, float(attempt.get("elapsed_seconds") or 0)
+                        )
+                    except (TypeError, ValueError):
+                        pass
+                    if success:
+                        state["successes"] = int(state.get("successes") or 0) + 1
                         state["consecutive_failures"] = 0
+                        state["last_success_ts"] = now
+                        state.pop("cooldown_until", None)
                     else:
-                        state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
-                        if state["consecutive_failures"] >= CHANNEL_COOLDOWN_FAILURE_THRESHOLD:
-                            state["cooldown_until"] = now + CHANNEL_COOLDOWN_SECONDS
-            history_row = {
-                    "timestamp": now,
-                    "channel": redact_sensitive_text(channel)[:160],
-                    "model": redact_sensitive_text(str(attempt.get("model") or ""))[:180],
-                    "label": redact_sensitive_text(str(attempt.get("label") or ""))[:220],
-                    "provider_type": redact_sensitive_text(str(attempt.get("provider_type") or ""))[:80],
-                    "media_type": str(media_type or "image").strip().lower() or "image",
-                    "success": success,
-                    "elapsed_seconds": round(max(0.0, float(attempt.get("elapsed_seconds") or 0)), 2),
-                    "error_category": category[:64],
-                }
-            if safe_trace_id:
-                history_row["trace_id"] = safe_trace_id
-            history.append(history_row)
-        if len(history) > CHANNEL_HEALTH_HISTORY_LIMIT:
-            history = history[-CHANNEL_HEALTH_HISTORY_LIMIT:]
-        path = self._channel_health_history_path()
-        if path:
-            try:
-                save_json_file(path, {"version": 1, "events": history})
-            except Exception:
-                pass
+                        state["failures"] = int(state.get("failures") or 0) + 1
+                        state["last_error_category"] = category
+                        state["last_error"] = redact_sensitive_text(
+                            str(attempt.get("error_user_message") or attempt.get("error") or "")
+                        )[:240]
+                        state["last_error_ts"] = now
+                        if category not in CHANNEL_TRANSIENT_ERROR_CATEGORIES:
+                            state["consecutive_failures"] = 0
+                        else:
+                            state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
+                            if state["consecutive_failures"] >= CHANNEL_COOLDOWN_FAILURE_THRESHOLD:
+                                state["cooldown_until"] = now + CHANNEL_COOLDOWN_SECONDS
+                history_row = {
+                        "timestamp": now,
+                        "channel": redact_sensitive_text(channel)[:160],
+                        "model": redact_sensitive_text(str(attempt.get("model") or ""))[:180],
+                        "label": redact_sensitive_text(str(attempt.get("label") or ""))[:220],
+                        "provider_type": redact_sensitive_text(str(attempt.get("provider_type") or ""))[:80],
+                        "media_type": str(media_type or "image").strip().lower() or "image",
+                        "success": success,
+                        "elapsed_seconds": round(max(0.0, float(attempt.get("elapsed_seconds") or 0)), 2),
+                        "error_category": category[:64],
+                    }
+                if safe_trace_id:
+                    history_row["trace_id"] = safe_trace_id
+                history.append(history_row)
+            if len(history) > CHANNEL_HEALTH_HISTORY_LIMIT:
+                history = history[-CHANNEL_HEALTH_HISTORY_LIMIT:]
+            path = self._channel_health_history_path()
+            if path:
+                try:
+                    save_json_file(path, {"version": 1, "events": history})
+                    try:
+                        stat_result = os.stat(path)
+                        self._channel_health_history_signature = (
+                            int(stat_result.st_mtime_ns), int(stat_result.st_size)
+                        )
+                    except OSError:
+                        self._channel_health_history_signature = None
+                    self._channel_health_history_cache = [dict(item) for item in history]
+                except Exception:
+                    pass

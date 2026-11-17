@@ -277,6 +277,7 @@ async function capturePage(cdp, url, viewport, outputFile) {
       bodyText: body ? body.innerText.slice(0, 500) : '',
       login: Boolean(document.querySelector('#loginPage')),
       loginBox: Boolean(document.querySelector('#loginPage .login-box')),
+      loginVisible: Boolean(document.querySelector('#loginPage')) && getComputedStyle(document.querySelector('#loginPage')).display !== 'none',
       authed: document.body.classList.contains('authed'),
     };
   })()`);
@@ -295,7 +296,7 @@ async function capturePage(cdp, url, viewport, outputFile) {
   if (metrics.scrollWidth > metrics.clientWidth + 1) {
     throw new Error(`${url}: 存在水平溢出 ${metrics.scrollWidth}px > ${metrics.clientWidth}px`);
   }
-  if (!metrics.login || !metrics.loginBox || metrics.authed) {
+  if (!metrics.login || !metrics.loginBox || !metrics.loginVisible || metrics.authed) {
     throw new Error(`${url}: 未认证 Dashboard 登录入口状态异常`);
   }
   if (errors.length) throw new Error(`${url}: 浏览器错误：${errors.slice(0, 3).join(' | ')}`);

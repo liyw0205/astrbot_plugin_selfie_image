@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from io import BytesIO
 import re
@@ -48,12 +49,12 @@ class AuditMixin:
                 "error_category": "empty_response" if not str(result or "").strip() else "",
                 "error": "辅助模型没有返回有效内容" if not str(result or "").strip() else "",
             }
-            self._record_auxiliary_health(attempt, media_type=media_type)
+            await self._record_auxiliary_health(attempt, media_type=media_type)
             return str(result or "")
         except Exception as exc:
             elapsed = time.monotonic() - started
             info = classify_generation_error(str(exc))
-            self._record_auxiliary_health(
+            await self._record_auxiliary_health(
                 {
                     "channel": str(getattr(target, "channel_name", "") or getattr(target, "label", "")),
                     "success": False,
@@ -65,18 +66,19 @@ class AuditMixin:
             )
             raise
 
-    def _record_auxiliary_health(self, attempt: Mapping[str, Any], *, media_type: str) -> None:
+    async def _record_auxiliary_health(self, attempt: Mapping[str, Any], *, media_type: str) -> None:
         recorder = getattr(self, "_record_channel_health", None)
         if not callable(recorder):
             return
-        try:
-            recorder([attempt], media_type=media_type)
-        except TypeError:
-            # Older host shims expose the original one-argument hook.
+
+        def record() -> None:
             try:
+                recorder([attempt], media_type=media_type)
+            except TypeError:
                 recorder([attempt])
-            except Exception:
-                return
+
+        try:
+            await asyncio.to_thread(record)
         except Exception:
             # Health telemetry must never change an audit or translation result.
             return

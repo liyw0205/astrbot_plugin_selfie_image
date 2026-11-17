@@ -626,6 +626,7 @@
         else ch = channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] || factory();
       }
       ch = normalizeChannel(ch);
+      $('manualFillNai').style.display = EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none';
       const enabled = ch.enabled_models || [];
       const search = $('cacheSearch').value.trim().toLowerCase();
       const cacheItems = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
@@ -749,6 +750,17 @@
     function addEnabledModel(name) {
       const ch = currentModalChannel();
       setChannelEnabledModels(ch, (ch.enabled_models || []).concat([name]));
+      storeModalChannel(ch);
+      CHANNEL_MODAL_DIRTY = true;
+      renderModalModels(ch);
+      refreshModelSelectors();
+    }
+    function fillNovelAIModels() {
+      if (EDITING_CHANNEL_KIND !== 'image' || $('modalProvider').value !== 'novelai') return;
+      const ch = currentModalChannel();
+      const models = ['nai-diffusion-4-5-full', 'nai-diffusion-5-full'];
+      setChannelEnabledModels(ch, (ch.enabled_models || []).concat(models));
+      ch.models_cache = uniq((ch.models_cache || []).concat(models));
       storeModalChannel(ch);
       CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);

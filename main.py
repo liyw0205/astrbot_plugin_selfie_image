@@ -369,6 +369,7 @@ class SelfieImagePlugin(
         self._last_request_at: Dict[str, float] = {}
         self._channel_health: Dict[str, Dict[str, Any]] = {}
         self._channel_health_lock = threading.RLock()
+        self._channel_health_history_lock = threading.RLock()
         self._send_failures: Dict[str, List[str]] = {}
         self._send_failures_lock = threading.RLock()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -426,7 +427,7 @@ class SelfieImagePlugin(
         except Exception as exc:
             logger.warning("[SelfieImage] 启动帮助图生成失败：%s", redact_sensitive_text(str(exc)))
         try:
-            cleanup = self._cleanup_image_cache_if_needed()
+            cleanup = await asyncio.to_thread(self._cleanup_image_cache_if_needed)
             deleted = cleanup.get("deleted") if isinstance(cleanup, Mapping) else []
             if deleted:
                 logger.info("[SelfieImage] startup cache cleanup removed %d orphan file(s)", len(deleted))

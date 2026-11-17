@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import time
+from dataclasses import dataclass
 from collections.abc import Mapping
 from io import BytesIO
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -61,15 +62,45 @@ async def resolve_awaitable(value: Any) -> Any:
     return result
 
 
-def load_json_file(path: str) -> Dict[str, Any]:
+@dataclass(frozen=True)
+class JsonLoadResult:
+    """Structured result for stores that must not confuse failure with empty data."""
+
+    data: Dict[str, Any]
+    status: str
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status in {"missing", "ok"}
+
+
+def load_json_file_result(path: str) -> JsonLoadResult:
+    """Read a JSON object while preserving missing/corrupt/read-error state.
+
+    ``load_json_file`` remains intentionally forgiving for legacy callers. New
+    stores should use this result so a damaged file cannot be mistaken for a
+    first-run empty store and overwritten during initialization.
+    """
     if not path or not os.path.exists(path):
-        return {}
+        return JsonLoadResult({}, "missing")
     try:
         with open(path, "r", encoding="utf-8-sig") as file:
             data = json.load(file)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    except json.JSONDecodeError as exc:
+        return JsonLoadResult({}, "corrupt", type(exc).__name__)
+    except (OSError, UnicodeError) as exc:
+        return JsonLoadResult({}, "unreadable", type(exc).__name__)
+    except Exception as exc:
+        return JsonLoadResult({}, "invalid", type(exc).__name__)
+    if not isinstance(data, dict):
+        return JsonLoadResult({}, "invalid_schema", "expected_object")
+    return JsonLoadResult(data, "ok")
+
+
+def load_json_file(path: str) -> Dict[str, Any]:
+    """Backward-compatible forgiving JSON object loader."""
+    return load_json_file_result(path).data
 
 
 def save_json_file(path: str, data: Dict[str, Any]) -> None:

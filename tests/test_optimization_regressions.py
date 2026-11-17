@@ -748,6 +748,33 @@ def test_channel_health_history_aggregates_empty_and_media_scopes() -> None:
         assert plugin.get_channel_health_history(window_seconds=3600, media_type="audit")["empty"] is True
 
 
+def test_channel_health_history_cache_reloads_when_file_changes(monkeypatch) -> None:
+    import astrbot_plugin_selfie_image.generation.generation_store as store_module
+
+    with tempfile.TemporaryDirectory() as directory:
+        plugin = object.__new__(GenerationStoreMixin)
+        plugin.data_dir = directory
+        plugin._channel_health = {}
+        plugin._channel_health_lock = __import__("threading").RLock()
+        original_loader = store_module.load_json_file
+        calls = []
+
+        def counted_loader(path):
+            calls.append(path)
+            return original_loader(path)
+
+        monkeypatch.setattr(store_module, "load_json_file", counted_loader)
+        plugin._record_channel_health([{"channel": "img", "success": True}])
+        assert plugin.get_channel_health_history(window_seconds=3600)["sample_count"] == 1
+        assert plugin.get_channel_health_history(window_seconds=3600)["sample_count"] == 1
+        assert len(calls) == 1
+
+        path = Path(directory) / "channel_health_history.json"
+        path.write_text('{"version": 1, "events": []}', encoding="utf-8")
+        assert plugin.get_channel_health_history(window_seconds=3600)["empty"] is True
+        assert len(calls) == 2
+
+
 def test_auxiliary_target_health_event_is_scoped_and_sanitized() -> None:
     class Plugin(AuditMixin):
         def __init__(self):

@@ -31,7 +31,12 @@ from ..cos.leg_focus import (
     leg_focus_appearance_prompt,
 )
 from ..cos.cos_looks_loader import COS_JSON_POSES
-from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
+from ..core.utils import (
+    detect_mime_by_bytes,
+    ext_from_mime,
+    load_json_file_result,
+    save_json_file,
+)
 from .daily_schedule import (
     DEFAULT_BUSINESS_DAY_START,
     PERIOD_TIME_RANGES,
@@ -1069,12 +1074,26 @@ class PersonaManager:
         )
         self.wardrobe = WardrobeStore(data_dir)
         self.business_day_start = DEFAULT_BUSINESS_DAY_START
+        self._storage_status: Dict[str, Any] = {"ok": True, "status": "missing", "source": self.file_path}
+        self._storage_blocked = False
         # Local profile updates never suspend; archive imports also run in workers.
         self._daily_profile_lock = threading.RLock()
         self.load()
 
     def load(self) -> None:
-        raw = load_json_file(self.file_path)
+        result = load_json_file_result(self.file_path)
+        self._storage_status = {
+            "ok": result.ok,
+            "status": result.status,
+            "error": result.error,
+            "source": self.file_path,
+        }
+        self._storage_blocked = not result.ok
+        if result.status == "missing":
+            return
+        if not result.ok:
+            return
+        raw = result.data
         if not raw:
             return
         self.data.update(
@@ -1119,7 +1138,13 @@ class PersonaManager:
         return schedule
 
     def save(self) -> None:
+        if self._storage_blocked:
+            raise RuntimeError("形象资料存储读取失败，已停止覆盖原文件")
         save_json_file(self.file_path, self.data)
+        self._storage_status = {"ok": True, "status": "ok", "error": "", "source": self.file_path}
+
+    def storage_status(self) -> Dict[str, Any]:
+        return dict(self._storage_status)
 
     def get(self) -> Dict[str, Any]:
         return dict(self.data)
