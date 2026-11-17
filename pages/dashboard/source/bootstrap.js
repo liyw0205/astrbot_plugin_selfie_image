@@ -3,6 +3,7 @@
       const button = [...document.querySelectorAll('nav.page-nav button[data-tab]')].find(item => item.dataset.tab === target);
       const section = target ? $(target) : null;
       if (!button || !section) return false;
+      DASHBOARD_VISITED_TABS.add(target);
       const current = document.querySelector('nav.page-nav button.active')?.dataset.tab || '';
       if (current === target && options.force !== true) return false;
       document.querySelectorAll('nav.page-nav button').forEach(item => item.classList.toggle('active', item === button));

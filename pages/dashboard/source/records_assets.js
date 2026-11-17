@@ -19,10 +19,13 @@
       value.cachedAt = Date.now();
       cache.delete(key);
       cache.set(key, value);
+      const namespace = cache === RECORD_PAGE_CACHE ? 'record-page' : cache === ASSET_PAGE_CACHE ? 'asset-page' : '';
+      if (namespace) writeDashboardPersistCache(namespace, key, value);
       while (cache.size > PAGE_CACHE_MAX_ENTRIES) {
         const oldest = cache.keys().next().value;
         if (!oldest) break;
         cache.delete(oldest);
+        if (namespace) removeDashboardPersistCache(namespace, oldest);
       }
       return value;
     }
@@ -137,10 +140,12 @@
     function clearRecordPageCache() {
       RECORD_PAGE_CACHE_VERSION += 1;
       clearPageCache(RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS);
+      clearDashboardPersistNamespace('record-page');
     }
     function clearAssetPageCache() {
       ASSET_PAGE_CACHE_VERSION += 1;
       clearPageCache(ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS);
+      clearDashboardPersistNamespace('asset-page');
     }
 
     async function loadRecords(showRefreshToast = false) {
@@ -151,6 +156,7 @@
       abortPageRequests(RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, requestPath);
       const cached = showRefreshToast ? null : usablePageCache(RECORD_PAGE_CACHE, requestPath);
       if (showRefreshToast) RECORD_PAGE_CACHE.delete(requestPath);
+      if (showRefreshToast) removeDashboardPersistCache('record-page', requestPath);
       if (cached) {
         applyRecordPage(cached);
         RECORD_LOADING = false;
@@ -654,6 +660,7 @@
       abortPageRequests(ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, requestPath);
       const cached = showRefreshToast ? null : usablePageCache(ASSET_PAGE_CACHE, requestPath);
       if (showRefreshToast) ASSET_PAGE_CACHE.delete(requestPath);
+      if (showRefreshToast) removeDashboardPersistCache('asset-page', requestPath);
       if (cached) {
         applyAssetPage(cached);
         ASSET_LOADING = false;

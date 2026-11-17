@@ -165,6 +165,28 @@ def test_protected_media_has_three_day_sliding_persistent_cache_and_retry_ui():
     assert "function bindProtectedMediaRetry(root = document)" in PAGE
 
 
+def test_dashboard_catalog_pages_and_gallery_survive_a_reload_with_bounded_ttl():
+    assert "const DASHBOARD_PERSIST_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;" in PAGE
+    assert "function hydrateDashboardPersistentCaches()" in PAGE
+    assert "listDashboardPersistCache('picker-page')" in PAGE
+    assert "listDashboardPersistCache('managed-page')" in PAGE
+    assert "listDashboardPersistCache('record-page')" in PAGE
+    assert "listDashboardPersistCache('asset-page')" in PAGE
+    assert "readDashboardPersistCache('gallery-picker', 'items')" in PAGE
+    assert "writeDashboardPersistCache('picker-page', key, data)" in PAGE
+    assert "writeDashboardPersistCache('managed-page', key, value)" in PAGE
+    assert "writeDashboardPersistCache('gallery-picker', 'items', GALLERY_PICKER_CACHE.items)" in PAGE
+    assert "clearDashboardPersistNamespace('record-page')" in PAGE
+    assert "clearDashboardPersistNamespace('asset-page')" in PAGE
+    assert "clearDashboardPersistNamespace('media')" in PAGE
+
+
+def test_media_persistence_falls_back_when_cache_storage_is_unavailable():
+    assert "if (!mediaPersistentSupported()) return readFallback();" in PAGE
+    assert "writeDashboardPersistCache('media', key, entry);" in PAGE
+    assert "const fallback = readFallback();" in PAGE
+
+
 def test_record_source_buttons_copy_and_response_base64_opens():
     assert "copyMediaSourceValue" in PAGE
     assert 'title="复制原始来源"' in PAGE

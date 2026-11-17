@@ -46,6 +46,167 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
+    const DASHBOARD_PERSIST_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+    const DASHBOARD_PERSIST_CACHE_PREFIX = 'selfieImageDashboardCache:v1:';
+    const DASHBOARD_PERSIST_CACHE_INDEX_KEY = `${DASHBOARD_PERSIST_CACHE_PREFIX}index`;
+    const DASHBOARD_PERSIST_CACHE_MAX_ENTRIES = 160;
+    const DASHBOARD_PERSIST_CACHE_MAX_BYTES = 3 * 1024 * 1024;
+    const DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES = 700 * 1024;
+    function dashboardPersistHash(value) {
+      let hash = 2166136261;
+      for (const char of String(value || '')) {
+        hash ^= char.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(36);
+    }
+    function dashboardPersistScope() {
+      const token = String(safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '').trim();
+      return token ? `token:${dashboardPersistHash(token)}` : (isDashboardPage() ? 'dashboard' : 'anonymous');
+    }
+    function dashboardPersistKey(namespace, key, scope = dashboardPersistScope()) {
+      return `${DASHBOARD_PERSIST_CACHE_PREFIX}${scope}:${namespace}:${encodeURIComponent(String(key || ''))}`;
+    }
+    function readDashboardPersistIndex() {
+      try {
+        const value = JSON.parse(safeStorageGet(DASHBOARD_PERSIST_CACHE_INDEX_KEY, '{}'));
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+      } catch (_) {
+        return {};
+      }
+    }
+    function writeDashboardPersistIndex(index) {
+      safeStorageSet(DASHBOARD_PERSIST_CACHE_INDEX_KEY, JSON.stringify(index || {}));
+    }
+    function removeDashboardPersistEntry(storageKey, index = readDashboardPersistIndex()) {
+      safeStorageRemove(storageKey);
+      if (Object.prototype.hasOwnProperty.call(index, storageKey)) {
+        delete index[storageKey];
+        writeDashboardPersistIndex(index);
+      }
+    }
+    function dashboardPersistEntryExpired(item, now = Date.now()) {
+      return !item || now - Number(item.storedAt || 0) > DASHBOARD_PERSIST_CACHE_TTL_MS;
+    }
+    function pruneDashboardPersistCache() {
+      const index = readDashboardPersistIndex();
+      const now = Date.now();
+      let changed = false;
+      let totalBytes = 0;
+      const entries = [];
+      for (const [storageKey, item] of Object.entries(index)) {
+        const raw = safeStorageGet(storageKey, '');
+        const missing = !raw;
+        if (missing || dashboardPersistEntryExpired(item, now)) {
+          safeStorageRemove(storageKey);
+          delete index[storageKey];
+          changed = true;
+          continue;
+        }
+        const size = Math.max(0, Number(item.size || raw.length || 0));
+        totalBytes += size;
+        entries.push({storageKey, item: Object.assign({}, item, {size})});
+      }
+      entries.sort((a, b) => Number(a.item.lastAccessed || a.item.storedAt || 0) - Number(b.item.lastAccessed || b.item.storedAt || 0));
+      while (entries.length > DASHBOARD_PERSIST_CACHE_MAX_ENTRIES || totalBytes > DASHBOARD_PERSIST_CACHE_MAX_BYTES) {
+        const oldest = entries.shift();
+        if (!oldest) break;
+        totalBytes -= Number(oldest.item.size || 0);
+        safeStorageRemove(oldest.storageKey);
+        delete index[oldest.storageKey];
+        changed = true;
+      }
+      if (changed) writeDashboardPersistIndex(index);
+      return index;
+    }
+    function readDashboardPersistCacheEntry(namespace, key) {
+      const scope = dashboardPersistScope();
+      const storageKey = dashboardPersistKey(namespace, key, scope);
+      const index = readDashboardPersistIndex();
+      const raw = safeStorageGet(storageKey, '');
+      if (!raw) {
+        if (index[storageKey]) removeDashboardPersistEntry(storageKey, index);
+        return null;
+      }
+      try {
+        const value = JSON.parse(raw);
+        const item = index[storageKey];
+        if (!item) {
+          safeStorageRemove(storageKey);
+          return null;
+        }
+        if (dashboardPersistEntryExpired(item) || value.scope !== scope) {
+          removeDashboardPersistEntry(storageKey, index);
+          return null;
+        }
+        item.lastAccessed = Date.now();
+        index[storageKey] = item;
+        safeStorageSet(storageKey, JSON.stringify(value));
+        writeDashboardPersistIndex(index);
+        return {data: value.data, storedAt: Number(value.storedAt || item.storedAt || 0)};
+      } catch (_) {
+        removeDashboardPersistEntry(storageKey, index);
+        return null;
+      }
+    }
+    function readDashboardPersistCache(namespace, key) {
+      return readDashboardPersistCacheEntry(namespace, key)?.data ?? null;
+    }
+    function writeDashboardPersistCache(namespace, key, data) {
+      let encoded;
+      try {
+        const scope = dashboardPersistScope();
+        encoded = JSON.stringify({scope, storedAt: Date.now(), data});
+        if (encoded.length > DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES) return false;
+        const storageKey = dashboardPersistKey(namespace, key, scope);
+        safeStorageSet(storageKey, encoded);
+        if (safeStorageGet(storageKey, '') !== encoded) return false;
+        const index = readDashboardPersistIndex();
+        index[storageKey] = {namespace, key: String(key || ''), scope, storedAt: Date.now(), lastAccessed: Date.now(), size: encoded.length};
+        writeDashboardPersistIndex(index);
+        pruneDashboardPersistCache();
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    function removeDashboardPersistCache(namespace, key) {
+      const scope = dashboardPersistScope();
+      removeDashboardPersistEntry(dashboardPersistKey(namespace, key, scope));
+    }
+    function clearDashboardPersistNamespace(namespace, predicate = null) {
+      const index = readDashboardPersistIndex();
+      let changed = false;
+      for (const [storageKey, item] of Object.entries(index)) {
+        if (item.namespace !== namespace) continue;
+        if (typeof predicate === 'function' && !predicate(String(item.key || ''))) continue;
+        safeStorageRemove(storageKey);
+        delete index[storageKey];
+        changed = true;
+      }
+      if (changed) writeDashboardPersistIndex(index);
+    }
+    function listDashboardPersistCache(namespace) {
+      const index = pruneDashboardPersistCache();
+      const scope = dashboardPersistScope();
+      const rows = [];
+      for (const [storageKey, item] of Object.entries(index)) {
+        if (item.namespace !== namespace || item.scope !== scope) continue;
+        const raw = safeStorageGet(storageKey, '');
+        if (!raw) continue;
+        try {
+          const value = JSON.parse(raw);
+          if (value.scope !== scope || dashboardPersistEntryExpired(item)) continue;
+          item.lastAccessed = Date.now();
+          index[storageKey] = item;
+          rows.push({key: String(item.key || ''), data: value.data, storedAt: Number(value.storedAt || 0)});
+        } catch (_) {
+          removeDashboardPersistEntry(storageKey, index);
+        }
+      }
+      writeDashboardPersistIndex(index);
+      return rows;
+    }
     const CANVAS_SESSION_CACHE_TTL_MS = 15000;
     // Prompt/COS/tag catalogs refresh periodically; the shared gallery cache has no TTL.
     const PICKER_CATALOG_CACHE_TTL_MS = 30000;
@@ -71,6 +232,8 @@
     let CONFIG = {};
     let CONFIG_LOAD_SEQ = 0;
     let CONFIG_MUTATION_SEQ = 0;
+    // Pages are loaded on demand; startup refreshes only tabs the user opened.
+    const DASHBOARD_VISITED_TABS = new Set(['base']);
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
     let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
@@ -172,6 +335,54 @@
     const PRESET_MANAGER_SEARCH_TIMERS = {image: null, cos: null, nai: null};
     const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};
     let CURRENT_COMPARE = null;
+    let DASHBOARD_PERSIST_HYDRATED_SCOPE = '';
+
+    function hydrateDashboardPersistentCaches() {
+      // Standalone login pages do not have a trustworthy scope until a token is entered.
+      if (!isDashboardPage() && !AUTH_TOKEN) return;
+      const scope = dashboardPersistScope();
+      if (DASHBOARD_PERSIST_HYDRATED_SCOPE && DASHBOARD_PERSIST_HYDRATED_SCOPE !== scope) {
+        for (const controller of [...RECORD_PAGE_CONTROLLERS.values(), ...ASSET_PAGE_CONTROLLERS.values()]) {
+          try { controller.abort(); } catch (_) {}
+        }
+        RECORD_PAGE_REQUESTS.clear();
+        ASSET_PAGE_REQUESTS.clear();
+        PICKER_PAGE_CACHE.clear();
+        MANAGED_PAGE_CACHE.clear();
+        RECORD_PAGE_CACHE.clear();
+        ASSET_PAGE_CACHE.clear();
+        PICKER_CACHE.tags.data = [];
+        PICKER_CACHE.tags.loadedAt = 0;
+        GALLERY_PICKER_CACHE.items = [];
+        GALLERY_PICKER_CACHE.loaded = false;
+      }
+      DASHBOARD_PERSIST_HYDRATED_SCOPE = scope;
+      for (const entry of listDashboardPersistCache('picker-page')) {
+        if (entry.key) PICKER_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
+      }
+      for (const entry of listDashboardPersistCache('managed-page')) {
+        if (entry.key) MANAGED_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
+      }
+      const tags = readDashboardPersistCache('asset-tags', 'all');
+      if (Array.isArray(tags)) {
+        PICKER_CACHE.tags.data = tags;
+        PICKER_CACHE.tags.loadedAt = Date.now();
+      }
+      const recordPages = listDashboardPersistCache('record-page');
+      for (const entry of recordPages) {
+        if (entry.key && entry.data?.rows && entry.data?.meta) RECORD_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: entry.storedAt || 0}));
+      }
+      const assetPages = listDashboardPersistCache('asset-page');
+      for (const entry of assetPages) {
+        if (entry.key && entry.data?.rows && entry.data?.meta) ASSET_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: entry.storedAt || 0}));
+      }
+      const gallery = readDashboardPersistCache('gallery-picker', 'items');
+      if (Array.isArray(gallery)) {
+        GALLERY_PICKER_CACHE.items = gallery;
+        GALLERY_PICKER_CACHE.loaded = true;
+      }
+    }
+    hydrateDashboardPersistentCaches();
 
     function isEmbeddedFrame() {
       try {

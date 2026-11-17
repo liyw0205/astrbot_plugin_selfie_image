@@ -2229,6 +2229,167 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
+    const DASHBOARD_PERSIST_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+    const DASHBOARD_PERSIST_CACHE_PREFIX = 'selfieImageDashboardCache:v1:';
+    const DASHBOARD_PERSIST_CACHE_INDEX_KEY = `${DASHBOARD_PERSIST_CACHE_PREFIX}index`;
+    const DASHBOARD_PERSIST_CACHE_MAX_ENTRIES = 160;
+    const DASHBOARD_PERSIST_CACHE_MAX_BYTES = 3 * 1024 * 1024;
+    const DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES = 700 * 1024;
+    function dashboardPersistHash(value) {
+      let hash = 2166136261;
+      for (const char of String(value || '')) {
+        hash ^= char.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(36);
+    }
+    function dashboardPersistScope() {
+      const token = String(safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '').trim();
+      return token ? `token:${dashboardPersistHash(token)}` : (isDashboardPage() ? 'dashboard' : 'anonymous');
+    }
+    function dashboardPersistKey(namespace, key, scope = dashboardPersistScope()) {
+      return `${DASHBOARD_PERSIST_CACHE_PREFIX}${scope}:${namespace}:${encodeURIComponent(String(key || ''))}`;
+    }
+    function readDashboardPersistIndex() {
+      try {
+        const value = JSON.parse(safeStorageGet(DASHBOARD_PERSIST_CACHE_INDEX_KEY, '{}'));
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+      } catch (_) {
+        return {};
+      }
+    }
+    function writeDashboardPersistIndex(index) {
+      safeStorageSet(DASHBOARD_PERSIST_CACHE_INDEX_KEY, JSON.stringify(index || {}));
+    }
+    function removeDashboardPersistEntry(storageKey, index = readDashboardPersistIndex()) {
+      safeStorageRemove(storageKey);
+      if (Object.prototype.hasOwnProperty.call(index, storageKey)) {
+        delete index[storageKey];
+        writeDashboardPersistIndex(index);
+      }
+    }
+    function dashboardPersistEntryExpired(item, now = Date.now()) {
+      return !item || now - Number(item.storedAt || 0) > DASHBOARD_PERSIST_CACHE_TTL_MS;
+    }
+    function pruneDashboardPersistCache() {
+      const index = readDashboardPersistIndex();
+      const now = Date.now();
+      let changed = false;
+      let totalBytes = 0;
+      const entries = [];
+      for (const [storageKey, item] of Object.entries(index)) {
+        const raw = safeStorageGet(storageKey, '');
+        const missing = !raw;
+        if (missing || dashboardPersistEntryExpired(item, now)) {
+          safeStorageRemove(storageKey);
+          delete index[storageKey];
+          changed = true;
+          continue;
+        }
+        const size = Math.max(0, Number(item.size || raw.length || 0));
+        totalBytes += size;
+        entries.push({storageKey, item: Object.assign({}, item, {size})});
+      }
+      entries.sort((a, b) => Number(a.item.lastAccessed || a.item.storedAt || 0) - Number(b.item.lastAccessed || b.item.storedAt || 0));
+      while (entries.length > DASHBOARD_PERSIST_CACHE_MAX_ENTRIES || totalBytes > DASHBOARD_PERSIST_CACHE_MAX_BYTES) {
+        const oldest = entries.shift();
+        if (!oldest) break;
+        totalBytes -= Number(oldest.item.size || 0);
+        safeStorageRemove(oldest.storageKey);
+        delete index[oldest.storageKey];
+        changed = true;
+      }
+      if (changed) writeDashboardPersistIndex(index);
+      return index;
+    }
+    function readDashboardPersistCacheEntry(namespace, key) {
+      const scope = dashboardPersistScope();
+      const storageKey = dashboardPersistKey(namespace, key, scope);
+      const index = readDashboardPersistIndex();
+      const raw = safeStorageGet(storageKey, '');
+      if (!raw) {
+        if (index[storageKey]) removeDashboardPersistEntry(storageKey, index);
+        return null;
+      }
+      try {
+        const value = JSON.parse(raw);
+        const item = index[storageKey];
+        if (!item) {
+          safeStorageRemove(storageKey);
+          return null;
+        }
+        if (dashboardPersistEntryExpired(item) || value.scope !== scope) {
+          removeDashboardPersistEntry(storageKey, index);
+          return null;
+        }
+        item.lastAccessed = Date.now();
+        index[storageKey] = item;
+        safeStorageSet(storageKey, JSON.stringify(value));
+        writeDashboardPersistIndex(index);
+        return {data: value.data, storedAt: Number(value.storedAt || item.storedAt || 0)};
+      } catch (_) {
+        removeDashboardPersistEntry(storageKey, index);
+        return null;
+      }
+    }
+    function readDashboardPersistCache(namespace, key) {
+      return readDashboardPersistCacheEntry(namespace, key)?.data ?? null;
+    }
+    function writeDashboardPersistCache(namespace, key, data) {
+      let encoded;
+      try {
+        const scope = dashboardPersistScope();
+        encoded = JSON.stringify({scope, storedAt: Date.now(), data});
+        if (encoded.length > DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES) return false;
+        const storageKey = dashboardPersistKey(namespace, key, scope);
+        safeStorageSet(storageKey, encoded);
+        if (safeStorageGet(storageKey, '') !== encoded) return false;
+        const index = readDashboardPersistIndex();
+        index[storageKey] = {namespace, key: String(key || ''), scope, storedAt: Date.now(), lastAccessed: Date.now(), size: encoded.length};
+        writeDashboardPersistIndex(index);
+        pruneDashboardPersistCache();
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    function removeDashboardPersistCache(namespace, key) {
+      const scope = dashboardPersistScope();
+      removeDashboardPersistEntry(dashboardPersistKey(namespace, key, scope));
+    }
+    function clearDashboardPersistNamespace(namespace, predicate = null) {
+      const index = readDashboardPersistIndex();
+      let changed = false;
+      for (const [storageKey, item] of Object.entries(index)) {
+        if (item.namespace !== namespace) continue;
+        if (typeof predicate === 'function' && !predicate(String(item.key || ''))) continue;
+        safeStorageRemove(storageKey);
+        delete index[storageKey];
+        changed = true;
+      }
+      if (changed) writeDashboardPersistIndex(index);
+    }
+    function listDashboardPersistCache(namespace) {
+      const index = pruneDashboardPersistCache();
+      const scope = dashboardPersistScope();
+      const rows = [];
+      for (const [storageKey, item] of Object.entries(index)) {
+        if (item.namespace !== namespace || item.scope !== scope) continue;
+        const raw = safeStorageGet(storageKey, '');
+        if (!raw) continue;
+        try {
+          const value = JSON.parse(raw);
+          if (value.scope !== scope || dashboardPersistEntryExpired(item)) continue;
+          item.lastAccessed = Date.now();
+          index[storageKey] = item;
+          rows.push({key: String(item.key || ''), data: value.data, storedAt: Number(value.storedAt || 0)});
+        } catch (_) {
+          removeDashboardPersistEntry(storageKey, index);
+        }
+      }
+      writeDashboardPersistIndex(index);
+      return rows;
+    }
     const CANVAS_SESSION_CACHE_TTL_MS = 15000;
     // Prompt/COS/tag catalogs refresh periodically; the shared gallery cache has no TTL.
     const PICKER_CATALOG_CACHE_TTL_MS = 30000;
@@ -2254,6 +2415,8 @@
     let CONFIG = {};
     let CONFIG_LOAD_SEQ = 0;
     let CONFIG_MUTATION_SEQ = 0;
+    // Pages are loaded on demand; startup refreshes only tabs the user opened.
+    const DASHBOARD_VISITED_TABS = new Set(['base']);
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
     let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
@@ -2355,6 +2518,54 @@
     const PRESET_MANAGER_SEARCH_TIMERS = {image: null, cos: null, nai: null};
     const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};
     let CURRENT_COMPARE = null;
+    let DASHBOARD_PERSIST_HYDRATED_SCOPE = '';
+
+    function hydrateDashboardPersistentCaches() {
+      // Standalone login pages do not have a trustworthy scope until a token is entered.
+      if (!isDashboardPage() && !AUTH_TOKEN) return;
+      const scope = dashboardPersistScope();
+      if (DASHBOARD_PERSIST_HYDRATED_SCOPE && DASHBOARD_PERSIST_HYDRATED_SCOPE !== scope) {
+        for (const controller of [...RECORD_PAGE_CONTROLLERS.values(), ...ASSET_PAGE_CONTROLLERS.values()]) {
+          try { controller.abort(); } catch (_) {}
+        }
+        RECORD_PAGE_REQUESTS.clear();
+        ASSET_PAGE_REQUESTS.clear();
+        PICKER_PAGE_CACHE.clear();
+        MANAGED_PAGE_CACHE.clear();
+        RECORD_PAGE_CACHE.clear();
+        ASSET_PAGE_CACHE.clear();
+        PICKER_CACHE.tags.data = [];
+        PICKER_CACHE.tags.loadedAt = 0;
+        GALLERY_PICKER_CACHE.items = [];
+        GALLERY_PICKER_CACHE.loaded = false;
+      }
+      DASHBOARD_PERSIST_HYDRATED_SCOPE = scope;
+      for (const entry of listDashboardPersistCache('picker-page')) {
+        if (entry.key) PICKER_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
+      }
+      for (const entry of listDashboardPersistCache('managed-page')) {
+        if (entry.key) MANAGED_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
+      }
+      const tags = readDashboardPersistCache('asset-tags', 'all');
+      if (Array.isArray(tags)) {
+        PICKER_CACHE.tags.data = tags;
+        PICKER_CACHE.tags.loadedAt = Date.now();
+      }
+      const recordPages = listDashboardPersistCache('record-page');
+      for (const entry of recordPages) {
+        if (entry.key && entry.data?.rows && entry.data?.meta) RECORD_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: entry.storedAt || 0}));
+      }
+      const assetPages = listDashboardPersistCache('asset-page');
+      for (const entry of assetPages) {
+        if (entry.key && entry.data?.rows && entry.data?.meta) ASSET_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: entry.storedAt || 0}));
+      }
+      const gallery = readDashboardPersistCache('gallery-picker', 'items');
+      if (Array.isArray(gallery)) {
+        GALLERY_PICKER_CACHE.items = gallery;
+        GALLERY_PICKER_CACHE.loaded = true;
+      }
+    }
+    hydrateDashboardPersistentCaches();
 
     function isEmbeddedFrame() {
       try {
@@ -5232,10 +5443,13 @@ Source prompt:
       value.cachedAt = Date.now();
       cache.delete(key);
       cache.set(key, value);
+      const namespace = cache === RECORD_PAGE_CACHE ? 'record-page' : cache === ASSET_PAGE_CACHE ? 'asset-page' : '';
+      if (namespace) writeDashboardPersistCache(namespace, key, value);
       while (cache.size > PAGE_CACHE_MAX_ENTRIES) {
         const oldest = cache.keys().next().value;
         if (!oldest) break;
         cache.delete(oldest);
+        if (namespace) removeDashboardPersistCache(namespace, oldest);
       }
       return value;
     }
@@ -5350,10 +5564,12 @@ Source prompt:
     function clearRecordPageCache() {
       RECORD_PAGE_CACHE_VERSION += 1;
       clearPageCache(RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS);
+      clearDashboardPersistNamespace('record-page');
     }
     function clearAssetPageCache() {
       ASSET_PAGE_CACHE_VERSION += 1;
       clearPageCache(ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS);
+      clearDashboardPersistNamespace('asset-page');
     }
 
     async function loadRecords(showRefreshToast = false) {
@@ -5364,6 +5580,7 @@ Source prompt:
       abortPageRequests(RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, requestPath);
       const cached = showRefreshToast ? null : usablePageCache(RECORD_PAGE_CACHE, requestPath);
       if (showRefreshToast) RECORD_PAGE_CACHE.delete(requestPath);
+      if (showRefreshToast) removeDashboardPersistCache('record-page', requestPath);
       if (cached) {
         applyRecordPage(cached);
         RECORD_LOADING = false;
@@ -5867,6 +6084,7 @@ Source prompt:
       abortPageRequests(ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, requestPath);
       const cached = showRefreshToast ? null : usablePageCache(ASSET_PAGE_CACHE, requestPath);
       if (showRefreshToast) ASSET_PAGE_CACHE.delete(requestPath);
+      if (showRefreshToast) removeDashboardPersistCache('asset-page', requestPath);
       if (cached) {
         applyAssetPage(cached);
         ASSET_LOADING = false;
@@ -6308,6 +6526,7 @@ Source prompt:
       GALLERY_PICKER_CACHE.request = null;
       GALLERY_PICKER_CACHE.items = [];
       GALLERY_PICKER_CACHE.loaded = false;
+      removeDashboardPersistCache('gallery-picker', 'items');
     }
     function normalizeGalleryPickerItems(items) {
       const seen = new Set();
@@ -6329,6 +6548,7 @@ Source prompt:
         if (res.success && version === GALLERY_PICKER_CACHE.version) {
           GALLERY_PICKER_CACHE.items = normalizeGalleryPickerItems(res.data?.items);
           GALLERY_PICKER_CACHE.loaded = true;
+          writeDashboardPersistCache('gallery-picker', 'items', GALLERY_PICKER_CACHE.items);
         }
         return res;
       }).finally(() => {
@@ -6409,6 +6629,7 @@ Source prompt:
       try { return typeof window.caches?.open === 'function' && typeof window.Response === 'function'; } catch (_) { return false; }
     }
     async function deletePersistentProtectedMedia(key) {
+      removeDashboardPersistCache('media', key);
       const meta = readProtectedMediaMeta();
       delete meta[key];
       writeProtectedMediaMeta(meta);
@@ -6419,6 +6640,7 @@ Source prompt:
       } catch (_) {}
     }
     async function clearPersistentProtectedMedia() {
+      clearDashboardPersistNamespace('media');
       writeProtectedMediaMeta({});
       if (!mediaPersistentSupported()) return;
       try { await caches.delete(PROTECTED_MEDIA_PERSIST_CACHE_NAME); } catch (_) {}
@@ -6440,15 +6662,22 @@ Source prompt:
       if (changed) writeProtectedMediaMeta(meta);
     }
     async function readPersistentProtectedMedia(key, scope) {
-      if (!mediaPersistentSupported()) return null;
+      const readFallback = () => {
+        const value = readDashboardPersistCache('media', key);
+        if (!value?.dataUrl) return null;
+        return {dataUrl: String(value.dataUrl), mimeType: String(value.mimeType || ''), size: Number(value.size || 0)};
+      };
+      if (!mediaPersistentSupported()) return readFallback();
       const meta = readProtectedMediaMeta();
       const now = Date.now();
       try {
         const cache = await caches.open(PROTECTED_MEDIA_PERSIST_CACHE_NAME);
         const response = await cache.match(protectedMediaPersistentUrl(key));
         if (!response) {
+          const fallback = readFallback();
           if (meta[key]) await deletePersistentProtectedMedia(key);
-          return null;
+          if (fallback) writeDashboardPersistCache('media', key, fallback);
+          return fallback;
         }
         const headers = response.headers;
         const item = meta[key] || {
@@ -6457,8 +6686,10 @@ Source prompt:
           lastAccessed: Number(headers.get('x-selfie-cache-last-accessed') || 0),
         };
         if (item.scope !== scope || now - Number(item.lastAccessed || item.cachedAt || 0) > PROTECTED_MEDIA_PERSIST_TTL_MS) {
+          const fallback = readFallback();
           await deletePersistentProtectedMedia(key);
-          return null;
+          if (fallback) writeDashboardPersistCache('media', key, fallback);
+          return fallback;
         }
         const payload = await response.json();
         if (!payload?.data_url) throw new Error('媒体缓存无效');
@@ -6467,13 +6698,19 @@ Source prompt:
         writeProtectedMediaMeta(meta);
         return {dataUrl: String(payload.data_url), mimeType: String(payload.mime_type || ''), size: Number(payload.size || 0)};
       } catch (_) {
+        const fallback = readFallback();
         await deletePersistentProtectedMedia(key);
-        return null;
+        if (fallback) writeDashboardPersistCache('media', key, fallback);
+        return fallback;
       }
     }
     async function persistProtectedMedia(key, entry, scope) {
-      if (!mediaPersistentSupported() || !entry?.dataUrl) return;
+      if (!entry?.dataUrl) return;
       try {
+        if (!mediaPersistentSupported()) {
+          writeDashboardPersistCache('media', key, entry);
+          return;
+        }
         const cache = await caches.open(PROTECTED_MEDIA_PERSIST_CACHE_NAME);
         const now = Date.now();
         await cache.put(protectedMediaPersistentUrl(key), new Response(JSON.stringify({
@@ -6493,7 +6730,12 @@ Source prompt:
           await cache.delete(protectedMediaPersistentUrl(oldKey)).catch(() => {});
         }
         writeProtectedMediaMeta(meta);
-      } catch (_) {}
+        removeDashboardPersistCache('media', key);
+      } catch (_) {
+        // Sandboxed embedded pages can expose CacheStorage but reject open/put.
+        // Keep small thumbnails (and any bounded preview) in the storage fallback.
+        writeDashboardPersistCache('media', key, entry);
+      }
     }
     function touchProtectedMedia(key, entry) {
       entry.lastUsed = Date.now();
@@ -8261,16 +8503,16 @@ Source prompt:
           }
           if (startup.status !== 'ready') continue;
           // The first login request may have observed the temporary empty
-          // state. Refresh only once after the durable stores are installed.
-          METRICS_REQUESTS.clear();
-          TASK_LOAD_SEQ += 1;
-          TASK_REQUESTS.clear();
-          await Promise.all([
-            loadRecords(true),
-            loadAssets(true),
-            loadMetrics(),
-            loadTasks(false),
-          ]);
+          // state. Refresh only pages the user has actually opened.
+          const refreshes = [];
+          if (DASHBOARD_VISITED_TABS.has('monitor')) {
+            METRICS_REQUESTS.clear();
+            TASK_LOAD_SEQ += 1;
+            TASK_REQUESTS.clear();
+            refreshes.push(loadRecords(true), loadMetrics(), loadTasks(false));
+          }
+          if (DASHBOARD_VISITED_TABS.has('assets')) refreshes.push(loadAssets(true), loadAssetTags(true));
+          await Promise.all(refreshes);
           await checkHealth();
           return true;
         }
@@ -8289,6 +8531,9 @@ Source prompt:
         AUTH_TOKEN = ($('loginToken')?.value || '').trim();
       }
       ensureProtectedMediaScope();
+      // A standalone page may boot before the user enters a token. Hydrate the
+      // token-scoped page/catalog cache after authentication is established.
+      hydrateDashboardPersistentCaches();
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};
@@ -8307,12 +8552,8 @@ Source prompt:
         }
         if ($('loginStatus')) $('loginStatus').textContent = '';
         const health = await checkHealth();
-        await refreshSelfie();
-        await loadRecords(false);
-        await loadAssets(false);
-        await loadAssetTags();
-        await loadMetrics();
-        await loadStudioList(STUDIO.current && STUDIO.current.id);
+        // The base tab only needs config and health. Heavy data pages load when
+        // their tab is first opened and reuse their own caches thereafter.
         await resumeImageTestTask();
         if (health?.status === 'starting' || health?.startup?.status === 'loading') {
           void refreshDashboardAfterStartupReady();
@@ -8342,6 +8583,12 @@ Source prompt:
       AUTH_TOKEN = '';
       clearProtectedMediaCache();
       clearGalleryPickerCache();
+      clearRecordPageCache();
+      clearAssetPageCache();
+      clearPickerCache();
+      for (const namespace of ['record-page', 'asset-page', 'picker-page', 'managed-page', 'asset-tags', 'gallery-picker']) {
+        clearDashboardPersistNamespace(namespace);
+      }
       safeStorageRemove('selfieImageToken');
       safeStorageRemove('aicatToken');
       if ($('loginToken')) $('loginToken').value = '';
@@ -8407,6 +8654,10 @@ Source prompt:
     let BACKUP_LOAD_SEQ = 0;
     let BACKUP_MUTATION_SEQ = 0;
     let BACKUP_LOAD_REQUEST = null;
+    let BACKUP_OPTIONS_CACHE = null;
+    let BACKUP_LIST_CACHE = null;
+    let BACKUP_LIST_CACHE_AT = 0;
+    const BACKUP_LIST_CACHE_TTL_MS = 30 * 1000;
     let BACKUP_LIST = [];
     let BACKUP_CAN_UPLOAD = true;
     let BACKUP_RESTORE_FOCUS = null;
@@ -8583,17 +8834,40 @@ Source prompt:
       root.querySelectorAll('.backup-restore, .backup-delete').forEach(button => { button.disabled = BACKUP_BUSY || BACKUP_RESTORE_PENDING; });
     }
 
-    async function loadBackupManager() {
-      if (BACKUP_LOAD_REQUEST) return BACKUP_LOAD_REQUEST;
+    function invalidateBackupListCache() {
+      BACKUP_LIST_CACHE = null;
+      BACKUP_LIST_CACHE_AT = 0;
+    }
+
+    function renderCachedBackupManager() {
+      if (!BACKUP_OPTIONS_CACHE || !BACKUP_LIST_CACHE) return false;
+      BACKUP_OPTIONS = BACKUP_OPTIONS_CACHE;
+      renderBackupOptions();
+      renderBackupList(BACKUP_LIST_CACHE);
+      return true;
+    }
+
+    async function loadBackupManager(force = false) {
+      if (BACKUP_LOAD_REQUEST) {
+        const pending = BACKUP_LOAD_REQUEST;
+        return force ? pending.then(() => loadBackupManager(true)) : pending;
+      }
+      if (!force && Date.now() - BACKUP_LIST_CACHE_AT < BACKUP_LIST_CACHE_TTL_MS && renderCachedBackupManager()) return;
       const loadSeq = ++BACKUP_LOAD_SEQ;
       const mutationSeq = BACKUP_MUTATION_SEQ;
       const request = (async () => {
         try {
-          const [options, list] = await Promise.all([api('/api/backups/options'), api('/api/backups')]);
+          const optionsRequest = BACKUP_OPTIONS_CACHE
+            ? Promise.resolve({data:{items:BACKUP_OPTIONS_CACHE}})
+            : api('/api/backups/options');
+          const [options, list] = await Promise.all([optionsRequest, api('/api/backups')]);
           if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
           BACKUP_OPTIONS = Array.isArray(options.data?.items) ? options.data.items : [];
+          BACKUP_OPTIONS_CACHE = BACKUP_OPTIONS;
+          BACKUP_LIST_CACHE = list.data || {};
+          BACKUP_LIST_CACHE_AT = Date.now();
           renderBackupOptions();
-          renderBackupList(list.data || {});
+          renderBackupList(BACKUP_LIST_CACHE);
         } catch (error) {
           if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
           const message = error.message || '备份列表读取失败';
@@ -8632,13 +8906,20 @@ Source prompt:
       if (BACKUP_BUSY || BACKUP_RESTORE_PENDING) return;
       const selected = [...document.querySelectorAll('#backupOptions input[type="checkbox"]:checked')].map(input => input.value);
       setBackupBusy(true);
+      let refresh = false;
       try {
         BACKUP_MUTATION_SEQ += 1;
+        invalidateBackupListCache();
         const response = await api('/api/backups', {method:'POST', body: JSON.stringify({selected})});
+        refresh = true;
         await waitBackupTask(response.data?.task_id, '正在创建备份');
         showToast('备份已完成', 'ok');
       } catch (error) { showToast(error.message || '创建备份失败', 'bad'); }
-      finally { setBackupBusy(false); setBackupProgress(100, '就绪', false); await loadBackupManager(); }
+      finally {
+        setBackupBusy(false);
+        setBackupProgress(100, '就绪', false);
+        if (refresh) await loadBackupManager(true);
+      }
     }
 
     function setBackupBusy(busy) {
@@ -8694,6 +8975,7 @@ Source prompt:
         return;
       }
       setBackupBusy(true);
+      let refresh = false;
       try {
         const name = file?.name || BACKUP_LIST.find(item => item.id === id)?.filename || id;
         const labels = selected.map(value => BACKUP_OPTIONS.find(item => item.id === value)?.label || value).join('、');
@@ -8701,13 +8983,19 @@ Source prompt:
         $('backupRestoreModal').classList.remove('show');
         $('backupUploadFile').value = '';
         BACKUP_MUTATION_SEQ += 1;
+        invalidateBackupListCache();
+        refresh = true;
         const response = file ? await uploadArchiveFile(file, 'backup', {selected})
           : await api(`/api/backups/${encodeURIComponent(id)}/restore`, {method:'POST', body:JSON.stringify({selected})});
         await waitBackupTask(response.data?.task_id, '正在校验并准备恢复');
         BACKUP_RESTORE_PENDING = true;
         showToast('恢复已准备，请重启插件后生效', 'ok');
       } catch (error) { showToast(error.message || '恢复备份失败', 'bad'); }
-      finally { setBackupBusy(false); setBackupProgress(100, '就绪', false); await loadBackupManager(); }
+      finally {
+        setBackupBusy(false);
+        setBackupProgress(100, '就绪', false);
+        if (refresh) await loadBackupManager(true);
+      }
     }
 
     async function deleteBackup(id) {
@@ -8717,8 +9005,11 @@ Source prompt:
         const name = BACKUP_LIST.find(item => item.id === id)?.filename || id;
         if (!await confirmAction(`删除 ${name}？删除后无法找回此备份。`, {title:'确认删除备份', confirmText:'确认删除'})) return;
         BACKUP_MUTATION_SEQ += 1;
+        invalidateBackupListCache();
         const response = await api('/api/backups/delete', {method:'POST', body: JSON.stringify({id})});
-        renderBackupList(response.data || {});
+        BACKUP_LIST_CACHE = response.data || {};
+        BACKUP_LIST_CACHE_AT = Date.now();
+        renderBackupList(BACKUP_LIST_CACHE);
         showToast('备份已删除', 'ok');
       } catch (error) { showToast(error.message || '删除备份失败', 'bad'); }
       finally { setBackupBusy(false); }
@@ -8871,6 +9162,14 @@ Source prompt:
       const entry = PICKER_CACHE.tags;
       if (!force && pickerCacheFresh(entry)) return entry.data;
       if (entry.request) return entry.request;
+      if (!force) {
+        const persisted = readDashboardPersistCacheEntry('asset-tags', 'all');
+        if (Array.isArray(persisted?.data)) {
+          entry.data = persisted.data;
+          entry.loadedAt = Date.now();
+          return entry.data;
+        }
+      }
       const version = entry.version;
       let request;
       request = (async () => {
@@ -8879,6 +9178,7 @@ Source prompt:
         if (entry.version === version) {
           entry.data = rows;
           entry.loadedAt = Date.now();
+          writeDashboardPersistCache('asset-tags', 'all', rows);
         }
         return rows;
       })().finally(() => {
@@ -8896,16 +9196,29 @@ Source prompt:
         entry.request = null;
         entry.version += 1;
       };
-      if (!normalized || normalized === 'tags') clearEntry(PICKER_CACHE.tags);
+      if (!normalized || normalized === 'tags') {
+        clearEntry(PICKER_CACHE.tags);
+        clearDashboardPersistNamespace('asset-tags');
+      }
       if (!normalized || normalized === 'image') {
         ASSET_STUDIO_PRESETS = [];
         ASSET_STUDIO_PRESET_LOAD_SEQ += 1;
       }
       for (const key of [...PICKER_PAGE_CACHE.keys()]) {
-        if (!normalized || key.startsWith(`${normalized}:`)) PICKER_PAGE_CACHE.delete(key);
+        if (!normalized || key.startsWith(`${normalized}:`)) {
+          PICKER_PAGE_CACHE.delete(key);
+          removeDashboardPersistCache('picker-page', key);
+        }
       }
       for (const key of [...MANAGED_PAGE_CACHE.keys()]) {
-        if (!normalized || key.startsWith(`${normalized}:`)) MANAGED_PAGE_CACHE.delete(key);
+        if (!normalized || key.startsWith(`${normalized}:`)) {
+          MANAGED_PAGE_CACHE.delete(key);
+          removeDashboardPersistCache('managed-page', key);
+        }
+      }
+      if (!normalized || normalized === 'image' || normalized === 'cos' || normalized === 'nai') {
+        clearDashboardPersistNamespace('picker-page', key => !normalized || key.startsWith(`${normalized}:`));
+        clearDashboardPersistNamespace('managed-page', key => !normalized || key.startsWith(`${normalized}:`));
       }
       for (const state of PICKER_PANEL_STATES.values()) {
         if (!normalized || state.kind === normalized) {
@@ -8939,7 +9252,18 @@ Source prompt:
       const normalizedQuery = String(query || '').trim();
       const key = `${kind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
       let cached = PICKER_PAGE_CACHE.get(key);
-      if (force) { PICKER_PAGE_CACHE.delete(key); cached = null; }
+      if (force) {
+        PICKER_PAGE_CACHE.delete(key);
+        removeDashboardPersistCache('picker-page', key);
+        cached = null;
+      }
+      if (!force && (!cached?.data || Date.now() - cached.loadedAt >= PICKER_CATALOG_CACHE_TTL_MS)) {
+        const persisted = readDashboardPersistCacheEntry('picker-page', key);
+        if (persisted?.data) {
+          cached = {data: persisted.data, loadedAt: Date.now(), request: null};
+          PICKER_PAGE_CACHE.set(key, cached);
+        }
+      }
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
       const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
@@ -8971,11 +9295,15 @@ Source prompt:
         const data = {items, total, offset, limit: PICKER_PAGE_SIZE};
         if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
           PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
+          writeDashboardPersistCache('picker-page', key, data);
           while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
         }
         return data;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) PICKER_PAGE_CACHE.delete(key);
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+          PICKER_PAGE_CACHE.delete(key);
+          removeDashboardPersistCache('picker-page', key);
+        }
         throw error;
       });
       PICKER_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});
@@ -8995,7 +9323,18 @@ Source prompt:
       const query = normalizedQuery;
       const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
       let cached = MANAGED_PAGE_CACHE.get(key);
-      if (force) { MANAGED_PAGE_CACHE.delete(key); cached = null; }
+      if (force) {
+        MANAGED_PAGE_CACHE.delete(key);
+        removeDashboardPersistCache('managed-page', key);
+        cached = null;
+      }
+      if (!force && (!cached?.data || Date.now() - cached.loadedAt >= PICKER_CATALOG_CACHE_TTL_MS)) {
+        const persisted = readDashboardPersistCacheEntry('managed-page', key);
+        if (persisted?.data) {
+          cached = {data: persisted.data, loadedAt: Date.now(), request: null};
+          MANAGED_PAGE_CACHE.set(key, cached);
+        }
+      }
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
       const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
@@ -9038,11 +9377,15 @@ Source prompt:
         const value = {items, total, offset: (page - 1) * PICKER_PAGE_SIZE, limit: PICKER_PAGE_SIZE};
         if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
           MANAGED_PAGE_CACHE.set(key, {data: value, loadedAt: Date.now(), request: null});
+          writeDashboardPersistCache('managed-page', key, value);
           while (MANAGED_PAGE_CACHE.size > 80) MANAGED_PAGE_CACHE.delete(MANAGED_PAGE_CACHE.keys().next().value);
         }
         return value;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) MANAGED_PAGE_CACHE.delete(key);
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+          MANAGED_PAGE_CACHE.delete(key);
+          removeDashboardPersistCache('managed-page', key);
+        }
         throw error;
       });
       MANAGED_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});
@@ -11349,6 +11692,7 @@ Source prompt:
       const button = [...document.querySelectorAll('nav.page-nav button[data-tab]')].find(item => item.dataset.tab === target);
       const section = target ? $(target) : null;
       if (!button || !section) return false;
+      DASHBOARD_VISITED_TABS.add(target);
       const current = document.querySelector('nav.page-nav button.active')?.dataset.tab || '';
       if (current === target && options.force !== true) return false;
       document.querySelectorAll('nav.page-nav button').forEach(item => item.classList.toggle('active', item === button));

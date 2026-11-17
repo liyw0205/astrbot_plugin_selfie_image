@@ -331,16 +331,16 @@
           }
           if (startup.status !== 'ready') continue;
           // The first login request may have observed the temporary empty
-          // state. Refresh only once after the durable stores are installed.
-          METRICS_REQUESTS.clear();
-          TASK_LOAD_SEQ += 1;
-          TASK_REQUESTS.clear();
-          await Promise.all([
-            loadRecords(true),
-            loadAssets(true),
-            loadMetrics(),
-            loadTasks(false),
-          ]);
+          // state. Refresh only pages the user has actually opened.
+          const refreshes = [];
+          if (DASHBOARD_VISITED_TABS.has('monitor')) {
+            METRICS_REQUESTS.clear();
+            TASK_LOAD_SEQ += 1;
+            TASK_REQUESTS.clear();
+            refreshes.push(loadRecords(true), loadMetrics(), loadTasks(false));
+          }
+          if (DASHBOARD_VISITED_TABS.has('assets')) refreshes.push(loadAssets(true), loadAssetTags(true));
+          await Promise.all(refreshes);
           await checkHealth();
           return true;
         }
@@ -359,6 +359,9 @@
         AUTH_TOKEN = ($('loginToken')?.value || '').trim();
       }
       ensureProtectedMediaScope();
+      // A standalone page may boot before the user enters a token. Hydrate the
+      // token-scoped page/catalog cache after authentication is established.
+      hydrateDashboardPersistentCaches();
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};
@@ -377,12 +380,8 @@
         }
         if ($('loginStatus')) $('loginStatus').textContent = '';
         const health = await checkHealth();
-        await refreshSelfie();
-        await loadRecords(false);
-        await loadAssets(false);
-        await loadAssetTags();
-        await loadMetrics();
-        await loadStudioList(STUDIO.current && STUDIO.current.id);
+        // The base tab only needs config and health. Heavy data pages load when
+        // their tab is first opened and reuse their own caches thereafter.
         await resumeImageTestTask();
         if (health?.status === 'starting' || health?.startup?.status === 'loading') {
           void refreshDashboardAfterStartupReady();
@@ -412,6 +411,12 @@
       AUTH_TOKEN = '';
       clearProtectedMediaCache();
       clearGalleryPickerCache();
+      clearRecordPageCache();
+      clearAssetPageCache();
+      clearPickerCache();
+      for (const namespace of ['record-page', 'asset-page', 'picker-page', 'managed-page', 'asset-tags', 'gallery-picker']) {
+        clearDashboardPersistNamespace(namespace);
+      }
       safeStorageRemove('selfieImageToken');
       safeStorageRemove('aicatToken');
       if ($('loginToken')) $('loginToken').value = '';

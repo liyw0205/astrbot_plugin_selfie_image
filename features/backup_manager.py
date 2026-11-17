@@ -192,7 +192,10 @@ class BackupManager:
         self._pending_restore = self.backup_root / "pending-restore"
         self._restore_pending = self._pending_restore.exists()
         self._transaction = self.backup_root / ".restore-transaction"
-        self._manifest_cache: dict[Path, tuple[tuple[int, ...], dict[str, Any]]] = {}
+        # Keep manifest metadata separate from checksum validation state.  The
+        # dashboard only needs metadata for its list, while restore/download
+        # still require a verified cache entry (or a fresh checksum pass).
+        self._manifest_cache: dict[Path, tuple[tuple[int, ...], dict[str, Any], bool]] = {}
         self.transfers = ArchiveTransferStore(self.backup_root / ".transfers")
 
     @property
@@ -502,17 +505,17 @@ class BackupManager:
         signature = self._stat_key(archive.stat())
         with self._lock:
             cached = self._manifest_cache.get(archive)
-            if cached and cached[0] == signature:
+            if cached and cached[0] == signature and (not verify or cached[2]):
                 return cached[1]
         with zipfile.ZipFile(archive, "r") as incoming:
             manifest = self._read_archive_manifest(incoming)
             if verify:
                 self._verify_archive_checksums(incoming, manifest)
-        if verify and signature == self._stat_key(archive.stat()):
+        if signature == self._stat_key(archive.stat()):
             with self._lock:
                 if len(self._manifest_cache) >= MAX_BACKUPS:
                     self._manifest_cache.clear()
-                self._manifest_cache[archive] = (signature, manifest)
+                self._manifest_cache[archive] = (signature, manifest, verify)
         return manifest
 
     def _read_archive_manifest(self, archive: zipfile.ZipFile) -> dict[str, Any]:
@@ -819,6 +822,7 @@ class BackupManager:
             if not archive.is_file():
                 raise BackupManagerError("备份不存在")
             archive.unlink()
+            self._manifest_cache.pop(archive, None)
         return self.list_backups(verify=False)
 
     def download_backup(self, backup_id: str) -> dict[str, Any]:

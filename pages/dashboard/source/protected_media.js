@@ -31,6 +31,7 @@
       GALLERY_PICKER_CACHE.request = null;
       GALLERY_PICKER_CACHE.items = [];
       GALLERY_PICKER_CACHE.loaded = false;
+      removeDashboardPersistCache('gallery-picker', 'items');
     }
     function normalizeGalleryPickerItems(items) {
       const seen = new Set();
@@ -52,6 +53,7 @@
         if (res.success && version === GALLERY_PICKER_CACHE.version) {
           GALLERY_PICKER_CACHE.items = normalizeGalleryPickerItems(res.data?.items);
           GALLERY_PICKER_CACHE.loaded = true;
+          writeDashboardPersistCache('gallery-picker', 'items', GALLERY_PICKER_CACHE.items);
         }
         return res;
       }).finally(() => {
@@ -132,6 +134,7 @@
       try { return typeof window.caches?.open === 'function' && typeof window.Response === 'function'; } catch (_) { return false; }
     }
     async function deletePersistentProtectedMedia(key) {
+      removeDashboardPersistCache('media', key);
       const meta = readProtectedMediaMeta();
       delete meta[key];
       writeProtectedMediaMeta(meta);
@@ -142,6 +145,7 @@
       } catch (_) {}
     }
     async function clearPersistentProtectedMedia() {
+      clearDashboardPersistNamespace('media');
       writeProtectedMediaMeta({});
       if (!mediaPersistentSupported()) return;
       try { await caches.delete(PROTECTED_MEDIA_PERSIST_CACHE_NAME); } catch (_) {}
@@ -163,15 +167,22 @@
       if (changed) writeProtectedMediaMeta(meta);
     }
     async function readPersistentProtectedMedia(key, scope) {
-      if (!mediaPersistentSupported()) return null;
+      const readFallback = () => {
+        const value = readDashboardPersistCache('media', key);
+        if (!value?.dataUrl) return null;
+        return {dataUrl: String(value.dataUrl), mimeType: String(value.mimeType || ''), size: Number(value.size || 0)};
+      };
+      if (!mediaPersistentSupported()) return readFallback();
       const meta = readProtectedMediaMeta();
       const now = Date.now();
       try {
         const cache = await caches.open(PROTECTED_MEDIA_PERSIST_CACHE_NAME);
         const response = await cache.match(protectedMediaPersistentUrl(key));
         if (!response) {
+          const fallback = readFallback();
           if (meta[key]) await deletePersistentProtectedMedia(key);
-          return null;
+          if (fallback) writeDashboardPersistCache('media', key, fallback);
+          return fallback;
         }
         const headers = response.headers;
         const item = meta[key] || {
@@ -180,8 +191,10 @@
           lastAccessed: Number(headers.get('x-selfie-cache-last-accessed') || 0),
         };
         if (item.scope !== scope || now - Number(item.lastAccessed || item.cachedAt || 0) > PROTECTED_MEDIA_PERSIST_TTL_MS) {
+          const fallback = readFallback();
           await deletePersistentProtectedMedia(key);
-          return null;
+          if (fallback) writeDashboardPersistCache('media', key, fallback);
+          return fallback;
         }
         const payload = await response.json();
         if (!payload?.data_url) throw new Error('媒体缓存无效');
@@ -190,13 +203,19 @@
         writeProtectedMediaMeta(meta);
         return {dataUrl: String(payload.data_url), mimeType: String(payload.mime_type || ''), size: Number(payload.size || 0)};
       } catch (_) {
+        const fallback = readFallback();
         await deletePersistentProtectedMedia(key);
-        return null;
+        if (fallback) writeDashboardPersistCache('media', key, fallback);
+        return fallback;
       }
     }
     async function persistProtectedMedia(key, entry, scope) {
-      if (!mediaPersistentSupported() || !entry?.dataUrl) return;
+      if (!entry?.dataUrl) return;
       try {
+        if (!mediaPersistentSupported()) {
+          writeDashboardPersistCache('media', key, entry);
+          return;
+        }
         const cache = await caches.open(PROTECTED_MEDIA_PERSIST_CACHE_NAME);
         const now = Date.now();
         await cache.put(protectedMediaPersistentUrl(key), new Response(JSON.stringify({
@@ -216,7 +235,12 @@
           await cache.delete(protectedMediaPersistentUrl(oldKey)).catch(() => {});
         }
         writeProtectedMediaMeta(meta);
-      } catch (_) {}
+        removeDashboardPersistCache('media', key);
+      } catch (_) {
+        // Sandboxed embedded pages can expose CacheStorage but reject open/put.
+        // Keep small thumbnails (and any bounded preview) in the storage fallback.
+        writeDashboardPersistCache('media', key, entry);
+      }
     }
     function touchProtectedMedia(key, entry) {
       entry.lastUsed = Date.now();

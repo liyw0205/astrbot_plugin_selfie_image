@@ -33,6 +33,14 @@
       const entry = PICKER_CACHE.tags;
       if (!force && pickerCacheFresh(entry)) return entry.data;
       if (entry.request) return entry.request;
+      if (!force) {
+        const persisted = readDashboardPersistCacheEntry('asset-tags', 'all');
+        if (Array.isArray(persisted?.data)) {
+          entry.data = persisted.data;
+          entry.loadedAt = Date.now();
+          return entry.data;
+        }
+      }
       const version = entry.version;
       let request;
       request = (async () => {
@@ -41,6 +49,7 @@
         if (entry.version === version) {
           entry.data = rows;
           entry.loadedAt = Date.now();
+          writeDashboardPersistCache('asset-tags', 'all', rows);
         }
         return rows;
       })().finally(() => {
@@ -58,16 +67,29 @@
         entry.request = null;
         entry.version += 1;
       };
-      if (!normalized || normalized === 'tags') clearEntry(PICKER_CACHE.tags);
+      if (!normalized || normalized === 'tags') {
+        clearEntry(PICKER_CACHE.tags);
+        clearDashboardPersistNamespace('asset-tags');
+      }
       if (!normalized || normalized === 'image') {
         ASSET_STUDIO_PRESETS = [];
         ASSET_STUDIO_PRESET_LOAD_SEQ += 1;
       }
       for (const key of [...PICKER_PAGE_CACHE.keys()]) {
-        if (!normalized || key.startsWith(`${normalized}:`)) PICKER_PAGE_CACHE.delete(key);
+        if (!normalized || key.startsWith(`${normalized}:`)) {
+          PICKER_PAGE_CACHE.delete(key);
+          removeDashboardPersistCache('picker-page', key);
+        }
       }
       for (const key of [...MANAGED_PAGE_CACHE.keys()]) {
-        if (!normalized || key.startsWith(`${normalized}:`)) MANAGED_PAGE_CACHE.delete(key);
+        if (!normalized || key.startsWith(`${normalized}:`)) {
+          MANAGED_PAGE_CACHE.delete(key);
+          removeDashboardPersistCache('managed-page', key);
+        }
+      }
+      if (!normalized || normalized === 'image' || normalized === 'cos' || normalized === 'nai') {
+        clearDashboardPersistNamespace('picker-page', key => !normalized || key.startsWith(`${normalized}:`));
+        clearDashboardPersistNamespace('managed-page', key => !normalized || key.startsWith(`${normalized}:`));
       }
       for (const state of PICKER_PANEL_STATES.values()) {
         if (!normalized || state.kind === normalized) {
@@ -101,7 +123,18 @@
       const normalizedQuery = String(query || '').trim();
       const key = `${kind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
       let cached = PICKER_PAGE_CACHE.get(key);
-      if (force) { PICKER_PAGE_CACHE.delete(key); cached = null; }
+      if (force) {
+        PICKER_PAGE_CACHE.delete(key);
+        removeDashboardPersistCache('picker-page', key);
+        cached = null;
+      }
+      if (!force && (!cached?.data || Date.now() - cached.loadedAt >= PICKER_CATALOG_CACHE_TTL_MS)) {
+        const persisted = readDashboardPersistCacheEntry('picker-page', key);
+        if (persisted?.data) {
+          cached = {data: persisted.data, loadedAt: Date.now(), request: null};
+          PICKER_PAGE_CACHE.set(key, cached);
+        }
+      }
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
       const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
@@ -133,11 +166,15 @@
         const data = {items, total, offset, limit: PICKER_PAGE_SIZE};
         if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
           PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
+          writeDashboardPersistCache('picker-page', key, data);
           while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
         }
         return data;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) PICKER_PAGE_CACHE.delete(key);
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+          PICKER_PAGE_CACHE.delete(key);
+          removeDashboardPersistCache('picker-page', key);
+        }
         throw error;
       });
       PICKER_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});
@@ -157,7 +194,18 @@
       const query = normalizedQuery;
       const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
       let cached = MANAGED_PAGE_CACHE.get(key);
-      if (force) { MANAGED_PAGE_CACHE.delete(key); cached = null; }
+      if (force) {
+        MANAGED_PAGE_CACHE.delete(key);
+        removeDashboardPersistCache('managed-page', key);
+        cached = null;
+      }
+      if (!force && (!cached?.data || Date.now() - cached.loadedAt >= PICKER_CATALOG_CACHE_TTL_MS)) {
+        const persisted = readDashboardPersistCacheEntry('managed-page', key);
+        if (persisted?.data) {
+          cached = {data: persisted.data, loadedAt: Date.now(), request: null};
+          MANAGED_PAGE_CACHE.set(key, cached);
+        }
+      }
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
       const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
@@ -200,11 +248,15 @@
         const value = {items, total, offset: (page - 1) * PICKER_PAGE_SIZE, limit: PICKER_PAGE_SIZE};
         if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
           MANAGED_PAGE_CACHE.set(key, {data: value, loadedAt: Date.now(), request: null});
+          writeDashboardPersistCache('managed-page', key, value);
           while (MANAGED_PAGE_CACHE.size > 80) MANAGED_PAGE_CACHE.delete(MANAGED_PAGE_CACHE.keys().next().value);
         }
         return value;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) MANAGED_PAGE_CACHE.delete(key);
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+          MANAGED_PAGE_CACHE.delete(key);
+          removeDashboardPersistCache('managed-page', key);
+        }
         throw error;
       });
       MANAGED_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});

@@ -198,6 +198,49 @@ def test_web_backup_listing_can_skip_full_checksum_scan(tmp_path):
     assert calls == [True]
 
 
+def test_backup_listing_reuses_unverified_manifest_metadata(tmp_path, monkeypatch):
+    manager = BackupManager(_root(tmp_path))
+    task = manager.start_backup(["config"])
+    result = _wait(manager, task["task_id"])["result"]
+    read_manifest = manager._read_archive_manifest
+    manifest_reads = []
+
+    def counted(*args):
+        manifest_reads.append(True)
+        return read_manifest(*args)
+
+    monkeypatch.setattr(manager, "_read_archive_manifest", counted)
+    for _ in range(4):
+        assert manager.list_backups(verify=False)["count"] == 1
+    assert len(manifest_reads) == 1
+
+    # A metadata-only listing must not make a later download skip its checksum pass.
+    verify = manager._verify_archive_checksums
+    checksum_reads = []
+
+    def counted_verify(*args):
+        checksum_reads.append(True)
+        return verify(*args)
+
+    monkeypatch.setattr(manager, "_verify_archive_checksums", counted_verify)
+    assert manager.download_file(result["id"])["filename"] == result["filename"]
+    assert len(manifest_reads) == 2
+    assert checksum_reads == [True]
+
+
+def test_backup_options_and_listing_do_not_scan_source_data(tmp_path, monkeypatch):
+    manager = BackupManager(_root(tmp_path))
+    task = manager.start_backup(["config"])
+    assert _wait(manager, task["task_id"])["status"] == "completed"
+
+    def fail_scan(*_args, **_kwargs):
+        raise AssertionError("listing must not scan live backup roots")
+
+    monkeypatch.setattr(manager, "_roots", fail_scan)
+    assert manager.options()
+    assert manager.list_backups(verify=False)["count"] == 1
+
+
 @pytest.mark.parametrize("failed_root", ["selfie_image_config.json", "wardrobe"])
 def test_restore_publish_failure_preserves_all_original_roots(tmp_path, monkeypatch, failed_root):
     root = _root(tmp_path)

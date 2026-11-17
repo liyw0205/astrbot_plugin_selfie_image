@@ -4,6 +4,10 @@
     let BACKUP_LOAD_SEQ = 0;
     let BACKUP_MUTATION_SEQ = 0;
     let BACKUP_LOAD_REQUEST = null;
+    let BACKUP_OPTIONS_CACHE = null;
+    let BACKUP_LIST_CACHE = null;
+    let BACKUP_LIST_CACHE_AT = 0;
+    const BACKUP_LIST_CACHE_TTL_MS = 30 * 1000;
     let BACKUP_LIST = [];
     let BACKUP_CAN_UPLOAD = true;
     let BACKUP_RESTORE_FOCUS = null;
@@ -180,17 +184,40 @@
       root.querySelectorAll('.backup-restore, .backup-delete').forEach(button => { button.disabled = BACKUP_BUSY || BACKUP_RESTORE_PENDING; });
     }
 
-    async function loadBackupManager() {
-      if (BACKUP_LOAD_REQUEST) return BACKUP_LOAD_REQUEST;
+    function invalidateBackupListCache() {
+      BACKUP_LIST_CACHE = null;
+      BACKUP_LIST_CACHE_AT = 0;
+    }
+
+    function renderCachedBackupManager() {
+      if (!BACKUP_OPTIONS_CACHE || !BACKUP_LIST_CACHE) return false;
+      BACKUP_OPTIONS = BACKUP_OPTIONS_CACHE;
+      renderBackupOptions();
+      renderBackupList(BACKUP_LIST_CACHE);
+      return true;
+    }
+
+    async function loadBackupManager(force = false) {
+      if (BACKUP_LOAD_REQUEST) {
+        const pending = BACKUP_LOAD_REQUEST;
+        return force ? pending.then(() => loadBackupManager(true)) : pending;
+      }
+      if (!force && Date.now() - BACKUP_LIST_CACHE_AT < BACKUP_LIST_CACHE_TTL_MS && renderCachedBackupManager()) return;
       const loadSeq = ++BACKUP_LOAD_SEQ;
       const mutationSeq = BACKUP_MUTATION_SEQ;
       const request = (async () => {
         try {
-          const [options, list] = await Promise.all([api('/api/backups/options'), api('/api/backups')]);
+          const optionsRequest = BACKUP_OPTIONS_CACHE
+            ? Promise.resolve({data:{items:BACKUP_OPTIONS_CACHE}})
+            : api('/api/backups/options');
+          const [options, list] = await Promise.all([optionsRequest, api('/api/backups')]);
           if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
           BACKUP_OPTIONS = Array.isArray(options.data?.items) ? options.data.items : [];
+          BACKUP_OPTIONS_CACHE = BACKUP_OPTIONS;
+          BACKUP_LIST_CACHE = list.data || {};
+          BACKUP_LIST_CACHE_AT = Date.now();
           renderBackupOptions();
-          renderBackupList(list.data || {});
+          renderBackupList(BACKUP_LIST_CACHE);
         } catch (error) {
           if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
           const message = error.message || '备份列表读取失败';
@@ -229,13 +256,20 @@
       if (BACKUP_BUSY || BACKUP_RESTORE_PENDING) return;
       const selected = [...document.querySelectorAll('#backupOptions input[type="checkbox"]:checked')].map(input => input.value);
       setBackupBusy(true);
+      let refresh = false;
       try {
         BACKUP_MUTATION_SEQ += 1;
+        invalidateBackupListCache();
         const response = await api('/api/backups', {method:'POST', body: JSON.stringify({selected})});
+        refresh = true;
         await waitBackupTask(response.data?.task_id, '正在创建备份');
         showToast('备份已完成', 'ok');
       } catch (error) { showToast(error.message || '创建备份失败', 'bad'); }
-      finally { setBackupBusy(false); setBackupProgress(100, '就绪', false); await loadBackupManager(); }
+      finally {
+        setBackupBusy(false);
+        setBackupProgress(100, '就绪', false);
+        if (refresh) await loadBackupManager(true);
+      }
     }
 
     function setBackupBusy(busy) {
@@ -291,6 +325,7 @@
         return;
       }
       setBackupBusy(true);
+      let refresh = false;
       try {
         const name = file?.name || BACKUP_LIST.find(item => item.id === id)?.filename || id;
         const labels = selected.map(value => BACKUP_OPTIONS.find(item => item.id === value)?.label || value).join('、');
@@ -298,13 +333,19 @@
         $('backupRestoreModal').classList.remove('show');
         $('backupUploadFile').value = '';
         BACKUP_MUTATION_SEQ += 1;
+        invalidateBackupListCache();
+        refresh = true;
         const response = file ? await uploadArchiveFile(file, 'backup', {selected})
           : await api(`/api/backups/${encodeURIComponent(id)}/restore`, {method:'POST', body:JSON.stringify({selected})});
         await waitBackupTask(response.data?.task_id, '正在校验并准备恢复');
         BACKUP_RESTORE_PENDING = true;
         showToast('恢复已准备，请重启插件后生效', 'ok');
       } catch (error) { showToast(error.message || '恢复备份失败', 'bad'); }
-      finally { setBackupBusy(false); setBackupProgress(100, '就绪', false); await loadBackupManager(); }
+      finally {
+        setBackupBusy(false);
+        setBackupProgress(100, '就绪', false);
+        if (refresh) await loadBackupManager(true);
+      }
     }
 
     async function deleteBackup(id) {
@@ -314,8 +355,11 @@
         const name = BACKUP_LIST.find(item => item.id === id)?.filename || id;
         if (!await confirmAction(`删除 ${name}？删除后无法找回此备份。`, {title:'确认删除备份', confirmText:'确认删除'})) return;
         BACKUP_MUTATION_SEQ += 1;
+        invalidateBackupListCache();
         const response = await api('/api/backups/delete', {method:'POST', body: JSON.stringify({id})});
-        renderBackupList(response.data || {});
+        BACKUP_LIST_CACHE = response.data || {};
+        BACKUP_LIST_CACHE_AT = Date.now();
+        renderBackupList(BACKUP_LIST_CACHE);
         showToast('备份已删除', 'ok');
       } catch (error) { showToast(error.message || '删除备份失败', 'bad'); }
       finally { setBackupBusy(false); }

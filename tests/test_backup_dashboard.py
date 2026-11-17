@@ -92,6 +92,51 @@ const source = fs.readFileSync(process.argv[2], 'utf8');
     assert result.returncode == 0, result.stderr
 
 
+def test_backup_manager_deduplicates_and_caches_metadata_requests():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable")
+    source = Path(__file__).resolve().parents[1] / "pages/dashboard/source/backup_manager.js"
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+const elements = new Map();
+const element = () => ({innerHTML:'', textContent:'', hidden:false, disabled:false,
+  querySelectorAll:() => [], addEventListener:() => {}, focus:() => {}});
+for (const id of ['backupOptions','backupList','backupLimitStatus','createBackupBtn','uploadBackupBtn']) elements.set(id, element());
+let now = 1000;
+const calls = [];
+const context = vm.createContext({
+  Date: {now: () => now},
+  Promise, setTimeout, clearTimeout,
+  document: {contains:() => false, activeElement:null},
+  $: id => elements.get(id) || element(),
+  escapeHtml: String,
+  showToast: () => {},
+  api: async path => {
+    calls.push(path);
+    if (path === '/api/backups/options') return {data:{items:[{id:'config',label:'配置',required:true}]}};
+    assert.equal(path, '/api/backups');
+    return {data:{items:[],max:5,can_create:true,restore_pending:false}};
+  },
+});
+vm.runInContext(source + '\nglobalThis.handlers={loadBackupManager};', context);
+(async () => {
+  await Promise.all([context.handlers.loadBackupManager(), context.handlers.loadBackupManager()]);
+  assert.deepEqual(calls, ['/api/backups/options', '/api/backups']);
+  await context.handlers.loadBackupManager();
+  assert.deepEqual(calls, ['/api/backups/options', '/api/backups']);
+  now += 30001;
+  await context.handlers.loadBackupManager();
+  assert.deepEqual(calls, ['/api/backups/options', '/api/backups', '/api/backups']);
+})().catch(error => { process.stderr.write(error.stack + '\n'); process.exitCode = 1; });
+"""
+    result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_archive_upload_slices_replay_and_cancel():
     node = shutil.which("node")
     if not node:
