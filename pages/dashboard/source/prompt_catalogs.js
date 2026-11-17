@@ -61,6 +61,7 @@
       if (!normalized || normalized === 'tags') clearEntry(PICKER_CACHE.tags);
       if (!normalized || normalized === 'image') {
         ASSET_STUDIO_PRESETS = [];
+        ASSET_STUDIO_PRESET_LOAD_SEQ += 1;
       }
       for (const key of [...PICKER_PAGE_CACHE.keys()]) {
         if (!normalized || key.startsWith(`${normalized}:`)) PICKER_PAGE_CACHE.delete(key);

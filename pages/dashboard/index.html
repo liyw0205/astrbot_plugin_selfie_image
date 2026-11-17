@@ -2256,8 +2256,8 @@
     let CONFIG_MUTATION_SEQ = 0;
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
-    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0, viewportFittedForSession: false };
-    let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
+    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
+    let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0 };
     const PICKER_CACHE = {
       tags: {data: [], loadedAt: 0, request: null, version: 0},
     };
@@ -2299,6 +2299,7 @@
     let ASSET_PAGE_CACHE_VERSION = 0;
     let ASSET_STUDIO_PRESETS = [];
     let ASSET_STUDIO_PRESET_PAGE = 1;
+    let ASSET_STUDIO_PRESET_LOAD_SEQ = 0;
     let ASSET_STUDIO_PRESET_SEARCH_TIMER = null;
     let AUTH_TOKEN = safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '';
     let IS_FILLING = false;
@@ -5938,15 +5939,21 @@ Source prompt:
     async function loadAssetStudioPresets(page = ASSET_STUDIO_PRESET_PAGE) {
       const select = $('assetStudioPreset');
       if (!select) return;
+      const loadSeq = ++ASSET_STUDIO_PRESET_LOAD_SEQ;
+      const requestedPage = Math.max(1, Number(page) || 1);
+      ASSET_STUDIO_PRESET_PAGE = requestedPage;
+      const search = String($('assetStudioPresetSearch')?.value || '').trim();
       try {
-        ASSET_STUDIO_PRESET_PAGE = Math.max(1, Number(page) || 1);
         const selected = select.value;
-        const search = String($('assetStudioPresetSearch')?.value || '').trim();
+        const requestedSearch = search;
         const result = await fetchCatalogPage('image', search, ASSET_STUDIO_PRESET_PAGE);
+        if (loadSeq !== ASSET_STUDIO_PRESET_LOAD_SEQ
+          || requestedPage !== ASSET_STUDIO_PRESET_PAGE
+          || requestedSearch !== String($('assetStudioPresetSearch')?.value || '').trim()) return;
         ASSET_STUDIO_PRESETS = result.items;
         const pageCount = Math.max(1, Math.ceil(result.total / PICKER_PAGE_SIZE));
-        if (ASSET_STUDIO_PRESET_PAGE > pageCount) return loadAssetStudioPresets(pageCount);
-        prefetchCatalogPages('image', search, ASSET_STUDIO_PRESET_PAGE, result.total);
+        if (requestedPage > pageCount) return loadAssetStudioPresets(pageCount);
+        prefetchCatalogPages('image', search, requestedPage, result.total);
         select.innerHTML = '<option value="">不套预设</option>';
         ASSET_STUDIO_PRESETS.forEach(item => {
           const name = String(item?.name || item?.title || '').trim();
@@ -5959,11 +5966,13 @@ Source prompt:
         if ([...select.options].some(option => option.value === selected)) select.value = selected;
         const prev = $('assetStudioPresetPrev');
         const next = $('assetStudioPresetNext');
-        if (prev) prev.disabled = ASSET_STUDIO_PRESET_PAGE <= 1;
-        if (next) next.disabled = ASSET_STUDIO_PRESET_PAGE >= pageCount;
-        select.title = `加入画布时附加的预设 · 第 ${ASSET_STUDIO_PRESET_PAGE}/${pageCount} 页，共 ${result.total} 项`;
+        if (prev) prev.disabled = requestedPage <= 1;
+        if (next) next.disabled = requestedPage >= pageCount;
+        select.title = `加入画布时附加的预设 · 第 ${requestedPage}/${pageCount} 页，共 ${result.total} 项`;
       } catch (e) {
-        if ($('assetStatus')) $('assetStatus').textContent = e.message || '画布预设读取失败';
+        if (loadSeq === ASSET_STUDIO_PRESET_LOAD_SEQ) {
+          if ($('assetStatus')) $('assetStatus').textContent = e.message || '画布预设读取失败';
+        }
       }
     }
     async function addAssetToStudio(recordId) {
@@ -8890,6 +8899,7 @@ Source prompt:
       if (!normalized || normalized === 'tags') clearEntry(PICKER_CACHE.tags);
       if (!normalized || normalized === 'image') {
         ASSET_STUDIO_PRESETS = [];
+        ASSET_STUDIO_PRESET_LOAD_SEQ += 1;
       }
       for (const key of [...PICKER_PAGE_CACHE.keys()]) {
         if (!normalized || key.startsWith(`${normalized}:`)) PICKER_PAGE_CACHE.delete(key);
@@ -10832,9 +10842,17 @@ Source prompt:
     async function loadStudioSessionList(force = false) {
       const fresh = !force && STUDIO.sessionsLoadedAt && (Date.now() - STUDIO.sessionsLoadedAt) < CANVAS_SESSION_CACHE_TTL_MS;
       if (fresh) return {success:true, data:{sessions:STUDIO.sessions, templates:STUDIO.templates}};
-      if (STUDIO.sessionsRequest) return STUDIO.sessionsRequest;
+      if (STUDIO.sessionsRequest) {
+        const pending = STUDIO.sessionsRequest;
+        if (!force) return pending;
+        return pending.then(() => loadStudioSessionList(false));
+      }
+      const cacheVersion = STUDIO.sessionsVersion;
       const request = studioApi('/api/studio/sessions').then(res => {
         if (!res.success) return res;
+        if (cacheVersion !== STUDIO.sessionsVersion) {
+          return {success:true, stale:true, data:{sessions:STUDIO.sessions, templates:STUDIO.templates}};
+        }
         STUDIO.sessions = res.data?.sessions || [];
         STUDIO.templates = res.data?.templates || STUDIO.templates || [];
         STUDIO.sessionsLoadedAt = Date.now();
@@ -10900,6 +10918,8 @@ Source prompt:
       if (confirm) confirm.disabled = true;
       if (status) status.textContent = '创建中…';
       try {
+        STUDIO.sessionsVersion += 1;
+        STUDIO.sessionsLoadedAt = 0;
         const res = await studioApi('/api/studio/sessions', {method:'POST', body:JSON.stringify({title, template})});
         if (!res.success) throw new Error(res.message || '创建失败');
         STUDIO.current = res.data;
@@ -10921,6 +10941,8 @@ Source prompt:
     async function studioSave() { if (STUDIO.current) studioPersistCanvas(0); }
     async function studioDelete() {
       if (!STUDIO.current || !await confirmAction(`确定删除画布「${STUDIO.current.title || '当前画布'}」吗？`, {title:'删除画布', confirmText:'删除画布'})) return;
+      STUDIO.sessionsVersion += 1;
+      STUDIO.sessionsLoadedAt = 0;
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/delete', {method:'POST', body:'{}'});
       if (!res.success) return showToast(res.message || '删除失败', 'bad');
       STUDIO.current = null; STUDIO.canvas = null; await loadStudioList('', {force:true}); showToast('画布已删除', 'ok');
@@ -11158,9 +11180,17 @@ Source prompt:
     async function loadCreativeCanvasSessionList(force = false) {
       const fresh = !force && CREATIVE_CANVAS.sessionsLoadedAt && (Date.now() - CREATIVE_CANVAS.sessionsLoadedAt) < CANVAS_SESSION_CACHE_TTL_MS;
       if (fresh) return {success:true, data:{sessions:CREATIVE_CANVAS.sessions, templates:CREATIVE_CANVAS.templates}};
-      if (CREATIVE_CANVAS.sessionsRequest) return CREATIVE_CANVAS.sessionsRequest;
+      if (CREATIVE_CANVAS.sessionsRequest) {
+        const pending = CREATIVE_CANVAS.sessionsRequest;
+        if (!force) return pending;
+        return pending.then(() => loadCreativeCanvasSessionList(false));
+      }
+      const cacheVersion = CREATIVE_CANVAS.sessionsVersion;
       const request = creativeCanvasApi('/sessions').then(res => {
         if (!res.success) return res;
+        if (cacheVersion !== CREATIVE_CANVAS.sessionsVersion) {
+          return {success:true, stale:true, data:{sessions:CREATIVE_CANVAS.sessions, templates:CREATIVE_CANVAS.templates}};
+        }
         CREATIVE_CANVAS.sessions = res.data?.sessions || [];
         CREATIVE_CANVAS.templates = res.data?.templates || CREATIVE_CANVAS.templates;
         CREATIVE_CANVAS.sessionsLoadedAt = Date.now();
@@ -11211,6 +11241,8 @@ Source prompt:
       try {
         const title = $('creativeCanvasCreateTitle').value.trim();
         const template = $('creativeCanvasTemplateSelect').value || 'duo';
+        CREATIVE_CANVAS.sessionsVersion += 1;
+        CREATIVE_CANVAS.sessionsLoadedAt = 0;
         const res = await creativeCanvasApi('/sessions', {method:'POST', body:JSON.stringify({title, template})});
         if (!res.success) throw new Error(res.message || '创建失败');
         CREATIVE_CANVAS.current = res.data;
@@ -11236,6 +11268,8 @@ Source prompt:
     async function saveCreativeCanvas() {
       if (!CREATIVE_CANVAS.current) return false;
       const body = {title:$('creativeCanvasTitle').value.trim(), graph:{prompt:$('creativeCanvasPrompt').value, mode:$('creativeCanvasMode').value, aspect_ratio:$('creativeCanvasAspect').value, resolution:$('creativeCanvasResolution').value, count:Number($('creativeCanvasCount').value || 1), use_persona_identity:$('creativeCanvasUsePersona').checked}};
+      CREATIVE_CANVAS.sessionsVersion += 1;
+      CREATIVE_CANVAS.sessionsLoadedAt = 0;
       const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id), {method:'POST', body:JSON.stringify(body)});
       if (!res.success) { showToast(res.message || '保存失败', 'bad'); return false; }
       CREATIVE_CANVAS.current = res.data; renderCreativeCanvas(); showToast('创作画布已保存', 'ok');
@@ -11243,6 +11277,8 @@ Source prompt:
     }
     async function deleteCreativeCanvas() {
       if (!CREATIVE_CANVAS.current || !await confirmAction(`确定删除创作画布「${CREATIVE_CANVAS.current.title || '当前画布'}」吗？`, {title:'删除画布', confirmText:'删除画布'})) return;
+      CREATIVE_CANVAS.sessionsVersion += 1;
+      CREATIVE_CANVAS.sessionsLoadedAt = 0;
       const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id) + '/delete', {method:'POST', body:'{}'});
       if (!res.success) return showToast(res.message || '删除失败', 'bad');
       CREATIVE_CANVAS.current = null; await loadCreativeCanvasList('', {force:true}); showToast('创作画布已删除', 'ok');

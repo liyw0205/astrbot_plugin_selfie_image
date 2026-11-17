@@ -726,15 +726,21 @@
     async function loadAssetStudioPresets(page = ASSET_STUDIO_PRESET_PAGE) {
       const select = $('assetStudioPreset');
       if (!select) return;
+      const loadSeq = ++ASSET_STUDIO_PRESET_LOAD_SEQ;
+      const requestedPage = Math.max(1, Number(page) || 1);
+      ASSET_STUDIO_PRESET_PAGE = requestedPage;
+      const search = String($('assetStudioPresetSearch')?.value || '').trim();
       try {
-        ASSET_STUDIO_PRESET_PAGE = Math.max(1, Number(page) || 1);
         const selected = select.value;
-        const search = String($('assetStudioPresetSearch')?.value || '').trim();
+        const requestedSearch = search;
         const result = await fetchCatalogPage('image', search, ASSET_STUDIO_PRESET_PAGE);
+        if (loadSeq !== ASSET_STUDIO_PRESET_LOAD_SEQ
+          || requestedPage !== ASSET_STUDIO_PRESET_PAGE
+          || requestedSearch !== String($('assetStudioPresetSearch')?.value || '').trim()) return;
         ASSET_STUDIO_PRESETS = result.items;
         const pageCount = Math.max(1, Math.ceil(result.total / PICKER_PAGE_SIZE));
-        if (ASSET_STUDIO_PRESET_PAGE > pageCount) return loadAssetStudioPresets(pageCount);
-        prefetchCatalogPages('image', search, ASSET_STUDIO_PRESET_PAGE, result.total);
+        if (requestedPage > pageCount) return loadAssetStudioPresets(pageCount);
+        prefetchCatalogPages('image', search, requestedPage, result.total);
         select.innerHTML = '<option value="">不套预设</option>';
         ASSET_STUDIO_PRESETS.forEach(item => {
           const name = String(item?.name || item?.title || '').trim();
@@ -747,11 +753,13 @@
         if ([...select.options].some(option => option.value === selected)) select.value = selected;
         const prev = $('assetStudioPresetPrev');
         const next = $('assetStudioPresetNext');
-        if (prev) prev.disabled = ASSET_STUDIO_PRESET_PAGE <= 1;
-        if (next) next.disabled = ASSET_STUDIO_PRESET_PAGE >= pageCount;
-        select.title = `加入画布时附加的预设 · 第 ${ASSET_STUDIO_PRESET_PAGE}/${pageCount} 页，共 ${result.total} 项`;
+        if (prev) prev.disabled = requestedPage <= 1;
+        if (next) next.disabled = requestedPage >= pageCount;
+        select.title = `加入画布时附加的预设 · 第 ${requestedPage}/${pageCount} 页，共 ${result.total} 项`;
       } catch (e) {
-        if ($('assetStatus')) $('assetStatus').textContent = e.message || '画布预设读取失败';
+        if (loadSeq === ASSET_STUDIO_PRESET_LOAD_SEQ) {
+          if ($('assetStatus')) $('assetStatus').textContent = e.message || '画布预设读取失败';
+        }
       }
     }
     async function addAssetToStudio(recordId) {

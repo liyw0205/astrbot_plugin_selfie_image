@@ -59,7 +59,8 @@ def test_refresh_avoids_current_outfit_missing_from_legacy_period_projection(tmp
         manager = persona.PersonaManager(str(tmp_path))
         first = await manager.refresh_daily_selfie_profile_local()
         second = await manager.refresh_daily_selfie_profile_local()
-        assert first.outfit not in first.outfit_by_period.values()
+        assert first.timeline is not None
+        assert first.outfit == first.timeline.outfit_for_event(first.timeline.current_event())
         assert first.outfit != second.outfit
 
     asyncio.run(refresh_twice())

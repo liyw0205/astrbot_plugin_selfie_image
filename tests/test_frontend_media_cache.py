@@ -97,6 +97,14 @@ def test_creative_canvas_hides_rerun_until_a_successful_result():
     assert "保存后生成" in PAGE
 
 
+def test_canvas_and_asset_preset_loads_ignore_stale_responses():
+    assert "sessionsVersion: 0" in PAGE
+    assert "const cacheVersion = CREATIVE_CANVAS.sessionsVersion;" in PAGE
+    assert "const cacheVersion = STUDIO.sessionsVersion;" in PAGE
+    assert "ASSET_STUDIO_PRESET_LOAD_SEQ" in PAGE
+    assert "requestedSearch !== String($('assetStudioPresetSearch')?.value || '').trim()" in PAGE
+
+
 def test_asset_actions_are_delegated_and_media_loading_is_prioritized():
     assert "function setupAssetGridInteractions()" in PAGE
     assert 'data-asset-action="detail"' in PAGE

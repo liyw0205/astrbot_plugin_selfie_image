@@ -231,9 +231,17 @@
     async function loadCreativeCanvasSessionList(force = false) {
       const fresh = !force && CREATIVE_CANVAS.sessionsLoadedAt && (Date.now() - CREATIVE_CANVAS.sessionsLoadedAt) < CANVAS_SESSION_CACHE_TTL_MS;
       if (fresh) return {success:true, data:{sessions:CREATIVE_CANVAS.sessions, templates:CREATIVE_CANVAS.templates}};
-      if (CREATIVE_CANVAS.sessionsRequest) return CREATIVE_CANVAS.sessionsRequest;
+      if (CREATIVE_CANVAS.sessionsRequest) {
+        const pending = CREATIVE_CANVAS.sessionsRequest;
+        if (!force) return pending;
+        return pending.then(() => loadCreativeCanvasSessionList(false));
+      }
+      const cacheVersion = CREATIVE_CANVAS.sessionsVersion;
       const request = creativeCanvasApi('/sessions').then(res => {
         if (!res.success) return res;
+        if (cacheVersion !== CREATIVE_CANVAS.sessionsVersion) {
+          return {success:true, stale:true, data:{sessions:CREATIVE_CANVAS.sessions, templates:CREATIVE_CANVAS.templates}};
+        }
         CREATIVE_CANVAS.sessions = res.data?.sessions || [];
         CREATIVE_CANVAS.templates = res.data?.templates || CREATIVE_CANVAS.templates;
         CREATIVE_CANVAS.sessionsLoadedAt = Date.now();
@@ -284,6 +292,8 @@
       try {
         const title = $('creativeCanvasCreateTitle').value.trim();
         const template = $('creativeCanvasTemplateSelect').value || 'duo';
+        CREATIVE_CANVAS.sessionsVersion += 1;
+        CREATIVE_CANVAS.sessionsLoadedAt = 0;
         const res = await creativeCanvasApi('/sessions', {method:'POST', body:JSON.stringify({title, template})});
         if (!res.success) throw new Error(res.message || '创建失败');
         CREATIVE_CANVAS.current = res.data;
@@ -309,6 +319,8 @@
     async function saveCreativeCanvas() {
       if (!CREATIVE_CANVAS.current) return false;
       const body = {title:$('creativeCanvasTitle').value.trim(), graph:{prompt:$('creativeCanvasPrompt').value, mode:$('creativeCanvasMode').value, aspect_ratio:$('creativeCanvasAspect').value, resolution:$('creativeCanvasResolution').value, count:Number($('creativeCanvasCount').value || 1), use_persona_identity:$('creativeCanvasUsePersona').checked}};
+      CREATIVE_CANVAS.sessionsVersion += 1;
+      CREATIVE_CANVAS.sessionsLoadedAt = 0;
       const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id), {method:'POST', body:JSON.stringify(body)});
       if (!res.success) { showToast(res.message || '保存失败', 'bad'); return false; }
       CREATIVE_CANVAS.current = res.data; renderCreativeCanvas(); showToast('创作画布已保存', 'ok');
@@ -316,6 +328,8 @@
     }
     async function deleteCreativeCanvas() {
       if (!CREATIVE_CANVAS.current || !await confirmAction(`确定删除创作画布「${CREATIVE_CANVAS.current.title || '当前画布'}」吗？`, {title:'删除画布', confirmText:'删除画布'})) return;
+      CREATIVE_CANVAS.sessionsVersion += 1;
+      CREATIVE_CANVAS.sessionsLoadedAt = 0;
       const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id) + '/delete', {method:'POST', body:'{}'});
       if (!res.success) return showToast(res.message || '删除失败', 'bad');
       CREATIVE_CANVAS.current = null; await loadCreativeCanvasList('', {force:true}); showToast('创作画布已删除', 'ok');

@@ -543,9 +543,17 @@
     async function loadStudioSessionList(force = false) {
       const fresh = !force && STUDIO.sessionsLoadedAt && (Date.now() - STUDIO.sessionsLoadedAt) < CANVAS_SESSION_CACHE_TTL_MS;
       if (fresh) return {success:true, data:{sessions:STUDIO.sessions, templates:STUDIO.templates}};
-      if (STUDIO.sessionsRequest) return STUDIO.sessionsRequest;
+      if (STUDIO.sessionsRequest) {
+        const pending = STUDIO.sessionsRequest;
+        if (!force) return pending;
+        return pending.then(() => loadStudioSessionList(false));
+      }
+      const cacheVersion = STUDIO.sessionsVersion;
       const request = studioApi('/api/studio/sessions').then(res => {
         if (!res.success) return res;
+        if (cacheVersion !== STUDIO.sessionsVersion) {
+          return {success:true, stale:true, data:{sessions:STUDIO.sessions, templates:STUDIO.templates}};
+        }
         STUDIO.sessions = res.data?.sessions || [];
         STUDIO.templates = res.data?.templates || STUDIO.templates || [];
         STUDIO.sessionsLoadedAt = Date.now();
@@ -611,6 +619,8 @@
       if (confirm) confirm.disabled = true;
       if (status) status.textContent = '创建中…';
       try {
+        STUDIO.sessionsVersion += 1;
+        STUDIO.sessionsLoadedAt = 0;
         const res = await studioApi('/api/studio/sessions', {method:'POST', body:JSON.stringify({title, template})});
         if (!res.success) throw new Error(res.message || '创建失败');
         STUDIO.current = res.data;
@@ -632,6 +642,8 @@
     async function studioSave() { if (STUDIO.current) studioPersistCanvas(0); }
     async function studioDelete() {
       if (!STUDIO.current || !await confirmAction(`确定删除画布「${STUDIO.current.title || '当前画布'}」吗？`, {title:'删除画布', confirmText:'删除画布'})) return;
+      STUDIO.sessionsVersion += 1;
+      STUDIO.sessionsLoadedAt = 0;
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/delete', {method:'POST', body:'{}'});
       if (!res.success) return showToast(res.message || '删除失败', 'bad');
       STUDIO.current = null; STUDIO.canvas = null; await loadStudioList('', {force:true}); showToast('画布已删除', 'ok');
