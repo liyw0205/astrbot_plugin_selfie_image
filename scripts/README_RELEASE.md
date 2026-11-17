@@ -47,12 +47,17 @@ process. The JSON contract must provide a new or empty `data_root`, an existing
 unauthenticated `health_url`, AstrBot/plugin/target/rollback versions, a test
 channel and account, an explicit proxy mode (`none`, `http`, or `socks`), and
 commands for all six phases: `upgrade`, `generate`, `failure`, `cancel`,
-`restart`, and `rollback`.
+`restart`, and `rollback`. `start_command` must contain the bare `{data_root}`
+placeholder in an argv item; otherwise preflight rejects the contract.
 
 Commands are argv arrays, never shell strings. They may use `{data_root}`,
 `{report_path}`, `{phase}`, `{target_version}`, `{rollback_version}`, and
 `{channel}`. Proxy credentials are supplied through the configured environment
 variable (`proxy.url_env`), never written to the contract or report.
+The startup wrapper must apply `{data_root}` as AstrBot's effective data
+directory. The runner verifies that the path is passed, but cannot inspect
+host-specific configuration to prove AstrBot honored it; verify the effective
+runtime path before treating the rehearsal as isolated.
 
 Run it only with a disposable data root:
 

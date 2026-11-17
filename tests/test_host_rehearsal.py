@@ -26,6 +26,7 @@ def _server_command(port: int) -> list[str]:
         """
         import http.server
         import sys
+        from pathlib import Path
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
@@ -36,10 +37,12 @@ def _server_command(port: int) -> list[str]:
             def log_message(self, *args):
                 pass
 
+        if not Path(sys.argv[2]).is_dir():
+            raise SystemExit(4)
         http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler).serve_forever()
         """
     )
-    return [sys.executable, "-c", source, str(port)]
+    return [sys.executable, "-c", source, str(port), "{data_root}"]
 
 
 def _free_port() -> int:
@@ -80,6 +83,19 @@ def test_config_requires_isolated_host_contract(tmp_path: Path) -> None:
     config = _config(tmp_path, 38127)
     del config["steps"]["rollback"]
     with pytest.raises(RehearsalError, match="missing required phase.*rollback"):
+        validate_config(config, config_path=tmp_path / "config.json")
+
+
+@pytest.mark.parametrize("start_command", [
+    [sys.executable, "-c", "pass"],
+    [sys.executable, "-c", "pass", "{{data_root}}"],
+    [sys.executable, "-c", "pass", "{data_root!r}"],
+])
+def test_start_command_must_pass_bare_data_root(tmp_path: Path, start_command: list[str]) -> None:
+    config = _config(tmp_path, 38127)
+    config["start_command"] = start_command
+
+    with pytest.raises(RehearsalError, match=r"start_command: must pass the bare \{data_root\}"):
         validate_config(config, config_path=tmp_path / "config.json")
 
 

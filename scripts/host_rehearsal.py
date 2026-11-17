@@ -84,6 +84,15 @@ def _validate_placeholders(command: Sequence[str], label: str) -> None:
                 raise RehearsalError(f"{label}: unsupported placeholder {{{field}}}")
 
 
+def _has_bare_placeholder(command: Sequence[str], expected: str) -> bool:
+    formatter = Formatter()
+    for item in command:
+        for _, field, format_spec, conversion in formatter.parse(item):
+            if field == expected and not format_spec and conversion is None:
+                return True
+    return False
+
+
 def _safe_url(value: Any, label: str) -> str:
     url = _text(value, label)
     parsed = urlsplit(url)
@@ -168,6 +177,10 @@ def validate_config(payload: Any, *, config_path: Path | None = None) -> dict[st
     stop_command = _command(payload["stop_command"], "stop_command")
     _validate_placeholders(start_command, "start_command")
     _validate_placeholders(stop_command, "stop_command")
+    if not _has_bare_placeholder(start_command, "data_root"):
+        raise RehearsalError(
+            "start_command: must pass the bare {data_root} placeholder to the isolated host"
+        )
 
     health_url = _safe_url(payload["health_url"], "health_url")
     proxy = payload["proxy"]
