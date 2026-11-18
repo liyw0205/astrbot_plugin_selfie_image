@@ -181,6 +181,12 @@ async function main() {
       assert.equal(hostLayout.result.value,true,'fixture host overflows horizontally');
       if(embedded)assert.equal(await evaluate("window.confirm('sandbox probe')"),false);
       await evaluate("navigateToTab('backup')"); await until("document.querySelector('.backup-restore')");
+      const optionsBefore = calls.filter(call=>call.path.endsWith('/backups/options')).length;
+      assert.equal(optionsBefore,0,'opening backup page must not load selectable data options');
+      await click('#createBackupBtn');
+      await until("[...document.querySelectorAll('.toast')].some(el=>el.textContent.includes('备份范围已加载'))");
+      assert.equal(calls.filter(call=>call.path.endsWith('/backups/options')).length,optionsBefore+1);
+      assert.equal(calls.filter(call=>call.path==='/api/backups'&&call.method==='POST').length,0,'loading backup options must not submit a backup task');
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth+1'),true);
       const downloadDir=path.join(output,`${mode}-${width}-downloads`);
       fs.mkdirSync(downloadDir,{recursive:true});
@@ -203,7 +209,7 @@ async function main() {
       await evaluate("navigateToTab('selfie');$('toastWrap').innerHTML='';");
       const exportsBefore=calls.filter(call=>call.path.endsWith('/wardrobe-export')).length;
       const discardsBefore=calls.filter(call=>call.path.endsWith('/export-fixture/discard')).length;
-      await click('#exportWardrobe');
+      await evaluate("$('exportWardrobe').click()");
       await until("!BACKUP_BUSY && [...document.querySelectorAll('.toast')].some(el=>el.textContent.includes('归档下载超时'))");
       assert.equal(calls.filter(call=>call.path.endsWith('/wardrobe-export')).length,exportsBefore+1);
       assert.equal(calls.filter(call=>call.path.endsWith('/export-fixture/discard')).length,discardsBefore+1);
