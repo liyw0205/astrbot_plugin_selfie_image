@@ -313,6 +313,41 @@ assert.match(context.handlers.key('managed-page', 'image::1'), /^selfieImageDash
     assert result.returncode == 0, result.stderr
 
 
+def test_embedded_dashboard_scope_ignores_stale_standalone_token():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable")
+    source = Path(__file__).resolve().parents[1] / "pages/dashboard/source/runtime.js"
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+const values = new Map([['selfieImageToken', 'stale-standalone-token']]);
+const storage = {
+  getItem(key) { return values.get(String(key)) ?? null; },
+  setItem(key, value) { values.set(String(key), String(value)); },
+  removeItem(key) { values.delete(String(key)); },
+};
+const window = {
+  name: '', localStorage: storage,
+  location: {pathname: '/api/plugin/page/content/selfie-image'},
+  parent: {},
+};
+const context = vm.createContext({
+  window, Date: {now: () => 1000}, setTimeout, clearTimeout,
+  document: {getElementById: () => null, querySelectorAll: () => []},
+});
+vm.runInContext(source + `
+globalThis.handlers = {scope: dashboardPersistScope, key: dashboardPersistKey};
+`, context);
+assert.equal(context.handlers.scope(), 'dashboard');
+assert.match(context.handlers.key('managed-page', 'image::1'), /^selfieImageDashboardCache:v1:dashboard:/);
+""";
+    result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_dashboard_persistence_recovers_value_when_index_write_was_lost():
     node = shutil.which("node")
     if not node:

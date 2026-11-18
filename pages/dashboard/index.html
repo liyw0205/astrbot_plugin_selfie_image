@@ -2262,12 +2262,16 @@
       return (hash >>> 0).toString(36);
     }
     function dashboardPersistScope() {
+      // Embedded AstrBot pages authenticate through the parent bridge. A token
+      // left in localStorage belongs to a standalone page and must not split
+      // the embedded page's persistent cache into a token-scoped namespace.
+      if (isDashboardPage()) return 'dashboard';
       // During standalone login AUTH_TOKEN is available before the successful
       // config response writes it to localStorage. Use that value first so the
       // first cache write and the next reload use the same scope.
       const activeToken = typeof AUTH_TOKEN !== 'undefined' ? AUTH_TOKEN : '';
       const token = String(activeToken || safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '').trim();
-      return token ? `token:${dashboardPersistHash(token)}` : (isDashboardPage() ? 'dashboard' : 'anonymous');
+      return token ? `token:${dashboardPersistHash(token)}` : 'anonymous';
     }
     function dashboardPersistKey(namespace, key, scope = dashboardPersistScope()) {
       return `${DASHBOARD_PERSIST_CACHE_PREFIX}${scope}:${namespace}:${encodeURIComponent(String(key || ''))}`;
@@ -9612,7 +9616,8 @@ Source prompt:
       const storedAt = Number(cached?.storedAt || 0);
       const value = cached?.data;
       if (!storedAt || Date.now() - storedAt >= BACKUP_LIST_CACHE_TTL_MS
-        || !value?.list || typeof value.list !== 'object') return false;
+        || !value?.list || typeof value.list !== 'object'
+        || !Array.isArray(value.list.items)) return false;
       // The backup list is intentionally persisted before /api/backups/options
       // is queried. An empty options array therefore means "not loaded yet",
       // rather than a valid empty selection set.

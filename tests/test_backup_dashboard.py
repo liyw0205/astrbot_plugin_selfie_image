@@ -191,6 +191,90 @@ async function scenario(cachedOptions, expectedOptionCalls) {
     assert result.returncode == 0, result.stderr
 
 
+def test_backup_options_are_deferred_until_create_or_restore_action():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable")
+    source = Path(__file__).resolve().parents[1] / "pages/dashboard/source/backup_manager.js"
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+
+function makeScenario() {
+  const calls = [];
+  const elements = new Map();
+  const element = () => ({
+    innerHTML: '', textContent: '', hidden: false, disabled: false, value: '',
+    files: [], classList: {add() {}, remove() {}, contains: () => false},
+    querySelectorAll: () => [], addEventListener() {}, focus() {},
+  });
+  for (const id of [
+    'backupOptions', 'backupList', 'backupLimitStatus', 'createBackupBtn', 'uploadBackupBtn',
+    'backupRestoreSubmit', 'backupRestoreClose', 'backupRestoreCancel', 'backupProgressWrap',
+    'backupProgress', 'backupProgressValue', 'backupProgressLabel', 'backupCancelUpload',
+    'backupRestoreSource', 'backupUploadFile', 'backupRestoreModal', 'backupRestoreFileField',
+    'backupRestoreStatus', 'backupRestoreOptions',
+  ]) elements.set(id, element());
+  const context = vm.createContext({
+    Promise, setTimeout, clearTimeout, AbortController,
+    document: {contains: () => false, activeElement: null, querySelectorAll: () => []},
+    $: id => elements.get(id) || (elements.set(id, element()), elements.get(id)),
+    escapeHtml: String,
+    ensureDashboardPersistentCachesHydrated: async () => {},
+    showToast: () => {},
+    api: async (path, options = {}) => {
+      calls.push({path, method: options.method || 'GET'});
+      if (path === '/api/backups/options') {
+        return {data: {items: [{id: 'config', label: '配置', required: true}]}};
+      }
+      if (path === '/api/backups' && options.method === 'POST') {
+        return {data: {task_id: 'backup-task'}};
+      }
+      if (path === '/api/backups/tasks/backup-task') {
+        return {data: {status: 'completed', percent: 100, message: '完成'}};
+      }
+      assert.equal(path, '/api/backups');
+      return {data: {items: [], max: 5, can_create: true, restore_pending: false}};
+    },
+  });
+  vm.runInContext(source + '\nglobalThis.handlers={loadBackupManager,createBackup,openBackupRestore};', context);
+  return {context, calls, elements};
+}
+
+(async () => {
+  const create = makeScenario();
+  await create.context.handlers.loadBackupManager();
+  assert.deepEqual(create.calls, [{path: '/api/backups', method: 'GET'}]);
+
+  await create.context.handlers.createBackup();
+  assert.deepEqual(create.calls, [
+    {path: '/api/backups', method: 'GET'},
+    {path: '/api/backups/options', method: 'GET'},
+  ]);
+
+  create.context.document.querySelectorAll = () => [{value: 'config', checked: true}];
+  await create.context.handlers.createBackup();
+  assert.deepEqual(create.calls.map(call => call.path), [
+    '/api/backups', '/api/backups/options', '/api/backups',
+    '/api/backups/tasks/backup-task', '/api/backups',
+  ]);
+
+  const restore = makeScenario();
+  await restore.context.handlers.loadBackupManager();
+  assert.deepEqual(restore.calls, [{path: '/api/backups', method: 'GET'}]);
+  await restore.context.handlers.openBackupRestore();
+  assert.deepEqual(restore.calls, [
+    {path: '/api/backups', method: 'GET'},
+    {path: '/api/backups/options', method: 'GET'},
+  ]);
+})().catch(error => { process.stderr.write(error.stack + '\n'); process.exitCode = 1; });
+"""
+    result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_archive_upload_slices_replay_and_cancel():
     node = shutil.which("node")
     if not node:

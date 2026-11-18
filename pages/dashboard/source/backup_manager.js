@@ -205,7 +205,8 @@
       const storedAt = Number(cached?.storedAt || 0);
       const value = cached?.data;
       if (!storedAt || Date.now() - storedAt >= BACKUP_LIST_CACHE_TTL_MS
-        || !value?.list || typeof value.list !== 'object') return false;
+        || !value?.list || typeof value.list !== 'object'
+        || !Array.isArray(value.list.items)) return false;
       // The backup list is intentionally persisted before /api/backups/options
       // is queried. An empty options array therefore means "not loaded yet",
       // rather than a valid empty selection set.

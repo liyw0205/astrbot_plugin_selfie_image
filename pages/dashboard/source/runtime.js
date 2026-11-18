@@ -79,12 +79,16 @@
       return (hash >>> 0).toString(36);
     }
     function dashboardPersistScope() {
+      // Embedded AstrBot pages authenticate through the parent bridge. A token
+      // left in localStorage belongs to a standalone page and must not split
+      // the embedded page's persistent cache into a token-scoped namespace.
+      if (isDashboardPage()) return 'dashboard';
       // During standalone login AUTH_TOKEN is available before the successful
       // config response writes it to localStorage. Use that value first so the
       // first cache write and the next reload use the same scope.
       const activeToken = typeof AUTH_TOKEN !== 'undefined' ? AUTH_TOKEN : '';
       const token = String(activeToken || safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '').trim();
-      return token ? `token:${dashboardPersistHash(token)}` : (isDashboardPage() ? 'dashboard' : 'anonymous');
+      return token ? `token:${dashboardPersistHash(token)}` : 'anonymous';
     }
     function dashboardPersistKey(namespace, key, scope = dashboardPersistScope()) {
       return `${DASHBOARD_PERSIST_CACHE_PREFIX}${scope}:${namespace}:${encodeURIComponent(String(key || ''))}`;
