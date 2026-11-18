@@ -154,15 +154,28 @@
         if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
         CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
         const payload = {groups: rows, permission};
-        if (CONFIG_REVISION > 0) payload.revision = CONFIG_REVISION;
         return enqueueConfigWrite(async () => {
           try {
-            const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify(payload)});
-            if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
+            const requestPayload = {...payload};
+            if (CONFIG_REVISION > 0) requestPayload.revision = CONFIG_REVISION;
+            const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify(requestPayload)});
+            if (Number(result.data?.revision) > 0) CONFIG_REVISION = Number(result.data.revision);
+            if (mutationSeq !== CONFIG_MUTATION_SEQ) {
+              rememberConfigServerSnapshot({
+                ...(CONFIG_SERVER_SNAPSHOT || {}),
+                ...(result.data?.group_chat_configs ? {group_chat_configs: result.data.group_chat_configs} : {}),
+                ...(result.data?.permission ? {permission: result.data.permission} : {}),
+              });
+              return true;
+            }
             if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
             CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
             if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
-            if (Number(result.data?.revision) > 0) CONFIG_REVISION = Number(result.data.revision);
+            rememberConfigServerSnapshot({
+              ...(CONFIG_SERVER_SNAPSHOT || {}),
+              group_chat_configs: CONFIG.group_chat_configs,
+              permission: CONFIG.permission,
+            });
             updateGlobalUsableGateUi();
             showToast('群聊配置和用户名单已保存', 'ok');
             return true;
@@ -197,16 +210,36 @@
         if (loadSeq !== CONFIG_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
         CONFIG = res.data || {};
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+        rememberConfigServerSnapshot(CONFIG);
         fillForms();
         renderProxyList();
       } catch (e) {
         if (loadSeq === CONFIG_LOAD_SEQ) showToast(e.message || '配置读取失败', 'bad');
       }
     }
-    function configWriteBody(snapshot) {
-      const body = {config: snapshot};
+    function configWriteBody(patch) {
+      const body = {config: patch && typeof patch === 'object' ? patch : {}};
       if (CONFIG_REVISION > 0) body.revision = CONFIG_REVISION;
       return body;
+    }
+    function cloneConfigValue(value) {
+      try { return JSON.parse(JSON.stringify(value)); }
+      catch (_) { return value; }
+    }
+    function configPatchFromServerSnapshot(snapshot, domains = null) {
+      const current = snapshot && typeof snapshot === 'object' ? snapshot : {};
+      const baseline = CONFIG_SERVER_SNAPSHOT && typeof CONFIG_SERVER_SNAPSHOT === 'object'
+        ? CONFIG_SERVER_SNAPSHOT : {};
+      const keys = domains
+        ? [...new Set(domains.filter(Boolean))]
+        : [...new Set([...Object.keys(baseline), ...Object.keys(current)])];
+      const patch = {};
+      for (const key of keys) {
+        const before = JSON.stringify(baseline[key]);
+        const after = JSON.stringify(current[key]);
+        if (before !== after) patch[key] = cloneConfigValue(current[key]);
+      }
+      return patch;
     }
     async function reloadConfigAfterConflict() {
       CONFIG_MUTATION_SEQ += 1;
@@ -284,10 +317,17 @@
       const quiet = options.quiet === true;
       try {
         const snapshot = options.snapshot || (collectForms(), JSON.parse(JSON.stringify(CONFIG || {})));
-        const res = await api('/api/config', {method:'POST', body: JSON.stringify(configWriteBody(snapshot))});
-        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
+        const patch = options.patch || configPatchFromServerSnapshot(snapshot, options.patchDomains || null);
+        if (!Object.keys(patch).length) return true;
+        const res = await api('/api/config', {method:'POST', body: JSON.stringify(configWriteBody(patch))});
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) {
+          if (res.data) rememberConfigServerSnapshot(res.data);
+          if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+          return true;
+        }
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+        rememberConfigServerSnapshot(CONFIG);
         ensureConfig();
         $('configText').value = JSON.stringify(CONFIG, null, 2);
         if (renderAfterSave) fillForms();
@@ -327,6 +367,9 @@
           toastError: true,
           // Quiet autosave for form and channel-list changes
           quiet: reason === 'form' || reason === 'channel-list',
+          patchDomains: reason === 'form'
+            ? ['permission', 'image', 'enabled_image_model_priority', 'enabled_audit_model_priority', 'image_model_call_mode']
+            : null,
         });
       }, options.delay != null ? options.delay : (reason === 'form' ? 900 : 650));
     }
@@ -444,7 +487,11 @@
         if (EDITING_PROXY_INDEX < 0) CONFIG.proxies.push(row);
         else CONFIG.proxies[EDITING_PROXY_INDEX] = row;
         $('proxyModalStatus').textContent = '保存中…';
-        const ok = await persistConfig(false, '代理已保存', { toast: true, quiet: true });
+        const ok = await persistConfig(false, '代理已保存', {
+          toast: true,
+          quiet: true,
+          patchDomains: ['proxies'],
+        });
         if (!ok) {
           $('proxyModalStatus').textContent = '保存失败';
           return;
@@ -577,7 +624,12 @@
             chip.textContent = ev.target.checked ? '已启用' : '已停用';
           }
           fillChannelProxyOptions($('modalProxyId') && $('modalProxyId').value);
-          await persistConfig(false, '', { quiet: true, toast: false, toastError: true });
+          await persistConfig(false, '', {
+            quiet: true,
+            toast: false,
+            toastError: true,
+            patchDomains: ['proxies'],
+          });
         };
         card.querySelector('[data-act="edit"]').onclick = () => openProxyModal(idx);
         card.querySelector('[data-act="del"]').onclick = async () => {
@@ -608,7 +660,11 @@
           }
           renderProxyList();
           fillChannelProxyOptions();
-          await persistConfig(false, '代理已删除', { quiet: true, toast: true });
+          await persistConfig(false, '代理已删除', {
+            quiet: true,
+            toast: true,
+            patchDomains: ['proxies', 'image_channels', 'audit_channels'],
+          });
         };
         card.querySelector('[data-act="test"]').onclick = () => testProxyRow(idx, 'connect');
         card.querySelector('[data-act="quality"]').onclick = () => testProxyRow(idx, 'quality');
@@ -679,9 +735,14 @@
     async function persistChannelListSnapshot(snapshot, mutationSeq = ++CONFIG_MUTATION_SEQ) {
       try {
         const res = await api('/api/config', {method:'POST', body: JSON.stringify(configWriteBody(snapshot))});
-        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) {
+          if (res.data) rememberConfigServerSnapshot(res.data);
+          if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+          return true;
+        }
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+        rememberConfigServerSnapshot(CONFIG);
         ensureConfig();
         // Channel-list mutations already update their local card. Rebuilding
         // every card after a priority-only autosave makes mobile WebViews hitch.
@@ -729,9 +790,14 @@
         CONFIG = parsed;
         ensureConfig();
         const res = await api('/api/config', {method:'POST', body: JSON.stringify(configWriteBody(CONFIG))});
-        if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
+        if (mutationSeq !== CONFIG_MUTATION_SEQ) {
+          if (res.data) rememberConfigServerSnapshot(res.data);
+          if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+          return true;
+        }
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+        rememberConfigServerSnapshot(CONFIG);
         fillForms();
         showToast('JSON 配置已保存', 'ok');
         return true;

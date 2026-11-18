@@ -406,6 +406,7 @@
         const res = await api('/api/config');
         CONFIG = res.data || {};
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+        rememberConfigServerSnapshot(CONFIG);
         if (!isDashboardPage()) {
           if (AUTH_TOKEN) safeStorageSet('selfieImageToken', AUTH_TOKEN);
           else safeStorageRemove('selfieImageToken');

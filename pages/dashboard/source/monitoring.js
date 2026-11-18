@@ -66,10 +66,16 @@
         generation_min_records: number('alertGenerationMinRecords'),
         cache_orphan_growth_at_least: number('alertCacheOrphanGrowth'),
       };
+      const monitoringPatch = {monitoring: JSON.parse(JSON.stringify(CONFIG.monitoring))};
       if (root) root.dataset.dirty = 'true';
       if (button) button.disabled = true;
       try {
-        const saved = await persistConfig(false, '', {toast: false, quiet: true, toastError: false});
+        const saved = await persistConfig(false, '', {
+          toast: false,
+          quiet: true,
+          toastError: false,
+          patch: monitoringPatch,
+        });
         if (!saved) throw new Error('告警阈值保存失败');
         if (root) root.dataset.dirty = '';
         syncMetricAlertForm(true);

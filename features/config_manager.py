@@ -253,8 +253,14 @@ def _restore_web_proxy_credentials(
         old = old_by_id.get(identity)
         if not isinstance(old, dict):
             continue
+        # A domain patch may omit the credential field altogether.  Existing
+        # proxy identities must keep their password in that case just like a
+        # full masked dashboard snapshot; only a newly added id can start
+        # without credentials.
+        if "username" not in row and old.get("username"):
+            row["username"] = copy.deepcopy(old["username"])
         incoming = row.get("password")
-        if _is_web_secret_placeholder(incoming):
+        if "password" not in row or _is_web_secret_placeholder(incoming):
             previous = old.get("password")
             if previous and not _is_web_secret_placeholder(previous):
                 row["password"] = copy.deepcopy(previous)

@@ -211,6 +211,13 @@ def test_existing_proxy_password_survives_rename_and_reorder_but_typed_password_
     assert [row["password"] for row in _restore_web_proxy_credentials(patch, old)["proxies"]] == ["secret-two", "new-secret"]
 
 
+def test_existing_proxy_password_survives_domain_patch_when_omitted():
+    old = {"proxies": [{"id": "one", "name": "before", "password": "secret-one"}]}
+    patch = {"proxies": [{"id": "one", "name": "after"}]}
+    restored = _restore_web_proxy_credentials(patch, old)
+    assert restored["proxies"][0]["password"] == "secret-one"
+
+
 def config_plugin(tmp_path):
     plugin = ConfigurationMixin()
     plugin._config_lock = threading.RLock()

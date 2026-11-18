@@ -834,7 +834,15 @@
       renderAllChannelLists();
       refreshModelSelectors();
       $('modalStatus').textContent = '保存中...';
-      const ok = await persistConfig(false, EDITING_CHANNEL_IS_NEW ? '渠道已添加' : '渠道已保存', { toast: true });
+      const ok = await persistConfig(false, EDITING_CHANNEL_IS_NEW ? '渠道已添加' : '渠道已保存', {
+        toast: true,
+        patchDomains: [
+          EDITING_CHANNEL_KIND === 'audit' ? 'audit_channels' : 'image_channels',
+          'enabled_image_model_priority',
+          'enabled_audit_model_priority',
+          'image_model_call_mode',
+        ],
+      });
       $('modalStatus').textContent = ok
         ? (ch.enabled === false && !(ch.enabled_models || []).length
           ? (EDITING_CHANNEL_IS_NEW ? '已添加（无启用模型，渠道已自动关闭）' : '已保存（无启用模型，渠道已自动关闭）')

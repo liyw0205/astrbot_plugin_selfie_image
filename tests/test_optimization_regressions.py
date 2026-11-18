@@ -43,6 +43,7 @@ from astrbot_plugin_selfie_image.webui.services import (
     parse_task_query,
     task_status_payload,
 )
+from astrbot_plugin_selfie_image.webui.controllers import ConfigController
 from astrbot_plugin_selfie_image.features.config_manager import (
     ConfigurationMixin,
     ConfigRevisionConflictError,
@@ -333,6 +334,109 @@ def test_config_revision_rejects_stale_full_snapshot_without_rollback(tmp_path) 
         )
     assert plugin.raw_config["compatibility_field"]["source"] == "newer"
     assert plugin.get_config_revision() == current_revision
+
+
+def test_config_domain_patch_merges_objects_replaces_lists_and_preserves_credentials(tmp_path) -> None:
+    import threading
+
+    plugin = object.__new__(ConfigurationMixin)
+    plugin._config_lock = threading.RLock()
+    plugin.config_path = str(tmp_path / "config.json")
+    plugin.key_config = {"web": {"enable": False, "token": "token"}}
+    plugin.raw_config = {}
+    plugin._apply_raw_config(
+        {
+            "compatibility_field": {"keep": "yes"},
+            "image": {"width": 512, "height": 768, "max_concurrent_tasks": 2},
+            "monitoring": {"generation_alerts": {"enabled": True, "record_success_rate_below": 0.9}},
+            "image_channels": [
+                {
+                    "id": "one",
+                    "name": "main",
+                    "provider_type": "openai",
+                    "base_url": "https://one.example.test/v1",
+                    "api_key": "channel-secret",
+                    "model": "gpt-image-1",
+                    "enabled": True,
+                },
+                {
+                    "id": "two",
+                    "name": "secondary",
+                    "provider_type": "openai",
+                    "base_url": "https://two.example.test/v1",
+                    "api_key": "second-secret",
+                    "model": "gpt-image-1",
+                    "enabled": True,
+                },
+            ],
+            "proxies": [{
+                "id": "proxy-1", "name": "before", "protocol": "http",
+                "host": "proxy.example.test", "port": 8080,
+                "username": "user", "password": "proxy-secret",
+            }],
+        }
+    )
+    revision = plugin.get_config_revision()
+
+    saved = plugin.update_config_from_web(
+        {
+            "image": {"max_concurrent_tasks": 3},
+            "monitoring": {"generation_alerts": {"enabled": False}},
+            # Lists are domain values: submitting one row must replace the
+            # previous list, while the masked key is restored by identity.
+            "image_channels": [
+                {
+                    "id": "one",
+                    "name": "renamed",
+                    "provider_type": "openai",
+                    "base_url": "https://one.example.test/v1",
+                    "api_key": "******",
+                    "model": "gpt-image-1",
+                    "enabled": True,
+                }
+            ],
+            # A patch that edits proxy metadata must not clear its password.
+            "proxies": [{
+                "id": "proxy-1", "name": "after",
+                "protocol": "http", "host": "proxy.example.test", "port": 8080,
+            }],
+        },
+        expected_revision=revision,
+    )
+
+    assert plugin.raw_config["compatibility_field"] == {"keep": "yes"}
+    assert plugin.raw_config["image"]["width"] == 512
+    assert plugin.raw_config["image"]["height"] == 768
+    assert plugin.raw_config["image"]["max_concurrent_tasks"] == 3
+    assert plugin.raw_config["monitoring"]["generation_alerts"]["enabled"] is False
+    assert plugin.raw_config["monitoring"]["generation_alerts"]["record_success_rate_below"] == 0.9
+    assert [row["id"] for row in plugin.raw_config["image_channels"]] == ["one"]
+    assert plugin.raw_config["image_channels"][0]["api_key"] == "channel-secret"
+    assert plugin.raw_config["proxies"][0]["name"] == "after"
+    assert plugin.raw_config["proxies"][0]["password"] == "proxy-secret"
+    assert saved["image_channels"][0]["api_key"] == "******"
+
+
+def test_config_controller_unwraps_patch_and_forwards_top_level_revision() -> None:
+    calls = []
+
+    class Plugin:
+        def update_config_from_web(self, patch, *, expected_revision=None):
+            calls.append((patch, expected_revision))
+            return {"saved": True}
+
+        def get_config_revision(self):
+            return 8
+
+    result = ConfigController(Plugin()).update(
+        {
+            "config": {"image": {"width": 512}, "revision": 999},
+            "revision": 8,
+        }
+    )
+    assert result.data == {"saved": True}
+    assert result.extra == {"revision": 8}
+    assert calls == [({"image": {"width": 512}}, 8)]
 
 
 def test_legacy_schema_and_proxy_shape_upgrade_in_memory_without_dropping_compat_fields() -> None:

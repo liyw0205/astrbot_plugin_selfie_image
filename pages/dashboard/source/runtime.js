@@ -476,6 +476,10 @@
     }
     function requestTraceSnapshot() { return REQUEST_TRACE.map(item => Object.assign({}, item)); }
     let CONFIG = {};
+    // Keep the last server response separate from the editable local snapshot.
+    // Writes can mutate CONFIG before the queued request starts, so diffing
+    // against this baseline prevents unrelated stale domains from being sent.
+    let CONFIG_SERVER_SNAPSHOT = null;
     let CONFIG_REVISION = 0;
     let CONFIG_LOAD_SEQ = 0;
     let QQ_GROUP_LOAD_SEQ = 0;
@@ -943,6 +947,14 @@ Source prompt:
       img.prompt_en_model ??= '';
       img.image_prompt_en_template = String(img.image_prompt_en_template || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
       if (String(img.image_prompt_en_template||'').includes('Task: rewrite the user prompt') || !String(img.image_prompt_en_template||'').includes('"ok":true')) img.image_prompt_en_template = DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
+    }
+    function rememberConfigServerSnapshot(value = CONFIG) {
+      try {
+        CONFIG_SERVER_SNAPSHOT = JSON.parse(JSON.stringify(value && typeof value === 'object' ? value : {}));
+      } catch (_) {
+        CONFIG_SERVER_SNAPSHOT = {};
+      }
+      return CONFIG_SERVER_SNAPSHOT;
     }
 
     function fillForms() {
