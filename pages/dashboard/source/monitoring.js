@@ -447,7 +447,6 @@
         || Number(params.persona_reference_count || 0) > 0
         || selection.used_persona
         || Number(roles.persona || 0) > 0
-        || Number(roles.persona_extra || 0) > 0
         || String(params.identity_reference_source || '').trim() === 'persona'
       );
     }

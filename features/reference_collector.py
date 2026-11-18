@@ -192,17 +192,12 @@ def select_wardrobe_selfie_references(
     *,
     wardrobe_item_id: str = "",
     wardrobe_item_name: str = "",
-    persona_extra_refs: Optional[Sequence[ImageReference]] = None,
 ) -> Optional[CosReferenceSelection]:
     """Build the stable identity + wardrobe order for ordinary selfies."""
     if wardrobe_ref is None:
         return None
     identity = persona_ref if persona_ref and getattr(persona_ref, "data", None) else None
-    extras = [
-        ref for ref in (persona_extra_refs or [])
-        if ref and getattr(ref, "data", None)
-    ]
-    raw_refs = ([identity] if identity else []) + extras + [wardrobe_ref]
+    raw_refs = ([identity] if identity else []) + [wardrobe_ref]
     ordered = dedupe_image_references(raw_refs)
     if identity is not None:
         ordered = [identity] + [
@@ -220,8 +215,6 @@ def select_wardrobe_selfie_references(
     roles: Dict[str, int] = {}
     if selected_identity is not None:
         roles["persona"] = 1
-    if extras:
-        roles["persona_extra"] = len(extras)
     if wardrobe_selected is not None:
         roles["wardrobe"] = 1
     return CosReferenceSelection(
@@ -281,7 +274,6 @@ def select_cos_references(
     message_refs: Sequence[ImageReference],
     *,
     action: str = "",
-    persona_extra_refs: Optional[Sequence[ImageReference]] = None,
     failed_count: int = 0,
     prefer_message_identity: bool = False,
 ) -> CosReferenceSelection:
@@ -291,9 +283,6 @@ def select_cos_references(
     deliberately does not infer identity from filenames, URLs, or image data.
     """
     message = [ref for ref in message_refs if ref and getattr(ref, "data", None)]
-    persona_extras = [
-        ref for ref in (persona_extra_refs or []) if ref and getattr(ref, "data", None)
-    ]
     use_message_identity, keep_persona_identity = _cos_identity_intent(action)
     identity: Optional[ImageReference]
     source: str
@@ -302,30 +291,28 @@ def select_cos_references(
         raw_extras = message[1:]
     elif persona_ref and message and use_message_identity and not keep_persona_identity:
         identity, source = message[0], "message"
-        raw_extras = [*persona_extras, *message[1:]]
+        raw_extras = message[1:]
     elif persona_ref:
         identity, source = persona_ref, "persona"
-        raw_extras = [*persona_extras, *message]
+        raw_extras = message
     elif message:
         identity, source = message[0], "message"
         raw_extras = message[1:]
     else:
         identity, source = None, "none"
-        raw_extras = persona_extras
+        raw_extras = []
 
     raw_refs = ([identity] if identity else []) + raw_extras
     ordered = dedupe_image_references(raw_refs)
     if identity is not None:
         # The identity object is always retained as the first item, even when
-        # an equivalent image appeared earlier in an auxiliary source.
+        # an equivalent image appeared in the user's references.
         ordered = [identity] + [ref for ref in ordered if content_digest(ref.data) != content_digest(identity.data)]
     selected_identity = ordered[0] if identity is not None and ordered else None
     extras = ordered[1:] if selected_identity is not None else ordered
     role_counts: Dict[str, int] = {}
     if source != "none":
         role_counts[source] = 1
-    if persona_extras and not (prefer_message_identity and message):
-        role_counts["persona_extra"] = len(persona_extras)
     if message:
         role_counts["message"] = len(message)
     return CosReferenceSelection(

@@ -83,7 +83,6 @@ def test_import_reconciles_today_without_changing_other_schedule_fields(archive_
         workflow = SelfieWorkflowService(SimpleNamespace(
             persona=persona,
             _persona_identity_reference=lambda **_: ImageReference(data=b"identity"),
-            _persona_auxiliary_references=lambda *_: [],
         ))
         selection = workflow.select_selfie_references("自拍", [])
         assert selection.wardrobe_item_id == expected.id

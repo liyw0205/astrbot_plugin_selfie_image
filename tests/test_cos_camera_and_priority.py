@@ -306,7 +306,6 @@ def test_cos_reference_selection_keeps_persona_first_without_identity_intent():
 
 def test_look_reference_selection_uses_only_user_images_when_present():
     persona = ImageReference(data=b"persona", mime_type="image/png")
-    persona_extra = ImageReference(data=b"persona-extra", mime_type="image/png")
     attached = ImageReference(data=b"attached", mime_type="image/png")
     quoted = ImageReference(data=b"quoted", mime_type="image/jpeg")
 
@@ -314,14 +313,12 @@ def test_look_reference_selection_uses_only_user_images_when_present():
         persona,
         [attached, quoted],
         action="看看COS",
-        persona_extra_refs=[persona_extra],
         prefer_message_identity=True,
     )
     fallback = select_cos_references(
         persona,
         [],
         action="看看COS",
-        persona_extra_refs=[persona_extra],
         prefer_message_identity=True,
     )
 
@@ -331,21 +328,19 @@ def test_look_reference_selection_uses_only_user_images_when_present():
     assert selected.summary()["used_persona"] is False
     assert selected.summary()["roles"] == {"message": 2}
     assert fallback.identity_source == "persona"
-    assert fallback.refs == [persona, persona_extra]
+    assert fallback.refs == [persona]
 
 
 def test_look_commands_share_reference_preference_but_other_cos_keeps_legacy_order():
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
     persona = ImageReference(data=b"persona", mime_type="image/png")
-    persona_extra = ImageReference(data=b"persona-extra", mime_type="image/png")
     attached = ImageReference(data=b"attached", mime_type="image/png")
 
     with tempfile.TemporaryDirectory() as tmp:
         plugin = object.__new__(SelfieImagePlugin)
         plugin.persona = PersonaManager(tmp)
         plugin._persona_identity_reference = lambda **_: persona
-        plugin._persona_auxiliary_references = lambda _action: [persona_extra]
 
         legs = plugin._select_selfie_references("看看腿", [attached])
         cos = plugin._select_selfie_references("看看COS 洛琪希", [attached])
@@ -354,9 +349,9 @@ def test_look_commands_share_reference_preference_but_other_cos_keeps_legacy_ord
 
     assert legs is not None and legs.refs == [attached]
     assert cos is not None and cos.refs == [attached]
-    assert legacy_cos is not None and legacy_cos.refs == [persona, persona_extra, attached]
+    assert legacy_cos is not None and legacy_cos.refs == [persona, attached]
     assert legs_without_image is not None
-    assert legs_without_image.refs == [persona, persona_extra]
+    assert legs_without_image.refs == [persona]
 
 
 def test_group_reference_selection_keeps_persona_identity_and_attached_image_as_extra():

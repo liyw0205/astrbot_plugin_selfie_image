@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime
 import os
 import random
@@ -33,7 +34,6 @@ from ..cos.leg_focus import (
 from ..cos.cos_looks_loader import COS_JSON_POSES
 from ..core.utils import (
     detect_mime_by_bytes,
-    ext_from_mime,
     load_json_file_result,
     save_json_file,
 )
@@ -64,6 +64,7 @@ from .daily_prompt_pools import (
     DAILY_SEED_CHOICES,
     SELFIE_SNAPSHOT_PRESETS,
 )
+from .identity_pool import IdentityPoolMixin
 from ..prompts.prompt_templates import (
     APPEARANCE_OUTPUT_PROMPTS_ZH,
     COS_COVERED_EYES_IDENTITY_CONTRACT_ZH,
@@ -1055,7 +1056,7 @@ def fallback_daily_profile(
     )
 
 
-class PersonaManager:
+class PersonaManager(IdentityPoolMixin):
     def __init__(self, data_dir: str):
         self.data_dir = data_dir
         self.file_path = os.path.join(data_dir, "image_persona.json")
@@ -1064,7 +1065,11 @@ class PersonaManager:
         self.data: Dict[str, Any] = {
             "ref_image_path": "",
             "ref_mime_type": "image/png",
-            "auxiliary_identity_refs": [],
+            "identity_mode": "image",
+            "image_pool": [],
+            "active_image_slot": 0,
+            "persona_pool": [],
+            "active_persona_slot": 0,
             "appearance_type": "auto",
             "updated_at": "",
             "daily_selfie_profile": None,
@@ -1078,6 +1083,9 @@ class PersonaManager:
         self._storage_blocked = False
         # Local profile updates never suspend; archive imports also run in workers.
         self._daily_profile_lock = threading.RLock()
+        # Identity mutations share the manager lock so saves cannot interleave
+        # with profile mutations within one process.
+        self._identity_lock = self._daily_profile_lock
         self.load()
 
     def load(self) -> None:
@@ -1089,32 +1097,33 @@ class PersonaManager:
             "source": self.file_path,
         }
         self._storage_blocked = not result.ok
-        if result.status == "missing":
-            return
         if not result.ok:
             return
         raw = result.data
-        if not raw:
-            return
+        if not isinstance(raw, dict):
+            raw = {}
         self.data.update(
             {
                 "ref_image_path": str(raw.get("ref_image_path") or ""),
                 "ref_mime_type": str(raw.get("ref_mime_type") or "image/png"),
-                "auxiliary_identity_refs": [
-                    {
-                        "id": str(item.get("id") or "").strip(),
-                        "path": str(item.get("path") or "").strip(),
-                        "mime_type": str(item.get("mime_type") or "image/png").strip() or "image/png",
-                        "created_at": str(item.get("created_at") or "").strip(),
-                    }
-                    for item in (raw.get("auxiliary_identity_refs") or [])
-                    if isinstance(item, dict) and str(item.get("id") or "").strip() and str(item.get("path") or "").strip()
-                ][:3],
                 "appearance_type": normalize_appearance_type(raw.get("appearance_type")),
                 "updated_at": str(raw.get("updated_at") or ""),
                 "daily_selfie_profile": raw.get("daily_selfie_profile"),
             }
         )
+        self.data.update(self._normalize_identity_pools(raw))
+        self._sync_legacy_image_fields()
+        # Persist the one-time default persona and legacy image migration.
+        if (
+            result.status == "missing"
+            or "persona_pool" not in raw
+            or "image_pool" not in raw
+            or "auxiliary_identity_refs" in raw
+        ):
+            try:
+                self.save()
+            except Exception:
+                pass
         self._migrate_legacy_daily_schedule(self.data.get("daily_selfie_profile"))
 
     def _migrate_legacy_daily_schedule(self, raw: Any) -> Optional[DailySchedule]:
@@ -1147,157 +1156,22 @@ class PersonaManager:
         return dict(self._storage_status)
 
     def get(self) -> Dict[str, Any]:
-        return dict(self.data)
+        return copy.deepcopy(self.data)
 
     def get_reference_path(self) -> str:
+        if self.get_identity_mode() != "image":
+            return ""
         path = str(self.data.get("ref_image_path") or "")
         return path if path and os.path.exists(path) else ""
 
     def has_reference_image(self) -> bool:
         return bool(self.get_reference_path())
 
-    def get_auxiliary_reference_entries(self) -> list[Dict[str, Any]]:
-        entries: list[Dict[str, Any]] = []
-        for item in self.data.get("auxiliary_identity_refs") or []:
-            if not isinstance(item, dict):
-                continue
-            path = str(item.get("path") or "").strip()
-            ref_id = str(item.get("id") or "").strip()
-            if not ref_id or not path or not os.path.isfile(path):
-                continue
-            entries.append(
-                {
-                    "id": ref_id,
-                    "path": path,
-                    "mime_type": str(item.get("mime_type") or "image/png"),
-                    "created_at": str(item.get("created_at") or ""),
-                }
-            )
-        return entries[:3]
-
-    def get_auxiliary_reference_images(self) -> list[Dict[str, Any]]:
-        images: list[Dict[str, Any]] = []
-        for entry in self.get_auxiliary_reference_entries():
-            try:
-                with open(entry["path"], "rb") as file:
-                    data = file.read()
-            except OSError:
-                continue
-            if data:
-                images.append({
-                    "id": entry["id"],
-                    "data": data,
-                    "mime_type": entry["mime_type"],
-                    "path": entry["path"],
-                    "created_at": entry["created_at"],
-                })
-        return images
-
-    def add_auxiliary_reference_image(self, data: bytes, mime_type: str = "") -> Dict[str, Any]:
-        if not data:
-            raise ValueError("辅助形象图为空")
-        entries = self.get_auxiliary_reference_entries()
-        if len(entries) >= 3:
-            raise ValueError("辅助形象图最多 3 张，请先删除一张")
-        mime = mime_type or detect_mime_by_bytes(data)
-        ext = ext_from_mime(mime)
-        ref_id = f"aux_{time.time_ns()}"
-        path = os.path.join(self.image_dir, f"persona_aux_{time.time_ns()}.{ext}")
-        with open(path, "wb") as file:
-            file.write(data)
-        entries.append(
-            {
-                "id": ref_id,
-                "path": path,
-                "mime_type": mime,
-                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
-            }
-        )
-        self.data["auxiliary_identity_refs"] = entries
-        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-        self.save()
-        return self.get()
-
-    def remove_auxiliary_reference_image(self, ref_id: str) -> Dict[str, Any]:
-        target_id = str(ref_id or "").strip()
-        if not target_id:
-            raise ValueError("缺少辅助形象图 id")
-        entries = list(self.data.get("auxiliary_identity_refs") or [])
-        kept: list[Dict[str, Any]] = []
-        removed = None
-        for item in entries:
-            if isinstance(item, dict) and str(item.get("id") or "") == target_id:
-                removed = item
-            elif isinstance(item, dict):
-                kept.append(item)
-        if removed is None:
-            raise ValueError("辅助形象图不存在")
-        path = str(removed.get("path") or "")
-        if path:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except OSError:
-                pass
-        self.data["auxiliary_identity_refs"] = kept
-        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-        self.save()
-        return self.get()
-
-    def clear_auxiliary_reference_images(self) -> Dict[str, Any]:
-        """Remove all auxiliary identity images while keeping the primary image."""
-        for item in self.data.get("auxiliary_identity_refs") or []:
-            if not isinstance(item, dict):
-                continue
-            path = str(item.get("path") or "").strip()
-            if not path:
-                continue
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except OSError:
-                pass
-        self.data["auxiliary_identity_refs"] = []
-        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-        self.save()
-        return self.get()
-
     def save_reference_image(self, data: bytes, mime_type: str = "") -> Dict[str, Any]:
-        if not data:
-            raise ValueError("参考图为空")
-        mime = mime_type or detect_mime_by_bytes(data)
-        ext = ext_from_mime(mime)
-        path = os.path.join(self.image_dir, f"persona_ref_{time.time_ns()}.{ext}")
-        with open(path, "wb") as file:
-            file.write(data)
-
-        old_path = str(self.data.get("ref_image_path") or "")
-        if old_path and old_path != path:
-            try:
-                if os.path.exists(old_path):
-                    os.remove(old_path)
-            except OSError:
-                pass
-
-        self.data["ref_image_path"] = path
-        self.data["ref_mime_type"] = mime
-        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-        self.save()
-        return self.get()
+        return self.add_reference_image(data, mime_type)
 
     def clear_reference_image(self) -> Dict[str, Any]:
-        path = str(self.data.get("ref_image_path") or "")
-        if path:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except OSError:
-                pass
-        self.data["ref_image_path"] = ""
-        self.data["ref_mime_type"] = "image/png"
-        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-        self.save()
-        return self.get()
+        return self.clear_active_reference_image()
 
     def get_reference_image(self) -> Optional[Dict[str, Any]]:
         path = self.get_reference_path()
@@ -2179,6 +2053,9 @@ class PersonaManager:
         has_wardrobe_reference: bool = False,
         wardrobe_item_name: str = "",
     ) -> str:
+        if self.get_identity_mode() == "persona" and not has_reference_image:
+            selected = self.get_active_persona()
+            personality = f"{selected['name']}：{selected['prompt']}" if selected else ""
         act = str(action or "").strip()
         intent = self.analyze_selfie_intent(act)
         if intent.is_legs_only and not has_leg_focus_contract(act):
@@ -2889,7 +2766,26 @@ class PersonaManager:
     def status_text(self) -> str:
         daily = self.get_daily_selfie_profile()
         lines = []
-        lines.append("当前已设置 AI 自拍参考图。" if self.has_reference_image() else "当前还没有设置 AI 自拍参考图。")
+        pool = self.identity_pool_payload() if callable(getattr(self, "identity_pool_payload", None)) else {}
+        if pool.get("identity_mode") == "persona":
+            active = next(
+                (item for item in pool.get("persona_pool", []) if item.get("active")),
+                None,
+            )
+            lines.append(f"当前使用形象人设池：{active.get('slot')}·{active.get('name')}" if active else "当前使用形象人设池，但尚未选择人设。")
+        else:
+            lines.append(
+                f"当前使用形象图池：{pool.get('active_image_slot') or '未选择'}（{len(pool.get('image_pool', []))}/10）"
+                if pool else ("当前使用形象图池。")
+            )
+        if pool.get("identity_mode") != "persona":
+            lines.append("当前已设置 AI 自拍参考图。" if self.has_reference_image() else "当前还没有设置 AI 自拍参考图。")
+        images = pool.get("image_pool", [])
+        if images:
+            lines.append("形象图编号：" + "、".join(str(item["slot"]) + ("（当前）" if item["active"] else "") for item in images))
+        personas = pool.get("persona_pool", [])
+        if personas:
+            lines.append("形象人设编号：" + "、".join(f"{item['slot']}·{item['name']}" + ("（当前）" if item["active"] else "") for item in personas))
         lines.append(f"形象类型：{self.appearance_type_label()}（自动=不追加类型说明；真人/动漫会补对应说明）")
         if daily:
             period = current_period()

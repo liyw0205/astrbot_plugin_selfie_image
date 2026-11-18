@@ -545,6 +545,17 @@ class SelfieImageDashboardAPI:
             return error
         return await self._threaded_result(self._selfie_profile_controller.clear_reference)
 
+    async def page_selfie_identity(self) -> Any:
+        if getattr(request, "method", "POST").upper() == "GET":
+            return await self._threaded_result(self._selfie_profile_controller.get_reference)
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        assert payload is not None
+        return await self._threaded_result(
+            lambda: self._selfie_profile_controller.identity_mutation(payload)
+        )
+
     async def page_selfie_appearance_type(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:

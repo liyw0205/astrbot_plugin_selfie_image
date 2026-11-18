@@ -225,6 +225,10 @@ class SelfieProfileRouteContract:
 
 SELFIE_PROFILE_ROUTE_CONTRACTS = (
     SelfieProfileRouteContract(
+        "selfie_identity", "/api/selfie-identity", "selfie-identity", ("GET", "POST"),
+        "selfie_identity", "page_selfie_identity", "Selfie Image identity pool mutation",
+    ),
+    SelfieProfileRouteContract(
         "selfie_reference_get", "/api/selfie-reference", "selfie-reference", ("GET",),
         "selfie_reference_get", "page_selfie_reference_get", "Selfie Image get reference",
     ),

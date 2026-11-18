@@ -1334,7 +1334,6 @@ class ConfigModelTests(unittest.TestCase):
             plugin._bundled_logo_path = ""
             plugin.persona = types.SimpleNamespace(
                 get_reference_path=lambda: str(persona_path),
-                get_auxiliary_reference_entries=lambda: [],
             )
             plugin._cache_relative_path = lambda path: os.path.relpath(path, str(cache_dir))
             plugin._register_inflight_media = lambda _paths: None
@@ -1364,7 +1363,6 @@ class ConfigModelTests(unittest.TestCase):
             plugin.generated_dir = str(cache_dir)
             plugin.persona = types.SimpleNamespace(
                 get_reference_path=lambda: "",
-                get_auxiliary_reference_entries=lambda: [],
             )
             plugin._bundled_logo_path = ""
             plugin._cache_relative_path = lambda path: os.path.relpath(path, str(cache_dir))
@@ -12237,7 +12235,7 @@ class DailySelfieLocalProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("公寓玄关的手机前置自拍", prompt)
         self.assertIn("场景与镜头只改变拍摄氛围，不得替换、增添或删减穿搭", prompt)
 
-    def test_auxiliary_identity_references_are_limited_and_keep_primary(self) -> None:
+    def test_legacy_auxiliary_identity_is_ignored_without_deleting_files(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -12245,30 +12243,30 @@ class DailySelfieLocalProfileTests(unittest.IsolatedAsyncioTestCase):
             manager.save_reference_image(PNG_BYTES, "image/png")
             primary = manager.get_reference_image()
             self.assertIsNotNone(primary)
-            for _ in range(3):
-                manager.add_auxiliary_reference_image(PNG_BYTES, "image/png")
-            auxiliary = manager.get_auxiliary_reference_images()
-            self.assertEqual(len(auxiliary), 3)
-            self.assertTrue(all(item["data"] == PNG_BYTES for item in auxiliary))
-            with self.assertRaisesRegex(ValueError, "最多 3 张"):
-                manager.add_auxiliary_reference_image(PNG_BYTES, "image/png")
-            removed_id = str(auxiliary[1]["id"])
-            manager.remove_auxiliary_reference_image(removed_id)
-            self.assertEqual(len(manager.get_auxiliary_reference_images()), 2)
+            legacy_path = Path(manager.image_dir) / "legacy_auxiliary.png"
+            legacy_path.write_bytes(PNG_BYTES)
+            raw = manager.get()
+            raw["auxiliary_identity_refs"] = [
+                {"id": "legacy", "path": str(legacy_path), "mime_type": "image/png"},
+            ]
+            Path(manager.file_path).write_text(json.dumps(raw), encoding="utf-8")
+            manager = PersonaManager(tmp)
+            self.assertNotIn("auxiliary_identity_refs", manager.get())
+            self.assertEqual(len(manager.list_image_pool()), 1)
             self.assertEqual(manager.get_reference_image()["data"], primary["data"])
+            stored = json.loads(Path(manager.file_path).read_text(encoding="utf-8"))
+            self.assertNotIn("auxiliary_identity_refs", stored)
             manager.clear_reference_image()
             self.assertFalse(manager.has_reference_image())
-            self.assertEqual(len(manager.get_auxiliary_reference_images()), 2)
-            manager.clear_auxiliary_reference_images()
-            self.assertEqual(len(manager.get_auxiliary_reference_images()), 0)
+            self.assertTrue(legacy_path.is_file())
 
-    def test_auxiliary_persona_commands_are_documented_and_registered(self) -> None:
+    def test_auxiliary_persona_commands_are_removed(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
         readme_src = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
-        for token in ('@filter.command("辅助形象设置")', '@filter.command("辅助形象清除")', "合影时只使用主形象图"):
-            self.assertIn(token, main_src)
-        self.assertIn("/辅助形象设置", readme_src)
-        self.assertIn("/辅助形象清除", readme_src)
+        for token in ('@filter.command("辅助形象设置")', '@filter.command("辅助形象清除")'):
+            self.assertNotIn(token, main_src)
+        self.assertNotIn("/辅助形象设置", readme_src)
+        self.assertNotIn("/辅助形象清除", readme_src)
 
 if __name__ == "__main__":
     unittest.main()

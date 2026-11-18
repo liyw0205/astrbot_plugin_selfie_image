@@ -180,12 +180,11 @@ def test_command_dedupe_distinguishes_count_media_and_owner(tmp_path):
     asyncio.run(run())
 
 
-def test_selfie_reference_fingerprint_tracks_identity_auxiliary_and_selection(tmp_path):
+def test_selfie_reference_fingerprint_tracks_identity_and_selection(tmp_path):
     plugin = runtime_plugin(tmp_path)
     plugin._is_cos_action = lambda *_: False
-    media = {"identity": b"identity-a", "auxiliary": b"aux-a"}
+    media = {"identity": b"identity-a"}
     plugin._persona_identity_reference = lambda **_: ImageReference(media["identity"])
-    plugin._persona_auxiliary_references = lambda *_: [ImageReference(media["auxiliary"])]
     payload = {"original_prompt": "portrait"}
 
     def fingerprint():
@@ -195,9 +194,6 @@ def test_selfie_reference_fingerprint_tracks_identity_auxiliary_and_selection(tm
     first = fingerprint()
     media["identity"] = b"identity-b"
     assert fingerprint() != first
-    second = fingerprint()
-    media["auxiliary"] = b"aux-b"
-    assert fingerprint() != second
     selection = SimpleNamespace(refs=[ImageReference(b"selected")])
     assert [ref.data for ref in plugin._selfie_reference_images("portrait", [], selection)] == [b"selected"]
 
@@ -207,9 +203,8 @@ def test_web_selfie_dedupe_changes_when_persona_media_changes(tmp_path):
         plugin = runtime_plugin(tmp_path)
         plugin.loop = asyncio.get_running_loop()
         plugin._validate_web_test_selection = lambda *_: None
-        media = {"identity": b"identity-a", "auxiliary": b"aux-a"}
+        media = {"identity": b"identity-a"}
         plugin._persona_identity_reference = lambda **_: ImageReference(media["identity"])
-        plugin._persona_auxiliary_references = lambda *_: [ImageReference(media["auxiliary"])]
 
         async def worker(*_):
             await asyncio.Event().wait()
@@ -221,8 +216,48 @@ def test_web_selfie_dedupe_changes_when_persona_media_changes(tmp_path):
         media["identity"] = b"identity-b"
         second = plugin.start_web_image_task(payload)
         assert second["task_id"] != first["task_id"]
-        media["auxiliary"] = b"aux-b"
-        assert plugin.start_web_image_task(payload)["task_id"] != second["task_id"]
+        await plugin.terminate()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("web", [False, True])
+def test_selfie_dedupe_changes_with_selected_text_persona(tmp_path, web):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+    async def run():
+        plugin = runtime_plugin(tmp_path)
+        plugin.loop = asyncio.get_running_loop()
+        plugin.persona = PersonaManager(tmp_path)
+        plugin.persona.set_identity_mode("persona")
+        plugin.persona.add_persona("另一个形象", "成年女性，短发绿眼")
+        plugin._validate_web_test_selection = lambda *_: None
+
+        async def worker(*_):
+            await asyncio.Event().wait()
+
+        plugin._run_web_image_task = worker
+        event = SimpleNamespace(group_id="g", user_id="u")
+
+        def submit():
+            if web:
+                return plugin.start_web_image_task({"prompt": "portrait", "use_selfie_reference": True})
+            return plugin.start_command_image_task(
+                event, source="command-selfie",
+                summary={"original_prompt": "portrait", "use_selfie_reference": True},
+                runner=worker,
+            )
+
+        plain_key = plugin._request_fingerprint({"prompt": "portrait"})
+        first = submit()
+        assert submit()["task_id"] == first["task_id"]
+        plugin.persona.select_persona(2)
+        second = submit()
+        assert second["task_id"] != first["task_id"]
+        assert submit()["task_id"] == second["task_id"]
+        plugin.persona.update_persona(2, prompt="成年女性，长直发绿眼")
+        assert submit()["task_id"] != second["task_id"]
+        assert plugin._request_fingerprint({"prompt": "portrait"}) == plain_key
         await plugin.terminate()
 
     asyncio.run(run())

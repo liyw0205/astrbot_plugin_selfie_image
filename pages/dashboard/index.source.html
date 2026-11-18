@@ -617,7 +617,9 @@
       <div class="grid">
         <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
       </div>
-      <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 无形象图用 logo</label>
+      <label class="checkline"><input id="selfiePersonaEnabled" type="checkbox"> 使用形象人设池</label>
+      <div class="muted" id="selfieIdentityModeHint">关闭时使用形象图池，开启时使用文字人设池。</div>
+      <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 形象图池为空时用 logo</label>
       <div class="grid">
         <div>
           <label>形象类型</label>
@@ -628,16 +630,30 @@
           </select>
         </div>
       </div>
-      <h3>形象参考图</h3>
-      <input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml">
-      <img id="selfiePreview" class="preview" alt="selfie reference">
-      <div class="actions selfie-reference-actions">
-        <button id="uploadSelfie">上传并保存</button>
-        <button class="secondary" onclick="refreshSelfie(true)">刷新预览</button>
-        <button class="danger" onclick="clearSelfie()">清除参考图</button>
-        <button class="secondary" onclick="refreshDailySelfieLocal()">重新生成今日日程</button>
+      <div id="selfieImagePoolPanel" class="selfie-identity-panel">
+        <div class="between selfie-pool-heading"><h3>形象图池</h3><span id="selfieImagePoolCount" class="muted"></span></div>
+        <div class="grid selfie-image-upload-grid">
+          <div><label for="selfieFile">添加形象参考图</label><input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
+          <div class="selfie-image-preview-wrap"><img id="selfiePreview" class="preview" alt="当前形象参考图"></div>
+        </div>
+        <div class="actions selfie-reference-actions">
+          <button id="uploadSelfie" type="button">添加并选中</button>
+          <button class="secondary" id="refreshSelfieBtn" type="button" onclick="refreshSelfie(true)">刷新预览</button>
+          <button class="danger" id="clearSelfieBtn" type="button" onclick="clearSelfie()">移除当前形象图</button>
+        </div>
+        <div id="selfieImagePoolList" class="selfie-identity-list" aria-live="polite"></div>
       </div>
+      <div class="actions"><button class="secondary" onclick="refreshDailySelfieLocal()">重新生成今日日程</button></div>
       <div id="selfieStatus" class="selfie-reference-state" aria-live="polite"></div>
+      <div id="selfiePersonaPoolPanel" class="selfie-identity-panel" hidden>
+        <div class="between selfie-pool-heading"><h3>形象人设池</h3><span id="selfiePersonaPoolCount" class="muted"></span></div>
+        <div class="grid selfie-persona-form">
+          <div><label for="selfiePersonaName">人设名称</label><input id="selfiePersonaName" type="text" maxlength="80" placeholder="例如：小玉"></div>
+          <div><label for="selfiePersonaPrompt">形象描述</label><textarea id="selfiePersonaPrompt" maxlength="4000" placeholder="描述固定的外貌、发型和气质"></textarea></div>
+        </div>
+        <div class="actions"><button id="addSelfiePersona" type="button">添加人设</button></div>
+        <div id="selfiePersonaPoolList" class="selfie-identity-list" aria-live="polite"></div>
+      </div>
       <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
       <h3 style="margin-top:18px">自定义衣橱</h3>
       <div class="grid">

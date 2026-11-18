@@ -70,7 +70,7 @@ class BackupManager:
         {
             "id": "persona",
             "label": "形象资料",
-            "description": "主形象、辅助形象和形象元数据",
+            "description": "形象图片池、文字人设池和形象元数据",
             "reason": "用户资料，缺失时仍可启动但会丢失形象",
             "paths": ("image_persona.json", "image-persona"),
             "required": False,

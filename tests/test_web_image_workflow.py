@@ -204,6 +204,50 @@ def test_image_and_images_are_combined_in_order_with_identity_first(plugin):
     assert result["request_data"]["raw_reference_image_count"] == 3
 
 
+@pytest.mark.parametrize("enhance", [False, True])
+def test_text_persona_generates_without_identity_image_or_logo(plugin, tmp_path, enhance):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+    plugin.persona = PersonaManager(tmp_path)
+    plugin.persona.set_identity_mode("persona")
+    plugin._ensure_daily_selfie_schedule = AsyncMock()
+    result = asyncio.run(plugin.web_test_image({
+        "prompt": "站在窗边", "use_selfie_reference": True, "prompt_enhance": enhance,
+    }))
+    assert result["success"] is True
+    request = plugin._run_image_generation.call_args.kwargs
+    assert request["refs"] == []
+    selected = plugin.persona.get_active_persona()
+    assert request["prompt"].count(selected["prompt"]) == 1
+    assert selected["name"] in request["prompt"]
+
+
+def test_plain_text_persona_retry_keeps_existing_identity_without_duplication(plugin, tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+    plugin.persona = PersonaManager(tmp_path)
+    plugin.persona.set_identity_mode("persona")
+    prompt = "角色设定：旧形象描述\n【角色设定结束】\n站在窗边"
+    asyncio.run(plugin.web_test_image({
+        "prompt": prompt, "use_selfie_reference": True, "prompt_enhance": False,
+    }))
+    assert plugin._run_image_generation.call_args.kwargs["prompt"] == " ".join(prompt.split())
+
+
+@pytest.mark.parametrize("enhance", [False, True])
+def test_empty_text_pool_stops_before_generation(plugin, tmp_path, enhance):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+    plugin.persona = PersonaManager(tmp_path)
+    plugin.persona.remove_persona(1)
+    plugin.persona.set_identity_mode("persona")
+    with pytest.raises(RuntimeError, match="当前未选择形象人设"):
+        asyncio.run(plugin.web_test_image({
+            "prompt": "portrait", "use_selfie_reference": True, "prompt_enhance": enhance,
+        }))
+    plugin._run_image_generation.assert_not_awaited()
+
+
 def test_coroutine_cancellation_propagates_without_recording_preflight_failure(plugin):
     plugin._run_image_generation.side_effect = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):

@@ -18,12 +18,13 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 12 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 6 * 1024 * 1024
 MODULE_DIRS = frozenset({"core", "cos", "features", "generation", "nai", "prompts", "studio", "tasks", "webui"})
-DATA_DIRS = frozenset({"common", "cos", "group", "legs", "nai", "schedule", "studio"})
+DATA_DIRS = frozenset({"common", "cos", "group", "legs", "nai", "persona", "schedule", "studio"})
 ROOT_FILES = frozenset({
     "__init__.py", "main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt",
     "README.md", "CHANGELOG.md", "LICENSE", "LICENSE.md", "LICENSE.txt", "logo.png",
 })
 PAGE_FILES = frozenset({"pages/dashboard/index.html", "pages/dashboard/_page.json"})
+CHANGELOG_ARCHIVES = frozenset({"data/CHANGELOG_1.7.md", "data/CHANGELOG_HISTORY.md"})
 # Deliberately adopted runtime sources may be checked before their first commit.
 # No other untracked file is eligible for a release archive.
 APPROVED_RUNTIME_ADDITIONS = frozenset({
@@ -45,6 +46,8 @@ APPROVED_RUNTIME_ADDITIONS = frozenset({
     "features/backup_web_service.py",
     "features/selfie_profile_web_service.py",
     "features/archive_transfer.py",
+    "features/identity_pool.py",
+    "data/persona/builtin_personas.json",
 })
 REQUIRED_FILES = frozenset({
     "__init__.py", "main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt",
@@ -54,6 +57,7 @@ REQUIRED_FILES = frozenset({
     "data/legs/compositions.json", "data/legs/outfits.json", "data/legs/views.json",
     "data/nai/artist_presets.json", "data/nai/reference.json", "data/schedule/prompt_pools.json",
     "data/studio/builtin_prompts.json",
+    "features/identity_pool.py", "data/persona/builtin_personas.json",
     *(f"{name}/__init__.py" for name in MODULE_DIRS),
     *PAGE_FILES,
 })
@@ -77,7 +81,7 @@ def runtime_path(name: str) -> bool:
         return False
     if any(part.startswith(".") or part in {"__pycache__", "research", "status-preview"} for part in path.parts):
         return False
-    if name in ROOT_FILES or name in PAGE_FILES or name == "data/CHANGELOG_HISTORY.md":
+    if name in ROOT_FILES or name in PAGE_FILES or name in CHANGELOG_ARCHIVES:
         return True
     if path.parts[0] in MODULE_DIRS:
         return path.suffix == ".py"
@@ -183,6 +187,16 @@ def validate_json_contract(name: str, data: Any) -> None:
     """Check required fields used by the current bundled-data readers."""
 
     if name not in {"_conf_schema.json", "pages/dashboard/_page.json"} and not name.startswith("data/"):
+        return
+    if name == "data/persona/builtin_personas.json":
+        seen: set[str] = set()
+        for index, row in enumerate(_list(data, name)):
+            row = _object(row, f"{name}[{index}]")
+            persona_name = _text(row.get("name"), f"{name}[{index}].name")
+            _text(row.get("prompt"), f"{name}[{index}].prompt")
+            if persona_name in seen:
+                raise ReleaseCheckError(f"{name}[{index}]: duplicate persona name {persona_name}")
+            seen.add(persona_name)
         return
     _object(data, name)
     if name == "_conf_schema.json":

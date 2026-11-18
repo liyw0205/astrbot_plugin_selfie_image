@@ -204,8 +204,18 @@ class WebTestImageWorkflow:
         self, action_text: str,
     ) -> Tuple[str, List[ImageReference], Optional[Dict[str, Any]]]:
         plugin = self.plugin
+        persona = getattr(plugin, "persona", None)
+        mode_getter = getattr(persona, "get_identity_mode", None)
+        persona_mode = bool(self.payload.get("use_selfie_reference")) and callable(mode_getter) and mode_getter() == "persona"
+        selected_persona = persona.get_active_persona() if persona_mode else None
+        if persona_mode and not selected_persona:
+            raise RuntimeError("当前未选择形象人设，请先添加并选择形象人设，或取消使用自拍形象")
         if not self.prompt_enhance:
             selected_refs = list(self.extra_refs)
+            if persona_mode:
+                if "角色设定：" not in action_text or "【角色设定结束】" not in action_text:
+                    action_text = f"角色设定：{selected_persona['name']}：{selected_persona['prompt']}\n【角色设定结束】\n{action_text}"
+                return action_text, selected_refs, None
             if self.payload.get("use_selfie_reference"):
                 persona_ref = plugin._persona_identity_reference()
                 if not persona_ref:
@@ -216,7 +226,7 @@ class WebTestImageWorkflow:
             prepared, selected_refs, translation_meta = await plugin._build_selfie_prompt_and_refs_for_event(
                 None, action_text, self.extra_refs,
             )
-            if not selected_refs:
+            if not selected_refs and not persona_mode:
                 raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
             return prepared, selected_refs, translation_meta
         user_prompt = action_text

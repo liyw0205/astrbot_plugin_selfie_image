@@ -256,6 +256,28 @@
     .selfie-reference-actions { align-items: center; }
     .selfie-reference-actions button { min-height: 38px; }
     .selfie-reference-state { min-height: 0; margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .selfie-identity-panel { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+    .selfie-pool-heading { align-items: baseline; }
+    .selfie-pool-heading h3 { margin: 0 0 8px; }
+    .selfie-image-upload-grid { align-items: start; }
+    .selfie-image-preview-wrap { min-height: 84px; }
+    .selfie-image-preview-wrap .preview { max-width: min(260px, 100%); max-height: 260px; margin-top: 0; object-fit: contain; }
+    .selfie-identity-list { display: grid; gap: 6px; margin-top: 10px; min-width: 0; }
+    .selfie-identity-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-soft); }
+    .selfie-identity-row.active { border-color: color-mix(in srgb, var(--primary) 46%, var(--line)); background: var(--primary-weak); }
+    .selfie-identity-slot { color: var(--primary-strong); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .selfie-identity-copy { display: grid; gap: 2px; min-width: 0; }
+    .selfie-identity-copy strong, .selfie-identity-copy span { min-width: 0; overflow-wrap: anywhere; }
+    .selfie-identity-copy strong { font-size: 12px; }
+    .selfie-identity-copy span { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .selfie-identity-row .actions { margin: 0; justify-content: flex-end; }
+    .selfie-identity-row .actions button { white-space: nowrap; }
+    .selfie-persona-form textarea { min-height: 76px; }
+    @media (max-width: 520px) {
+      .selfie-identity-row { grid-template-columns: 34px minmax(0, 1fr); }
+      .selfie-identity-row .actions { grid-column: 1 / -1; justify-content: flex-start; }
+      .selfie-identity-row .actions button { flex: 1 1 auto; }
+    }
     .status:empty { display: none; }
     .muted { color: var(--muted); font-size: 13px; line-height: 1.45; }
     .card { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; background: #fff; margin-bottom: 12px; box-shadow: var(--shadow); }

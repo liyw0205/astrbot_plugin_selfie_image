@@ -1592,6 +1592,53 @@ def test_selfie_reference_round_trip_reaches_real_persona(http, tmp_path):
     assert PersonaManager(str(tmp_path)).get_reference_image() is None
 
 
+def test_identity_pool_routes_reach_real_store_on_both_hosts(http, tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_wardrobe import PNG_1X1
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(tmp_path)
+    plugin.config = http.plugin.config
+    for hook in ("get_selfie_reference_payload", "update_selfie_identity_from_web"):
+        setattr(http.plugin, hook, getattr(plugin, hook))
+    plugin.persona.save_reference_image(PNG_1X1)
+    initial = assert_success(http.call("/api/selfie-identity"))
+    assert initial["active_image_slot"] == 1
+    assert initial["persona_pool"][0]["name"] == "小玉"
+
+    def mutate(**body):
+        return assert_success(http.call("/api/selfie-identity", method="POST", body=body))
+
+    text_mode = mutate(action="mode", identity_mode="persona")
+    assert not text_mode["has_image"]
+    assert len(text_mode["image_pool"]) == 1
+    added = mutate(action="persona_add", name="第二人设", prompt="short silver hair")
+    assert added["persona_pool"][1]["slot"] == 2
+    selected = mutate(action="persona_select", slot=2)
+    assert selected["active_persona_slot"] == 2
+    mutate(action="persona_update", slot=2, prompt="long silver hair")
+    mutate(action="persona_remove", slot=1)
+    replacement = mutate(action="persona_add", name="补位", prompt="black bob hair")
+    assert replacement["persona_pool"][0]["slot"] == 1
+    assert replacement["active_persona_slot"] == 2
+    image_mode = mutate(action="mode", identity_mode="image")
+    assert image_mode["has_image"]
+    mutate(action="image_select", slot=1)
+    removed = mutate(action="image_remove", slot=1)
+    assert removed["image_pool"] == []
+    assert not removed["has_image"]
+
+    before = plugin.persona.get()
+    for body in ({"action": "image_select", "slot": True}, {"action": "persona_remove", "slot": 11},
+                 {"action": "mode", "identity_mode": []}, {"action": "persona_add", "name": "", "prompt": ""}):
+        response = http.call("/api/selfie-identity", method="POST", body=body)
+        assert response.status == 400
+        assert plugin.persona.get() == before
+    assert_failure(http.call("/api/selfie-identity", method="POST", body=[]), 400, "JSON 对象")
+    assert PersonaManager(tmp_path).get() == before
+
+
 def test_wardrobe_rotation_and_today_selection_reach_real_persona(http, tmp_path):
     from astrbot_plugin_selfie_image.features.persona import PersonaManager
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin

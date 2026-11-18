@@ -231,7 +231,6 @@ def test_batch_rebuild_keeps_category_without_locking_one_pose(tmp_path, query, 
     plugin.config = SimpleNamespace(image_max_batch_count=10)
     plugin._ensure_daily_selfie_schedule = AsyncMock()
     plugin._persona_identity_reference = lambda **_kw: None
-    plugin._persona_auxiliary_references = lambda action="": []
     plugin._prompt_en_needed = lambda *_a, **_kw: False
     plugin._run_image_generation = AsyncMock(return_value={"success": True})
 

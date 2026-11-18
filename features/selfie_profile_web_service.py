@@ -36,6 +36,9 @@ class SelfieProfileWebService:
             "daily_schedule": plugin.persona.daily_schedule_payload(),
             "wardrobe": wardrobe,
         }
+        pool_payload = getattr(plugin.persona, "identity_pool_payload", None)
+        if callable(pool_payload):
+            base.update(pool_payload())
         if not ref:
             return {**base, "has_image": False}
         return {
@@ -44,6 +47,65 @@ class SelfieProfileWebService:
             "ref_mime_type": ref["mime_type"],
             "image": bytes_to_data_url(ref["data"], ref["mime_type"]),
         }
+
+    @staticmethod
+    def _slot(payload: dict[str, Any]) -> int:
+        slot = payload.get("slot")
+        if isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot <= 10:
+            raise ValueError("编号必须是 1-10 的整数")
+        return slot
+
+    def update_identity(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("请求内容必须是 JSON 对象")
+        action = payload.get("action")
+        if not isinstance(action, str) or action not in {
+            "mode", "image_select", "image_remove", "persona_add",
+            "persona_select", "persona_remove", "persona_update",
+        }:
+            raise ValueError("不支持的形象池操作")
+
+        persona = self.plugin.persona
+        if action == "mode":
+            mode = payload.get("identity_mode")
+            if mode is None and isinstance(payload.get("enabled"), bool):
+                mode = "persona" if payload["enabled"] else "image"
+            if not isinstance(mode, str) or mode not in {"image", "persona"}:
+                raise ValueError("形象模式必须是 image 或 persona")
+            persona.set_identity_mode(mode)
+        elif action == "image_select":
+            persona.select_reference_image(self._slot(payload))
+        elif action == "image_remove":
+            persona.remove_reference_image(self._slot(payload))
+        elif action == "persona_add":
+            name = payload.get("name")
+            prompt = payload.get("prompt")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("形象人设名称不能为空")
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise ValueError("形象人设描述不能为空")
+            persona.add_persona(name.strip(), prompt.strip())
+        elif action == "persona_select":
+            persona.select_persona(self._slot(payload))
+        elif action == "persona_remove":
+            persona.remove_persona(self._slot(payload))
+        elif action == "persona_update":
+            slot = self._slot(payload)
+            name = payload.get("name")
+            prompt = payload.get("prompt")
+            if name is not None and (not isinstance(name, str) or not name.strip()):
+                raise ValueError("形象人设名称不能为空")
+            if prompt is not None and (not isinstance(prompt, str) or not prompt.strip()):
+                raise ValueError("形象人设描述不能为空")
+            updater = getattr(persona, "update_persona", None)
+            if not callable(updater):
+                raise ValueError("当前版本不支持编辑形象人设")
+            updater(
+                slot,
+                name=name.strip() if isinstance(name, str) else None,
+                prompt=prompt.strip() if isinstance(prompt, str) else None,
+            )
+        return self.reference()
 
     async def ensure_daily_schedule(self) -> dict[str, Any]:
         """Create today's schedule only when it is missing or stale."""

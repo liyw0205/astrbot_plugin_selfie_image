@@ -47,7 +47,6 @@ async def capture_command(tmp_path, mode, medium, language, message_refs=False):
     plugin.presets = ImagePresetManager(tmp_path)
     plugin._ensure_daily_selfie_schedule = AsyncMock()
     plugin._persona_identity_reference = lambda **_kw: ImageReference(data=b"identity", mime_type="image/png")
-    plugin._persona_auxiliary_references = lambda *_a: []
     plugin._prompt_en_needed = lambda *_a, **_kw: language != "zh"
     plugin._translate_prompt_to_english = AsyncMock(
         side_effect=lambda text, **_kw: (text, {"applied": language == "en"})

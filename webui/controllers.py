@@ -1114,6 +1114,10 @@ class SelfieProfileController:
         data = self._call("set_selfie_appearance_type_from_web", payload, error_status=400)
         return self._result(data, "形象类型已保存")
 
+    def identity_mutation(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("update_selfie_identity_from_web", payload, error_status=400)
+        return self._result(data, "形象池已更新")
+
     async def ensure_daily_schedule(self) -> SelfieProfileControllerResult:
         hook = getattr(self.plugin, "ensure_selfie_daily_schedule_from_web", None)
         if not callable(hook):

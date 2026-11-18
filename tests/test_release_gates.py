@@ -122,6 +122,21 @@ def test_json_contracts_reject_valid_json_with_missing_or_wrong_fields(name, pay
         checks.validate_json_contract(name, payload)
 
 
+def test_builtin_persona_catalog_accepts_list_and_validates_persona_fields():
+    checks.validate_json_contract(
+        "data/persona/builtin_personas.json",
+        [{"name": "Xiaoyu", "prompt": "Adult woman"}],
+    )
+    with pytest.raises(checks.ReleaseCheckError, match="duplicate persona name"):
+        checks.validate_json_contract(
+            "data/persona/builtin_personas.json",
+            [
+                {"name": "Xiaoyu", "prompt": "First"},
+                {"name": "Xiaoyu", "prompt": "Second"},
+            ],
+        )
+
+
 @pytest.mark.parametrize("content", [
     '{"version":1,"version":1,"items":["ok"]}',
     '{"version":1,"items":[NaN]}',

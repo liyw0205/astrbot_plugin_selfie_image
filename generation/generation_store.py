@@ -967,21 +967,40 @@ class GenerationStoreMixin(PromptLookupMixin):
 
     def _commit_generation_records(self, record: Dict[str, Any]) -> None:
         # One generated image per monitor row. Batch/concurrency must not pile shots together.
-        lock = getattr(self, "_persistent_state_lock", None)
-        if lock is None:
-            for piece in split_generation_record_images(record):
-                self._commit_generation_record(piece)
-            return
-        with lock:
-            for piece in split_generation_record_images(record):
-                self._commit_generation_record(piece)
+        pieces = split_generation_record_images(record)
+        with ExitStack() as locks:
+            for lock in (
+                getattr(self, "_records_lock", None),
+                getattr(self, "_persistent_state_lock", None),
+            ):
+                if lock is not None:
+                    locks.enter_context(lock)
+            for piece in pieces:
+                self._commit_generation_record_unlocked(piece)
+        for piece in pieces:
+            self._link_committed_generation_record_to_task(piece)
 
     def _commit_generation_record(self, record: Dict[str, Any]) -> None:
-        lock = getattr(self, "_persistent_state_lock", None)
-        if lock is None:
-            return self._commit_generation_record_unlocked(record)
-        with lock:
-            return self._commit_generation_record_unlocked(record)
+        with ExitStack() as locks:
+            for lock in (
+                getattr(self, "_records_lock", None),
+                getattr(self, "_persistent_state_lock", None),
+            ):
+                if lock is not None:
+                    locks.enter_context(lock)
+            self._commit_generation_record_unlocked(record)
+        self._link_committed_generation_record_to_task(record)
+
+    def _link_committed_generation_record_to_task(self, record: Mapping[str, Any]) -> None:
+        request_data = record.get("request_data")
+        task_id = str(
+            record.get("task_id")
+            or (request_data.get("task_id") if isinstance(request_data, Mapping) else "")
+            or ""
+        ).strip()
+        record_id = str(record.get("id") or "").strip()
+        if task_id and record_id:
+            self._link_generation_record_to_task(task_id, record_id)
 
     def _commit_generation_record_unlocked(self, record: Dict[str, Any]) -> None:
         self._require_record_store_writable()
@@ -997,16 +1016,6 @@ class GenerationStoreMixin(PromptLookupMixin):
         # A generation task can produce more than one retained record (batch
         # images are split below).  Keep the task link on every resulting row
         # and backfill the task with the concrete record IDs after persistence.
-        task_id = str(
-            record.get("task_id")
-            or (
-                record.get("request_data", {}).get("task_id")
-                if isinstance(record.get("request_data"), Mapping)
-                else ""
-            )
-            or ""
-        ).strip()
-        committed_record_id = ""
         response_data = record.get("response_data")
         if "attempts" not in record and isinstance(response_data, Mapping):
             record["attempts"] = list(response_data.get("attempts") or [])
@@ -1062,15 +1071,11 @@ class GenerationStoreMixin(PromptLookupMixin):
             else:
                 self._persist_records()
             self._delete_media_sidecars(evicted_records)
-            committed_record_id = str(record.get("id") or "").strip()
         # The committed record now references this media, so the in-flight
         # reservation is no longer what keeps those files alive.
         self._release_inflight_media(collect_record_cache_paths([stored_record]))
         if stale_cache_paths:
             safe_delete_relative_files(self.generated_dir, stale_cache_paths)
-        if task_id and committed_record_id:
-            self._link_generation_record_to_task(task_id, committed_record_id)
-
     def _link_generation_record_to_task(self, task_id: str, record_id: str) -> None:
         """Backfill task -> record links without making records depend on tasks."""
         tid = str(task_id or "").strip()
@@ -2015,7 +2020,7 @@ class GenerationStoreMixin(PromptLookupMixin):
                 path = ""
             if path:
                 paths.add(os.path.abspath(path))
-        entries_getter = getattr(persona, "get_auxiliary_reference_entries", None)
+        entries_getter = getattr(persona, "list_image_pool", None)
         if callable(entries_getter):
             try:
                 entries = entries_getter()
@@ -2498,7 +2503,17 @@ class GenerationStoreMixin(PromptLookupMixin):
             result[absolute] = group
         return result
 
+    def _cache_cleanup_mutex(self) -> threading.RLock:
+        lock = getattr(self, "_cache_cleanup_lock", None)
+        if lock is None:
+            lock = self.__dict__.setdefault("_cache_cleanup_lock", threading.RLock())
+        return lock
+
     def _cache_cleanup_plan(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        with self._cache_cleanup_mutex():
+            return self._build_cache_cleanup_plan(protected_paths)
+
+    def _build_cache_cleanup_plan(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         """Build the shared count-and-size cleanup plan without deleting files."""
         limit_bytes = max(10, int(getattr(self.config, "image_cache_limit_mb", 200) or 200)) * 1024 * 1024
         limit_count = max(10, int(getattr(self.config, "image_cache_limit_count", 100) or 100))
@@ -2625,6 +2640,15 @@ class GenerationStoreMixin(PromptLookupMixin):
         }
 
     def _cleanup_image_cache_if_needed(
+        self,
+        protected_paths: Optional[Iterable[str]] = None,
+        *,
+        plan: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        with self._cache_cleanup_mutex():
+            return self._execute_image_cache_cleanup(protected_paths, plan=plan)
+
+    def _execute_image_cache_cleanup(
         self,
         protected_paths: Optional[Iterable[str]] = None,
         *,

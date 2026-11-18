@@ -55,7 +55,6 @@ class SelfieWorkflowService:
             persona_ref,
             message_refs,
             action=action,
-            persona_extra_refs=plugin._persona_auxiliary_references(action),
         )
 
     def select_selfie_references(
@@ -78,7 +77,6 @@ class SelfieWorkflowService:
                     wardrobe_ref,
                     wardrobe_item_id=wardrobe_item.id,
                     wardrobe_item_name=wardrobe_item.name,
-                    persona_extra_refs=plugin._persona_auxiliary_references(action),
                 )
             return None
 
@@ -87,7 +85,6 @@ class SelfieWorkflowService:
             plugin._persona_identity_reference(allow_logo=not is_cos),
             message_refs,
             action=action,
-            persona_extra_refs=plugin._persona_auxiliary_references(action),
             prefer_message_identity=True,
         )
 
@@ -101,7 +98,7 @@ class SelfieWorkflowService:
         if selection is not None:
             return list(selection.refs)
         identity = plugin._persona_identity_reference(allow_logo=not plugin._is_cos_action(action))
-        refs = ([identity] if identity else []) + plugin._persona_auxiliary_references(action) + list(message_refs)
+        refs = ([identity] if identity else []) + list(message_refs)
         persona = getattr(plugin, "persona", None)
         if not message_refs and not plugin._is_cos_action(action) and persona is not None:
             wardrobe_ref = persona.current_wardrobe_reference()
@@ -210,7 +207,9 @@ class SelfieWorkflowService:
         )
         selection = group_selection or cos_selection
         hints: List[str] = []
-        if not plugin.persona.has_reference_image():
+        mode_getter = getattr(plugin.persona, "get_identity_mode", None)
+        persona_mode = callable(mode_getter) and mode_getter() == "persona"
+        if not plugin.persona.has_reference_image() and not persona_mode:
             if bool(getattr(plugin.config, "image_use_logo_when_no_persona", True)):
                 hints.append("当前还没有设置 AI 形象参考图，将用插件 logo 作为形象回退；关闭「无形象图用 logo」后改为仅按人设生成。")
             else:
@@ -253,6 +252,7 @@ class SelfieWorkflowService:
                 "requested_count": requested_count,
                 "kind": progress_label,
                 "reference_image_count": len(extra_refs),
+                "use_selfie_reference": True,
                 "special_preset_variants": rebuild_special_preset_variants,
                 "preset_name": str(preset_name or "").strip(),
             },

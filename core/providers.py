@@ -226,7 +226,8 @@ class BaseImageAdapter:
     ) -> ImageGenerateResult:
         download_proxy = str((self.target.extra or {}).get("download_proxy") or "").strip() or str(self.target.proxy or "").strip()
         download_diagnostics: List[str] = []
-        source_media = image_sources_from_response(data, base_url)
+        collected = await asyncio.to_thread(collect_images_from_unknown, data)
+        source_media = image_sources_from_response(data, base_url, collected=collected)
         images = await images_from_response_unknown(
             self.download_session,
             data,
@@ -235,11 +236,11 @@ class BaseImageAdapter:
             download_proxy,
             base_url,
             download_diagnostics,
+            collected=collected,
         )
         if images:
             return ImageGenerateResult(images=images, source_media=source_media)
-        preview = response_preview(data)
-        collected = collect_images_from_unknown(data)
+        preview = await asyncio.to_thread(response_preview, data)
         prefix = f"{provider_name} " if provider_name else ""
         if collected["urls"]:
             detail = "；原因: " + "；".join(download_diagnostics[:3]) if download_diagnostics else ""
@@ -270,9 +271,15 @@ class BaseImageAdapter:
         )
 
 
-def image_sources_from_response(data: Any, base_url: str = "") -> List[Dict[str, str]]:
+def image_sources_from_response(
+    data: Any,
+    base_url: str = "",
+    *,
+    collected: Optional[Dict[str, List[str]]] = None,
+) -> List[Dict[str, str]]:
     """Keep the upstream URL/base64 source after the adapter downloads image bytes."""
-    collected = collect_images_from_unknown(data)
+    if not isinstance(collected, dict):
+        collected = collect_images_from_unknown(data)
     sources: List[Dict[str, str]] = []
     seen = set()
     for value in collected.get("b64") or []:
@@ -484,9 +491,10 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 ):
                     continue
                 return ImageGenerateResult(error=last_error)
-            images = extract_openai_images_data(data, req.max_image_bytes)
+            images = await asyncio.to_thread(extract_openai_images_data, data, req.max_image_bytes)
             if images:
-                return ImageGenerateResult(images=images, source_media=image_sources_from_response(data, base))
+                source_media = await asyncio.to_thread(image_sources_from_response, data, base)
+                return ImageGenerateResult(images=images, source_media=source_media)
             return await self.result_from_response(data, req, base, detailed_error=True)
         return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
 
@@ -591,9 +599,10 @@ class OpenAIImageAdapter(BaseImageAdapter):
                     include_input_fidelity=include_input_fidelity,
                 )
                 if not error and data is not None:
-                    images = extract_openai_images_data(data, req.max_image_bytes)
+                    images = await asyncio.to_thread(extract_openai_images_data, data, req.max_image_bytes)
                     if images:
-                        return ImageGenerateResult(images=images, source_media=image_sources_from_response(data, base))
+                        source_media = await asyncio.to_thread(image_sources_from_response, data, base)
+                        return ImageGenerateResult(images=images, source_media=source_media)
                     return await self.result_from_response(data, req, base, detailed_error=True)
                 last_error = error or "接口未返回有效 JSON"
                 # Switch profile on param/schema issues or incomplete transfer resets.
@@ -1162,8 +1171,12 @@ class NovelAIImageAdapter(BaseImageAdapter):
                         _parse_nai_response_body, body, charset, max_response_bytes, req.max_image_bytes,
                     )
                     if response.status >= 400:
-                        detail = response_preview(data, 1000) if data is not None else body[:1000].decode(charset, errors="replace")
-                        preview = http_error_preview(detail, 400)
+                        detail = (
+                            await asyncio.to_thread(response_preview, data, 1000)
+                            if data is not None
+                            else body[:1000].decode(charset, errors="replace")
+                        )
+                        preview = await asyncio.to_thread(http_error_preview, detail, 400)
                         return ImageGenerateResult(error=f"HTTP {response.status}: {preview or 'NovelAI 请求失败'}")
                     if isinstance(data, bytes):
                         if len(data) > req.max_image_bytes:

@@ -240,6 +240,13 @@
     };
 
     $('uploadSelfie').onclick = uploadSelfie;
+    if ($('refreshSelfieBtn')) $('refreshSelfieBtn').onclick = () => refreshSelfie(true);
+    if ($('clearSelfieBtn')) $('clearSelfieBtn').onclick = clearSelfie;
+    if ($('selfiePersonaEnabled')) $('selfiePersonaEnabled').onchange = saveSelfieIdentityMode;
+    if ($('addSelfiePersona')) $('addSelfiePersona').onclick = addSelfiePersona;
+    if ($('selfiePersonaPrompt')) $('selfiePersonaPrompt').onkeydown = event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addSelfiePersona();
+    };
     if ($('uploadWardrobe')) $('uploadWardrobe').onclick = uploadWardrobe;
     if ($('wardrobeSelectionMode')) $('wardrobeSelectionMode').onchange = saveWardrobeMode;
     if ($('wardrobeBatchCancel')) $('wardrobeBatchCancel').onclick = cancelWardrobeBatch;

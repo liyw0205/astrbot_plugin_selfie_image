@@ -603,7 +603,6 @@
         || Number(request.persona_reference_count || 0) > 0
         || selection.used_persona
         || Number(roles.persona || 0) > 0
-        || Number(roles.persona_extra || 0) > 0
         || record?.identity_reference_source === 'persona'
         || Number(record?.persona_reference_count || 0) > 0
       );

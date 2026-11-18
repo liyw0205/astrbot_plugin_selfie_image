@@ -513,37 +513,36 @@ class SelfieImagePlugin(
         self._set_startup_state(phase="records")
         with self._persistent_state_lock:
             records = self._load_records()
-            with self._records_lock:
-                # A request may have committed a record while the worker was
-                # reading SQLite. Preserve those in-memory commits instead of
-                # replacing them with the older on-disk snapshot.
-                current_records = [
-                    item for item in (getattr(self, "_records", []) or [])
-                    if isinstance(item, dict)
-                ]
-                current_ids = {str(item.get("id") or "") for item in current_records}
-                self._records = current_records + [
-                    item for item in records
-                    if str(item.get("id") or "") not in current_ids
-                ]
-            self._record_seq = self._restore_record_sequence()
-            self._set_startup_state(records_loaded=True, phase="tasks")
             tasks = self._load_web_tasks()
-            with self._web_task_lock:
-                # Keep tasks created/updated by an early dashboard request.
-                # The loader owns the persistent lock, so the merge is the
-                # installation boundary for both startup and live writes.
-                current_tasks = dict(getattr(self, "_web_tasks", {}) or {})
-                merged_tasks = dict(tasks)
-                merged_tasks.update(current_tasks)
-                self._web_tasks = merged_tasks
-                self._web_task_seq = max(
-                    (int(row.get("seq") or 0) for row in merged_tasks.values() if isinstance(row, Mapping)),
-                    default=0,
-                )
-            # Reconcile tasks persisted as active before restart only after
-            # both stores are installed, preserving the existing durable flow.
-            self.reconcile_expired_tasks_after_restart()
+        # Never hold the storage gate while acquiring live-state locks. Writers
+        # use records/tasks -> storage order, and merge preserves early writes.
+        with self._records_lock:
+            current_records = [
+                item for item in (getattr(self, "_records", []) or [])
+                if isinstance(item, dict)
+            ]
+            current_ids = {str(item.get("id") or "") for item in current_records}
+            self._records = current_records + [
+                item for item in records
+                if str(item.get("id") or "") not in current_ids
+            ]
+            self._record_seq = max(
+                int(getattr(self, "_record_seq", 0) or 0), self._restore_record_sequence(),
+            )
+        self._set_startup_state(records_loaded=True, phase="tasks")
+        with self._web_task_lock:
+            # Keep tasks created/updated by an early dashboard request.
+            current_tasks = dict(getattr(self, "_web_tasks", {}) or {})
+            merged_tasks = dict(tasks)
+            merged_tasks.update(current_tasks)
+            self._web_tasks = merged_tasks
+            self._web_task_seq = max(
+                (int(row.get("seq") or 0) for row in merged_tasks.values() if isinstance(row, Mapping)),
+                default=0,
+            )
+        # Reconcile tasks persisted as active before restart only after
+        # both stores are installed, preserving the existing durable flow.
+        self.reconcile_expired_tasks_after_restart()
 
     async def _load_persistent_state_async(self) -> None:
         try:
@@ -1934,10 +1933,13 @@ class SelfieImagePlugin(
             refs = []
             if persona_ref:
                 refs.append(persona_ref)
-            refs.extend(self._persona_auxiliary_references(action))
             refs.extend(extra_refs)
             identity_ref = persona_ref
-        framework_persona = await resolve_framework_persona(getattr(self, "context", None), event)
+        identity_mode = str(getattr(self.persona, "get_identity_mode", lambda: "image")())
+        framework_persona = (
+            SimpleNamespace(name="", prompt="") if identity_mode == "persona"
+            else await resolve_framework_persona(getattr(self, "context", None), event)
+        )
         has_wardrobe_reference = bool(cos_selection and cos_selection.wardrobe_ref)
         wardrobe_item_name = str(cos_selection.wardrobe_item_name or "") if cos_selection else ""
         prompt = self.persona.build_selfie_prompt(
@@ -2141,6 +2143,9 @@ class SelfieImagePlugin(
 
     def clear_selfie_reference_from_web(self) -> Dict[str, Any]:
         return _selfie_profile_web_service_for(self).clear_reference()
+
+    def update_selfie_identity_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return _selfie_profile_web_service_for(self).update_identity(payload)
 
     async def ensure_selfie_daily_schedule_from_web(self) -> Dict[str, Any]:
         return await _selfie_profile_web_service_for(self).ensure_daily_schedule()
@@ -2360,7 +2365,6 @@ class SelfieImagePlugin(
                 or request_data.get("persona_reference_count")
                 or (isinstance(selection, Mapping) and selection.get("used_persona"))
                 or selection_roles.get("persona")
-                or selection_roles.get("persona_extra")
             )
         response_data = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
         attempts = response_data.get("attempts") if isinstance(response_data.get("attempts"), list) else record.get("attempts")
@@ -3553,8 +3557,8 @@ class SelfieImagePlugin(
                 "形象：",
                 "· /形象查看　看当前参考图、形象类型与今日状态",
                 "· /形象设置　发图设形象；也可写 自动 / 真人 / 动漫 改形象类型",
-                "· /辅助形象设置　附带图片增加辅助形象；最多 3 张，普通自拍/换装会使用，合影时只使用主形象图",
-                "· /辅助形象清除　清空辅助形象图，不影响主形象",
+                "· /形象设置 编号　切换 1-10 形象图；/形象移除 编号　移除指定形象图",
+                "· /形象人设添加 名称 描述　添加文字人设；/形象人设设置 编号；/形象人设移除 编号",
                 "· /形象清除　去掉参考图",
                 "· /形象刷新　刷新今日穿搭状态",
                 "· /衣橱、/衣橱添加　查看衣橱或附图导入服装",
@@ -4389,11 +4393,20 @@ class SelfieImagePlugin(
 
     @filter.command("形象设置")
     async def cmd_persona_set(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """设置形象参考图，或改形象类型：自动 / 真人 / 动漫。"""
+        """设置形象参考图，按编号切换形象图；也可改类型：自动 / 真人 / 动漫。"""
         sources = extract_image_sources_from_event(event, include_at_avatar=False)
         text = extract_event_text(event)
         sources.extend(extract_image_urls(text))
         sources = list(dict.fromkeys(sources))
+        command_text = extract_command_message(event, "形象设置", text).strip()
+        if not sources and re.fullmatch(r"[1-9]|10", command_text):
+            try:
+                self.persona.select_reference_image(int(command_text))
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+            yield event.plain_result(f"已切换到形象图 {command_text}。")
+            return
         # 允许「形象设置 动漫/真人/自动」只改类型；也可与附图一起设置
         type_hint = ""
         compact = re.sub(r"[\s，。！？、；：,.!?]", "", str(text or ""))
@@ -4435,102 +4448,81 @@ class SelfieImagePlugin(
                 if not fetched:
                     continue
                 data, mime = fetched
-                self.persona.save_reference_image(data, mime)
-                msg = "AI 自拍形象参考图已保存。"
+                try:
+                    self.persona.save_reference_image(data, mime)
+                except (OSError, ValueError) as exc:
+                    yield event.plain_result(str(exc))
+                    return
+                slot = self.persona.get().get("active_image_slot")
+                msg = f"AI 自拍形象参考图已保存，编号 {slot}，已选中。"
                 if type_hint:
                     msg += f" 形象类型：{self.persona.appearance_type_label()}。"
                 yield event.plain_result(msg)
                 return
         yield event.plain_result("没有读取到可用图片，或图片超过大小限制。")
 
-    @filter.command("辅助形象设置")
-    async def cmd_persona_auxiliary_set(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """增加辅助形象参考图；辅助图最多保存 3 张。"""
-        event_text = extract_event_text(event)
-        text = extract_command_message(event, "辅助形象设置", event_text)
-        compact = re.sub(r"[\s，。！？、；：,.!?]", "", str(text or "")).lower()
-        clear_requested = compact in {"清除", "删除", "重置", "clear", "reset", "全部清除"} or any(
-            compact.startswith(prefix) for prefix in ("清除辅助形象", "删除辅助形象", "重置辅助形象")
-        )
-        if clear_requested:
-            self.persona.clear_auxiliary_reference_images()
-            yield event.plain_result("辅助形象参考图已全部清除，主形象不受影响。")
+    @filter.command("形象移除")
+    async def cmd_persona_remove_slot(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """按固定编号移除形象图，不重排其他编号。"""
+        text = extract_command_message(event, "形象移除", extract_event_text(event)).strip()
+        if not re.fullmatch(r"[1-9]|10", text):
+            yield event.plain_result("用法：/形象移除 编号（1-10）。")
             return
+        try:
+            self.persona.remove_reference_image(int(text))
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+        yield event.plain_result(f"形象图 {text} 已移除，编号保留为空位。")
 
-        sources = extract_image_sources_from_event(event, include_at_avatar=False)
-        sources.extend(extract_image_urls(text))
-        sources = list(dict.fromkeys(sources))
-        current_count = len(self.persona.get_auxiliary_reference_entries())
-        if not sources:
-            if current_count:
-                yield event.plain_result(
-                    f"当前已有 {current_count} 张辅助形象参考图（最多 3 张）。"
-                    "请附带图片上传，合影时不会使用辅助图。"
-                )
-            else:
-                yield event.plain_result(
-                    "请发送图片、引用图片，或在指令后附带图片链接，作为辅助形象参考图。"
-                    "最多可设置 3 张。"
-                )
-            return
-        if current_count >= 3:
-            yield event.plain_result("辅助形象参考图已达到上限 3 张，请先使用 /辅助形象清除。")
-            return
-
-        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
-        saved = 0
-        failed = 0
-        async with aiohttp.ClientSession(trust_env=False) as session:
-            for source in sources:
-                if current_count + saved >= 3:
-                    break
-                try:
-                    fetched = await fetch_image_source(
-                        source,
-                        session,
-                        max_bytes=max_bytes,
-                        max_dimension=max_dimension,
-                        max_pixels=max_pixels,
-                        max_frames=max_frames,
-                    )
-                except Exception:
-                    fetched = None
-                if not fetched:
-                    failed += 1
-                    continue
-                data, mime = fetched
-                try:
-                    self.persona.add_auxiliary_reference_image(data, mime)
-                except (OSError, ValueError):
-                    failed += 1
-                    continue
-                saved += 1
-
-        total = len(self.persona.get_auxiliary_reference_entries())
-        if saved:
-            message = f"已保存 {saved} 张辅助形象参考图，当前共 {total} 张。合影时只使用主形象图。"
-            if failed:
-                message += f"另有 {failed} 张图片读取失败。"
-            if total >= 3 and len(sources) > saved:
-                message += "辅助形象图已达到上限 3 张。"
-            yield event.plain_result(message)
-            return
-        if failed:
-            yield event.plain_result("没有读取到可用图片，或图片超过大小限制。")
+    @filter.command("形象人设添加")
+    async def cmd_persona_pool_add(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """添加文字形象人设，格式：名称 描述。"""
+        text = extract_command_message(event, "形象人设添加", extract_event_text(event)).strip()
+        name_match = re.search(r"(?:名称|名字)\s*[=:：]\s*([^\s]+)", text)
+        prompt_match = re.search(r"(?:描述|人设|提示词)\s*[=:：]\s*(.+)$", text, re.S)
+        if name_match and prompt_match:
+            name, prompt = name_match.group(1), prompt_match.group(1).strip()
         else:
-            yield event.plain_result("没有新增辅助形象参考图。")
+            parts = text.split(maxsplit=1)
+            name, prompt = (parts[0], parts[1]) if len(parts) == 2 else ("", "")
+        if not name or not prompt:
+            yield event.plain_result("用法：/形象人设添加 名称 描述，或 名称=小玉 描述=固定外貌特征。")
+            return
+        try:
+            occupied = {item['slot'] for item in self.persona.identity_pool_payload()['persona_pool']}
+            saved = self.persona.add_persona(name, prompt)
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+        added = next(item for item in saved["persona_pool"] if item["slot"] not in occupied)
+        yield event.plain_result(f"形象人设“{name.strip()}”已添加，编号 {added['slot']}。")
 
-    @filter.command("辅助形象清除")
-    async def cmd_persona_auxiliary_clear(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """清除全部辅助形象参考图，不影响主形象。"""
-        count = len(self.persona.get_auxiliary_reference_entries())
-        self.persona.clear_auxiliary_reference_images()
-        yield event.plain_result(
-            "辅助形象参考图已清除，不影响主形象。"
-            if count
-            else "当前没有辅助形象参考图。主形象不受影响。"
-        )
+    @filter.command("形象人设设置")
+    async def cmd_persona_pool_select(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        text = extract_command_message(event, "形象人设设置", extract_event_text(event)).strip()
+        if not re.fullmatch(r"[1-9]|10", text):
+            yield event.plain_result("用法：/形象人设设置 编号（1-10）。")
+            return
+        try:
+            self.persona.select_persona(int(text))
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+        yield event.plain_result(f"已切换到形象人设 {text}。请在管理页打开“使用形象人设池”。")
+
+    @filter.command("形象人设移除")
+    async def cmd_persona_pool_remove(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        text = extract_command_message(event, "形象人设移除", extract_event_text(event)).strip()
+        if not re.fullmatch(r"[1-9]|10", text):
+            yield event.plain_result("用法：/形象人设移除 编号（1-10）。")
+            return
+        try:
+            self.persona.remove_persona(int(text))
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+        yield event.plain_result(f"形象人设 {text} 已移除，编号保留为空位。")
 
     @filter.command("形象清除")
     async def cmd_persona_clear(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:

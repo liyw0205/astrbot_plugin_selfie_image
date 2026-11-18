@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import threading
@@ -70,6 +71,43 @@ def test_cleanup_scan_separates_orphans_references_protection_and_candidates(tmp
     assert metrics["deleted_bytes"] == result["deleted_bytes"]
     assert metrics["last_scan"]["orphan_count"] == 10
     assert metrics["last_run"]["failed_delete_count"] == 0
+
+
+def test_concurrent_automatic_cleanups_share_one_scan_at_a_time(tmp_path, monkeypatch):
+    store = cache_store(tmp_path)
+    (Path(store.generated_dir) / "orphan.png").write_bytes(b"orphan")
+    original_scan = store._cache_file_entries
+    state_lock = threading.Lock()
+    ready = threading.Barrier(4)
+    active = 0
+    peak = 0
+    scan_count = 0
+
+    def counted_scan():
+        nonlocal active, peak, scan_count
+        with state_lock:
+            active += 1
+            peak = max(peak, active)
+            scan_count += 1
+        threading.Event().wait(0.03)
+        try:
+            return original_scan()
+        finally:
+            with state_lock:
+                active -= 1
+
+    monkeypatch.setattr(store, "_cache_file_entries", counted_scan)
+
+    def cleanup():
+        ready.wait(timeout=2)
+        return store._cleanup_image_cache_if_needed()
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(lambda _index: cleanup(), range(4)))
+
+    assert len(results) == 4
+    assert scan_count == 8
+    assert peak == 1
 
 
 def test_health_reuses_cleanup_scan_and_exposes_process_cache_counters(tmp_path, monkeypatch):

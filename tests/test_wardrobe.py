@@ -146,11 +146,10 @@ def test_wardrobe_reference_selection_has_stable_identity_then_clothing_order():
         ImageReference(data=b"wardrobe"),
         wardrobe_item_id="wardrobe_demo",
         wardrobe_item_name="白色连衣裙",
-        persona_extra_refs=[ImageReference(data=b"auxiliary")],
     )
     assert selection is not None
-    assert [ref.data for ref in selection.refs] == [b"identity", b"wardrobe", b"auxiliary"]
-    assert selection.summary()["roles"] == {"persona": 1, "persona_extra": 1, "wardrobe": 1}
+    assert [ref.data for ref in selection.refs] == [b"identity", b"wardrobe"]
+    assert selection.summary()["roles"] == {"persona": 1, "wardrobe": 1}
     assert selection.summary()["wardrobe_item_id"] == "wardrobe_demo"
 
 
@@ -271,7 +270,6 @@ def test_manual_choice_updates_canonical_schedule_and_generation_references(tmp_
         workflow = SelfieWorkflowService(SimpleNamespace(
             persona=manager,
             _persona_identity_reference=lambda **_: ImageReference(data=b"identity"),
-            _persona_auxiliary_references=lambda *_: [],
         ))
         selection = workflow.select_selfie_references("自拍", [])
         assert selection.refs[0].data == b"identity"

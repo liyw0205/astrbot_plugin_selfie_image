@@ -235,7 +235,7 @@ class ReferenceMediaMixin:
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
         persona_path = ""
-        if include_persona:
+        if include_persona and getattr(self.persona, "get_identity_mode", lambda: "image")() != "persona":
             if self.persona.has_reference_image():
                 persona_path = str(self.persona.get_reference_path() or "")
             elif bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
@@ -359,6 +359,10 @@ class ReferenceMediaMixin:
 
     def _persona_identity_reference(self, *, allow_logo: bool = True) -> Optional[ImageReference]:
         """Return the configured persona image, optionally with logo fallback."""
+        # A text persona pool deliberately has no image identity.  In that
+        # mode the logo must not silently re-enter the reference list.
+        if str(getattr(self.persona, "get_identity_mode", lambda: "image")()) == "persona":
+            return None
         persona_ref = self.persona.get_reference_image()
         if persona_ref:
             source_path = str(self.persona.get_reference_path() or "")
@@ -384,20 +388,6 @@ class ReferenceMediaMixin:
             mime_type=detect_mime_by_bytes(data) or "image/png",
             source_url=logo,
         )
-
-    def _persona_auxiliary_references(self, action: str = "") -> List[ImageReference]:
-        """Load auxiliary identity images; group photos use the primary image only."""
-        if self.persona.analyze_selfie_intent(action).is_group_photo:
-            return []
-        return [
-            ImageReference(
-                data=item["data"],
-                mime_type=item["mime_type"],
-                source_url=str(item.get("path") or ""),
-            )
-            for item in self.persona.get_auxiliary_reference_images()
-            if item.get("data")
-        ]
 
     async def _send_generated_images(
         self, event: AstrMessageEvent, files: Iterable[str], *,

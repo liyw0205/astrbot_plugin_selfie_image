@@ -7,6 +7,7 @@ import re
 import base64
 import asyncio
 from collections.abc import Sequence
+from itertools import islice
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin, urlsplit
 
@@ -232,15 +233,88 @@ def http_error_preview(text: str, limit: int = 500) -> str:
     return redact_sensitive_text(preview)[:limit]
 
 
-def response_preview(value: Any, limit: int = 1000) -> str:
+_PREVIEW_SENSITIVE_KEYS = {
+    "api_key", "apikey", "api-key", "token", "secret", "authorization", "password",
+    "proxy", "cookie", "set-cookie",
+}
+_TRUNCATED_JSON_SECRET_RE = re.compile(
+    r"(?i)([\"'](?:api[_-]?key|apikey|token|secret|authorization|password|proxy|cookie|set-cookie|"
+    r"x-api-key|x-goog-api-key|[A-Za-z0-9_-]*(?:token|secret|api[_-]?key))[\"']\s*:\s*[\"'])[^\"']*$"
+)
+
+
+def _preview_key_is_sensitive(key: Any) -> bool:
+    text = str(key or "").strip().lower()
+    return (
+        text in _PREVIEW_SENSITIVE_KEYS
+        or text.endswith(("_token", "-token", "_secret", "-secret", "secret", "token", "apikey", "_api_key", "-api-key"))
+        or "api_key" in text
+        or "api-key" in text
+    )
+
+
+def _bounded_preview_value(value: Any, char_budget: List[int], node_budget: List[int], depth: int = 0) -> Any:
+    if char_budget[0] <= 0 or node_budget[0] <= 0 or depth > 8:
+        return "[truncated]"
+    node_budget[0] -= 1
     if isinstance(value, str):
-        preview = value
+        take = min(len(value), char_budget[0])
+        char_budget[0] -= take
+        return value[:take] + ("..." if take < len(value) else "")
+    if isinstance(value, (bytes, bytearray)):
+        return f"<binary response: {len(value)} bytes>"
+    if isinstance(value, dict):
+        pairs = list(islice(value.items(), 64))
+        priority = {"error", "errors", "detail", "message", "msg", "reason", "description"}
+        pairs.sort(key=lambda pair: (0 if str(pair[0]).strip().lower() in priority else 1))
+        result: Dict[str, Any] = {}
+        for key, item in pairs:
+            if char_budget[0] <= 0 or node_budget[0] <= 0:
+                break
+            safe_key = str(key)[:128]
+            result[safe_key] = (
+                ("[REDACTED]" if item else item) if _preview_key_is_sensitive(key)
+                else _bounded_preview_value(item, char_budget, node_budget, depth + 1)
+            )
+        return result
+    if isinstance(value, (list, tuple)):
+        result = []
+        for item in islice(value, 32):
+            if char_budget[0] <= 0 or node_budget[0] <= 0:
+                break
+            result.append(_bounded_preview_value(item, char_budget, node_budget, depth + 1))
+        return result
+    return value
+
+
+def response_preview(value: Any, limit: int = 1000) -> str:
+    try:
+        output_limit = max(0, int(limit))
+    except (TypeError, ValueError):
+        output_limit = 1000
+    if output_limit == 0:
+        return ""
+    # Only a small margin beyond the visible preview is needed for redaction.
+    # In particular, never run secret-scanning regexes over multi-megabyte image data.
+    scan_limit = min(output_limit + 256, 2048)
+    if isinstance(value, str):
+        preview = value[:scan_limit]
+        truncated = len(value) > scan_limit
+    elif isinstance(value, (bytes, bytearray)):
+        preview = f"<binary response: {len(value)} bytes>"
+        truncated = False
     else:
+        bounded = _bounded_preview_value(value, [scan_limit], [256])
         try:
-            preview = json.dumps(redact_sensitive_data(value), ensure_ascii=False)
+            preview = json.dumps(redact_sensitive_data(bounded), ensure_ascii=False)
         except Exception:
-            preview = str(value)
-    return redact_sensitive_text(preview)[:limit]
+            preview = str(bounded)[:scan_limit]
+        truncated = len(preview) > scan_limit
+    preview = preview[:scan_limit]
+    preview = redact_sensitive_text(preview)
+    if truncated:
+        preview = _TRUNCATED_JSON_SECRET_RE.sub(r"\1[REDACTED]", preview)
+    return preview[:output_limit]
 
 
 def clean_image_url(url: str) -> str:
@@ -362,7 +436,7 @@ async def fetch_generated_image_url(
     if not text:
         return None
     if text.lower().startswith(("data:image/", "base64://")):
-        data = b64_to_bytes(text)
+        data = await asyncio.to_thread(b64_to_bytes, text)
         return data if data and len(data) <= max_bytes and looks_like_binary_image(data) else None
     if not text.lower().startswith(("http://", "https://")):
         return None
@@ -788,32 +862,22 @@ async def images_from_response_unknown(
     proxy: str = "",
     base_url: str = "",
     download_diagnostics: Optional[List[str]] = None,
+    collected: Optional[Dict[str, List[str]]] = None,
 ) -> List[bytes]:
-    collected = collect_images_from_unknown(data)
-    images: List[bytes] = []
-    seen = set()
-
-    for item in collected["b64"]:
-        try:
-            image = b64_to_bytes(item)
-        except Exception:
-            continue
-        if len(image) > max_bytes or not looks_like_binary_image(image):
-            continue
-        key = (len(image), image[:32])
-        if image and key not in seen:
-            images.append(image)
-            seen.add(key)
+    if not isinstance(collected, dict):
+        collected = await asyncio.to_thread(collect_images_from_unknown, data)
+    images = await asyncio.to_thread(_decode_collected_base64_images, collected, max_bytes)
+    seen = {(len(image), image[:32]) for image in images}
 
     download_urls: List[str] = []
     seen_urls = set()
-    for item in collected["urls"]:
+    for item in collected.get("urls") or []:
         url = str(item or "").strip()
         if url and url not in seen_urls:
             download_urls.append(url)
             seen_urls.add(url)
     if base_url:
-        for item in collected["others"]:
+        for item in collected.get("others") or []:
             url = resolve_response_url(str(item or ""), base_url)
             if url.lower().startswith(("http://", "https://")) and url not in seen_urls:
                 download_urls.append(url)
@@ -833,6 +897,23 @@ async def images_from_response_unknown(
             images.append(image)
             seen.add(key)
 
+    return images
+
+
+def _decode_collected_base64_images(collected: Dict[str, List[str]], max_bytes: int) -> List[bytes]:
+    images: List[bytes] = []
+    seen = set()
+    for item in collected.get("b64") or []:
+        try:
+            image = b64_to_bytes(item)
+        except Exception:
+            continue
+        if len(image) > max_bytes or not looks_like_binary_image(image):
+            continue
+        key = (len(image), image[:32])
+        if image and key not in seen:
+            images.append(image)
+            seen.add(key)
     return images
 
 

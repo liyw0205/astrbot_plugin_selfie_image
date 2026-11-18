@@ -994,6 +994,19 @@ class WebTaskMixin:
             )
         except (TypeError, ValueError):
             requested_count = 1
+        identity_context = None
+        if payload.get("use_selfie_reference"):
+            persona = getattr(self, "persona", None)
+            mode_getter = getattr(persona, "get_identity_mode", None)
+            if callable(mode_getter):
+                mode = mode_getter()
+                identity_context = {"mode": mode, "appearance_type": persona.get_appearance_type()}
+                if mode == "persona":
+                    selected = persona.get_active_persona() or {}
+                    identity_context.update({
+                        "name": selected.get("name", ""),
+                        "prompt": selected.get("prompt", ""),
+                    })
         fields = {
             "owner_session": str(owner_session or ""),
             "media_type": str(payload.get("media_type") or "image").strip().lower(),
@@ -1014,6 +1027,7 @@ class WebTaskMixin:
                 payload.get("reference_image_count", len(image_values)),
             ),
             "use_selfie_reference": bool(payload.get("use_selfie_reference")),
+            "identity_context": identity_context,
             "prompt_enhance": stable_value(payload.get("prompt_enhance")),
             "template_values": stable_value(payload.get("template_values")),
             "template_randomize": stable_value(payload.get("template_randomize")),
@@ -2350,12 +2364,9 @@ class WebTaskMixin:
         selfie_refs = []
         if payload_copy.get("use_selfie_reference"):
             identity_getter = getattr(self, "_persona_identity_reference", None)
-            auxiliary_getter = getattr(self, "_persona_auxiliary_references", None)
             identity = identity_getter() if callable(identity_getter) else None
             if identity:
                 selfie_refs.append(identity)
-            if callable(auxiliary_getter) and self._summarize_web_test_payload(payload_copy)["prompt_enhance"]:
-                selfie_refs.extend(auxiliary_getter(str(payload_copy.get("prompt") or "")))
         fingerprint = self._request_fingerprint(
             payload_copy, str(payload_copy.get("owner_session") or "web"), selfie_refs,
         )

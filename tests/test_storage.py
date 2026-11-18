@@ -17,6 +17,11 @@ from astrbot.api import logger
 from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
 from astrbot_plugin_selfie_image.generation.record_database import RecordDatabase, RecordStorageUnavailableError
 from astrbot_plugin_selfie_image.core.providers import ImageReference
+from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+
+class _StorageTaskHarness(GenerationStoreMixin, WebTaskMixin):
+    pass
 
 
 class TestStorage:
@@ -513,6 +518,71 @@ class TestStorage:
             assert plugin._web_tasks["web-12345678-1"]["record_id"] == linked[0]
             assert plugin._web_tasks["web-12345678-1"]["result"]["record_ids"] == linked
             assert persisted
+
+    def test_record_commit_does_not_invert_task_snapshot_lock_order(self) -> None:
+        """Record linking must not hold storage lock while waiting for task lock."""
+        with tempfile.TemporaryDirectory() as root:
+            plugin = _StorageTaskHarness()
+            plugin.data_dir = root
+            plugin.records_path = os.path.join(root, "generation_records.json")
+            plugin.records_db_path = os.path.join(root, "generation_records.sqlite3")
+            plugin.media_sources_dir = os.path.join(root, "media_sources")
+            plugin.generated_dir = os.path.join(root, "image_cache")
+            plugin.config = SimpleNamespace(image_cache_limit_mb=10, image_cache_limit_count=10)
+            plugin._records_lock = threading.RLock()
+            plugin._records = []
+            plugin._record_seq = 0
+            plugin._persistent_state_lock = threading.RLock()
+            plugin._web_task_lock = threading.RLock()
+            plugin._web_tasks = {"task": {"task_id": "task", "status": "queued"}}
+            os.makedirs(plugin.generated_dir, exist_ok=True)
+
+            task_lock_held = threading.Event()
+            record_link_started = threading.Event()
+            errors = []
+            original_link = plugin._link_generation_record_to_task
+
+            def persist_snapshot():
+                task_lock_held.set()
+                if not record_link_started.wait(timeout=2):
+                    raise AssertionError("record commit did not reach task linking")
+                if not plugin._persistent_state_lock.acquire(timeout=1):
+                    raise AssertionError("task update blocked on storage lock while holding task lock")
+                plugin._persistent_state_lock.release()
+
+            def link_record(task_id, record_id):
+                record_link_started.set()
+                original_link(task_id, record_id)
+
+            plugin._persist_web_tasks_locked = persist_snapshot
+            plugin._link_generation_record_to_task = link_record
+
+            def run(operation):
+                try:
+                    operation()
+                except BaseException as exc:
+                    errors.append(exc)
+
+            task_update = threading.Thread(
+                target=run,
+                args=(lambda: plugin._set_web_image_task("task", status="running"),),
+                daemon=True,
+            )
+            record_commit = threading.Thread(
+                target=run,
+                args=(lambda: plugin._commit_generation_records({"id": "record", "task_id": "task", "success": True}),),
+                daemon=True,
+            )
+            task_update.start()
+            assert task_lock_held.wait(timeout=1)
+            record_commit.start()
+            task_update.join(timeout=3)
+            record_commit.join(timeout=3)
+
+            assert not task_update.is_alive()
+            assert not record_commit.is_alive()
+            assert errors == []
+            assert plugin._web_tasks["task"]["record_ids"] == ["record"]
 
     def test_record_detail_includes_redacted_task_summary(self) -> None:
         with tempfile.TemporaryDirectory() as root:

@@ -272,6 +272,28 @@
     .selfie-reference-actions { align-items: center; }
     .selfie-reference-actions button { min-height: 38px; }
     .selfie-reference-state { min-height: 0; margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .selfie-identity-panel { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+    .selfie-pool-heading { align-items: baseline; }
+    .selfie-pool-heading h3 { margin: 0 0 8px; }
+    .selfie-image-upload-grid { align-items: start; }
+    .selfie-image-preview-wrap { min-height: 84px; }
+    .selfie-image-preview-wrap .preview { max-width: min(260px, 100%); max-height: 260px; margin-top: 0; object-fit: contain; }
+    .selfie-identity-list { display: grid; gap: 6px; margin-top: 10px; min-width: 0; }
+    .selfie-identity-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-soft); }
+    .selfie-identity-row.active { border-color: color-mix(in srgb, var(--primary) 46%, var(--line)); background: var(--primary-weak); }
+    .selfie-identity-slot { color: var(--primary-strong); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .selfie-identity-copy { display: grid; gap: 2px; min-width: 0; }
+    .selfie-identity-copy strong, .selfie-identity-copy span { min-width: 0; overflow-wrap: anywhere; }
+    .selfie-identity-copy strong { font-size: 12px; }
+    .selfie-identity-copy span { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .selfie-identity-row .actions { margin: 0; justify-content: flex-end; }
+    .selfie-identity-row .actions button { white-space: nowrap; }
+    .selfie-persona-form textarea { min-height: 76px; }
+    @media (max-width: 520px) {
+      .selfie-identity-row { grid-template-columns: 34px minmax(0, 1fr); }
+      .selfie-identity-row .actions { grid-column: 1 / -1; justify-content: flex-start; }
+      .selfie-identity-row .actions button { flex: 1 1 auto; }
+    }
     .status:empty { display: none; }
     .muted { color: var(--muted); font-size: 13px; line-height: 1.45; }
     .card { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; background: #fff; margin-bottom: 12px; box-shadow: var(--shadow); }
@@ -1724,7 +1746,9 @@
       <div class="grid">
         <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
       </div>
-      <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 无形象图用 logo</label>
+      <label class="checkline"><input id="selfiePersonaEnabled" type="checkbox"> 使用形象人设池</label>
+      <div class="muted" id="selfieIdentityModeHint">关闭时使用形象图池，开启时使用文字人设池。</div>
+      <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 形象图池为空时用 logo</label>
       <div class="grid">
         <div>
           <label>形象类型</label>
@@ -1735,16 +1759,30 @@
           </select>
         </div>
       </div>
-      <h3>形象参考图</h3>
-      <input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml">
-      <img id="selfiePreview" class="preview" alt="selfie reference">
-      <div class="actions selfie-reference-actions">
-        <button id="uploadSelfie">上传并保存</button>
-        <button class="secondary" onclick="refreshSelfie(true)">刷新预览</button>
-        <button class="danger" onclick="clearSelfie()">清除参考图</button>
-        <button class="secondary" onclick="refreshDailySelfieLocal()">重新生成今日日程</button>
+      <div id="selfieImagePoolPanel" class="selfie-identity-panel">
+        <div class="between selfie-pool-heading"><h3>形象图池</h3><span id="selfieImagePoolCount" class="muted"></span></div>
+        <div class="grid selfie-image-upload-grid">
+          <div><label for="selfieFile">添加形象参考图</label><input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
+          <div class="selfie-image-preview-wrap"><img id="selfiePreview" class="preview" alt="当前形象参考图"></div>
+        </div>
+        <div class="actions selfie-reference-actions">
+          <button id="uploadSelfie" type="button">添加并选中</button>
+          <button class="secondary" id="refreshSelfieBtn" type="button" onclick="refreshSelfie(true)">刷新预览</button>
+          <button class="danger" id="clearSelfieBtn" type="button" onclick="clearSelfie()">移除当前形象图</button>
+        </div>
+        <div id="selfieImagePoolList" class="selfie-identity-list" aria-live="polite"></div>
       </div>
+      <div class="actions"><button class="secondary" onclick="refreshDailySelfieLocal()">重新生成今日日程</button></div>
       <div id="selfieStatus" class="selfie-reference-state" aria-live="polite"></div>
+      <div id="selfiePersonaPoolPanel" class="selfie-identity-panel" hidden>
+        <div class="between selfie-pool-heading"><h3>形象人设池</h3><span id="selfiePersonaPoolCount" class="muted"></span></div>
+        <div class="grid selfie-persona-form">
+          <div><label for="selfiePersonaName">人设名称</label><input id="selfiePersonaName" type="text" maxlength="80" placeholder="例如：小玉"></div>
+          <div><label for="selfiePersonaPrompt">形象描述</label><textarea id="selfiePersonaPrompt" maxlength="4000" placeholder="描述固定的外貌、发型和气质"></textarea></div>
+        </div>
+        <div class="actions"><button id="addSelfiePersona" type="button">添加人设</button></div>
+        <div id="selfiePersonaPoolList" class="selfie-identity-list" aria-live="polite"></div>
+      </div>
       <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
       <h3 style="margin-top:18px">自定义衣橱</h3>
       <div class="grid">
@@ -5875,7 +5913,6 @@ Source prompt:
         || Number(params.persona_reference_count || 0) > 0
         || selection.used_persona
         || Number(roles.persona || 0) > 0
-        || Number(roles.persona_extra || 0) > 0
         || String(params.identity_reference_source || '').trim() === 'persona'
       );
     }
@@ -7796,7 +7833,6 @@ Source prompt:
         || Number(request.persona_reference_count || 0) > 0
         || selection.used_persona
         || Number(roles.persona || 0) > 0
-        || Number(roles.persona_extra || 0) > 0
         || record?.identity_reference_source === 'persona'
         || Number(record?.persona_reference_count || 0) > 0
       );
@@ -9006,25 +9042,200 @@ Source prompt:
       root.querySelectorAll('.wardrobe-wear').forEach(button => button.onclick = () => wearWardrobe(button));
     }
 
+    let SELFIE_IDENTITY_DATA = null;
+    function identityPoolLimit(data) {
+      const value = Number(data?.pool_limit);
+      return Number.isFinite(value) && value > 0 ? Math.min(10, Math.max(1, Math.floor(value))) : 10;
+    }
+    function identityMode(data) {
+      return data?.identity_mode === 'persona' || data?.use_persona_pool === true ? 'persona' : 'image';
+    }
+    function hasIdentityPoolPayload(data) {
+      return Boolean(data && typeof data === 'object' && (
+        'identity_mode' in data || 'use_persona_pool' in data || 'image_pool' in data || 'persona_pool' in data
+      ));
+    }
+    function renderSelfieIdentity(data) {
+      data = data || {};
+      SELFIE_IDENTITY_DATA = data;
+      const mode = identityMode(data);
+      const limit = identityPoolLimit(data);
+      const imagePool = Array.isArray(data.image_pool) ? data.image_pool : [];
+      const personaPool = Array.isArray(data.persona_pool) ? data.persona_pool : [];
+      const imageBySlot = new Map(imagePool.map(item => [Number(item.slot), item]));
+      const personaBySlot = new Map(personaPool.map(item => [Number(item.slot), item]));
+      const imagePanel = $('selfieImagePoolPanel');
+      const personaPanel = $('selfiePersonaPoolPanel');
+      if ($('selfiePersonaEnabled')) $('selfiePersonaEnabled').checked = mode === 'persona';
+      if ($('useLogoWhenNoPersona')) $('useLogoWhenNoPersona').disabled = mode === 'persona';
+      if (imagePanel) imagePanel.hidden = mode !== 'image';
+      if (personaPanel) personaPanel.hidden = mode !== 'persona';
+      if ($('selfieIdentityModeHint')) $('selfieIdentityModeHint').textContent = mode === 'persona'
+        ? '当前使用文字人设池；切换不会修改另一种池中的内容。'
+        : '当前使用形象图池；切换不会修改另一种池中的内容。';
+      const activeImageSlot = Number(data.active_image_slot) || 0;
+      const activePersonaSlot = Number(data.active_persona_slot) || 0;
+      const imageRows = [];
+      for (let slot = 1; slot <= limit; slot += 1) {
+        const item = imageBySlot.get(slot);
+        const occupied = Boolean(item && (item.mime_type || item.available !== undefined || item.active));
+        const available = occupied && item.available !== false;
+        const active = slot === activeImageSlot || item?.active === true;
+        const status = !occupied ? '空位' : available ? (active ? '当前使用' : '可用') : '文件缺失';
+        imageRows.push(`<div class="selfie-identity-row${active ? ' active' : ''}" data-selfie-image-slot="${slot}">
+          <span class="selfie-identity-slot">${slot}</span>
+          <div class="selfie-identity-copy"><strong>形象图 ${slot}</strong><span>${status}${occupied && item.mime_type ? ` · ${escapeHtml(item.mime_type)}` : ''}</span></div>
+          <div class="actions">${occupied && available && !active ? '<button type="button" class="secondary selfie-image-select">选择</button>' : ''}${occupied ? '<button type="button" class="danger selfie-image-remove">移除</button>' : ''}</div>
+        </div>`);
+      }
+      if ($('selfieImagePoolList')) $('selfieImagePoolList').innerHTML = imageRows.join('');
+      const imageCount = imagePool.filter(item => item && (item.mime_type || item.available !== undefined)).length;
+      if ($('selfieImagePoolCount')) $('selfieImagePoolCount').textContent = `${imageCount}/${limit}`;
+      if ($('uploadSelfie')) {
+        $('uploadSelfie').disabled = imageCount >= limit;
+        $('uploadSelfie').title = imageCount >= limit ? '形象图池已满，请先移除一项' : '';
+      }
+      $('selfieImagePoolList')?.querySelectorAll('.selfie-image-select').forEach(button => {
+        button.onclick = () => selfieIdentityAction({action:'image_select', slot:Number(button.closest('[data-selfie-image-slot]').dataset.selfieImageSlot)}, '形象图已切换');
+      });
+      $('selfieImagePoolList')?.querySelectorAll('.selfie-image-remove').forEach(button => {
+        button.onclick = () => removeSelfieImage(Number(button.closest('[data-selfie-image-slot]').dataset.selfieImageSlot));
+      });
+
+      const personaRows = [];
+      for (let slot = 1; slot <= limit; slot += 1) {
+        const item = personaBySlot.get(slot);
+        if (!item || (!item.name && !item.prompt)) continue;
+        const active = slot === activePersonaSlot || item.active === true;
+        personaRows.push(`<div class="selfie-identity-row${active ? ' active' : ''}" data-selfie-persona-slot="${slot}">
+          <span class="selfie-identity-slot">${slot}</span>
+          <div class="selfie-identity-copy"><strong>${escapeHtml(item.name || `人设 ${slot}`)}</strong><span>${active ? '当前使用 · ' : ''}${escapeHtml(item.prompt || '未填写描述')}</span></div>
+          <div class="actions">${active ? '' : '<button type="button" class="secondary selfie-persona-select">选择</button>'}<button type="button" class="danger selfie-persona-remove">移除</button></div>
+        </div>`);
+      }
+      if ($('selfiePersonaPoolList')) $('selfiePersonaPoolList').innerHTML = personaRows.length
+        ? personaRows.join('') : '<div class="muted">暂无人设，请添加一个固定的人物描述。</div>';
+      const personaCount = personaPool.filter(item => item && (item.name || item.prompt)).length;
+      if ($('selfiePersonaPoolCount')) $('selfiePersonaPoolCount').textContent = `${personaCount}/${limit}`;
+      if ($('addSelfiePersona')) {
+        $('addSelfiePersona').disabled = personaCount >= limit;
+        $('addSelfiePersona').title = personaCount >= limit ? '形象人设池已满，请先移除一项' : '';
+      }
+      $('selfiePersonaPoolList')?.querySelectorAll('.selfie-persona-select').forEach(button => {
+        button.onclick = () => selfieIdentityAction({action:'persona_select', slot:Number(button.closest('[data-selfie-persona-slot]').dataset.selfiePersonaSlot)}, '形象人设已切换');
+      });
+      $('selfiePersonaPoolList')?.querySelectorAll('.selfie-persona-remove').forEach(button => {
+        button.onclick = () => removeSelfiePersona(Number(button.closest('[data-selfie-persona-slot]').dataset.selfiePersonaSlot));
+      });
+      const image = data.has_image && String(data.image || '').startsWith('data:image/') ? String(data.image) : '';
+      SELFIE_REFERENCE_DATA_URL = image;
+      const preview = $('selfiePreview');
+      if (preview && image && mode === 'image') {
+        preview.src = image;
+        preview.style.display = 'block';
+      } else if (preview) {
+        preview.removeAttribute('src');
+        preview.style.display = 'none';
+      }
+      const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
+      if ($('selfieStatus')) $('selfieStatus').textContent = `${mode === 'persona' ? '使用形象人设池' : (data.has_image ? '形象参考图已设置' : '尚未设置形象参考图')} · 类型：${appearanceLabel}`;
+    }
+    async function selfieIdentityAction(payload, successMessage = '') {
+      const mutationSeq = beginSelfieMutation();
+      try {
+        const res = await api('/api/selfie-identity', {method:'POST', body: JSON.stringify(payload)});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
+        const data = res.data || {};
+        renderSelfieIdentity(data);
+        if (successMessage) showToast(successMessage, 'ok');
+        return true;
+      } catch (e) {
+        if (mutationSeq === SELFIE_MUTATION_SEQ) {
+          renderSelfieIdentity(SELFIE_IDENTITY_DATA || {});
+          showToast(e.message || '形象池操作失败', 'bad');
+        }
+        return false;
+      }
+    }
+    async function removeSelfieImage(slot) {
+      if (!await confirmAction(`确定移除形象图 ${slot} 吗？编号会保留，后续添加会优先补这个空位。`, {title:'移除形象图', confirmText:'移除'})) return;
+      await selfieIdentityAction({action:'image_remove', slot}, `形象图 ${slot} 已移除`);
+    }
+    async function removeSelfiePersona(slot) {
+      if (!await confirmAction(`确定移除形象人设 ${slot} 吗？`, {title:'移除形象人设', confirmText:'移除'})) return;
+      await selfieIdentityAction({action:'persona_remove', slot}, `形象人设 ${slot} 已移除`);
+    }
+    async function addSelfiePersona() {
+      const button = $('addSelfiePersona');
+      if (button?.disabled) return;
+      const name = ($('selfiePersonaName')?.value || '').trim();
+      const prompt = ($('selfiePersonaPrompt')?.value || '').trim();
+      if (!name || !prompt) { showToast('请填写人设名称和形象描述', 'bad'); return; }
+      if (button) button.disabled = true;
+      try {
+        const added = await selfieIdentityAction({action:'persona_add', name, prompt}, '形象人设已添加');
+        if (added) {
+          if ($('selfiePersonaName')) $('selfiePersonaName').value = '';
+          if ($('selfiePersonaPrompt')) $('selfiePersonaPrompt').value = '';
+        }
+      } finally {
+        if (button) button.disabled = (SELFIE_IDENTITY_DATA?.persona_pool?.length || 0) >= identityPoolLimit(SELFIE_IDENTITY_DATA);
+      }
+    }
+    async function saveSelfieIdentityMode() {
+      const checkbox = $('selfiePersonaEnabled');
+      if (!checkbox) return;
+      const requested = checkbox.checked ? 'persona' : 'image';
+      const previous = identityMode(SELFIE_IDENTITY_DATA || {});
+      const mutationSeq = beginSelfieMutation();
+      checkbox.disabled = true;
+      try {
+        const res = await api('/api/selfie-identity', {method:'POST', body: JSON.stringify({action:'mode', identity_mode: requested})});
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
+        const data = res.data || {};
+        renderSelfieIdentity(data);
+        showToast(requested === 'persona' ? '已切换到形象人设池' : '已切换到形象图池', 'ok');
+      } catch (e) {
+        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
+        checkbox.checked = previous === 'persona';
+        renderSelfieIdentity(SELFIE_IDENTITY_DATA || {});
+        showToast(e.message || '形象池切换失败', 'bad');
+      } finally { checkbox.disabled = false; }
+    }
+    async function refreshSelfieIdentity(expectedMutationSeq = null) {
+      const res = await api('/api/selfie-identity');
+      const data = res.data || {};
+      if (!hasIdentityPoolPayload(data)) throw Object.assign(new Error('形象池接口尚未提供完整状态'), {status: 404});
+      if (expectedMutationSeq !== null && expectedMutationSeq !== SELFIE_MUTATION_SEQ) return null;
+      renderSelfieIdentity(data);
+      return data;
+    }
+
     async function refreshSelfie(notify = false) {
       const mutationSeq = SELFIE_MUTATION_SEQ;
       const dailyLoadSeq = SELFIE_DAILY_LOAD_SEQ;
       try {
-        const res = await api('/api/selfie-reference');
+        let res;
+        try {
+          res = await api('/api/selfie-identity');
+          if (!hasIdentityPoolPayload(res.data)) throw Object.assign(new Error('形象池接口尚未提供完整状态'), {status: 404});
+        } catch (error) {
+          if (error?.status !== 404 && error?.status !== 405) throw error;
+          res = await api('/api/selfie-reference');
+        }
         if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         const data = res.data || {};
+        renderSelfieIdentity(data);
         SELFIE_REFERENCE_DATA_URL = data.has_image && String(data.image || '').startsWith('data:image/')
           ? String(data.image)
           : '';
-        if (SELFIE_REFERENCE_DATA_URL) {
+        if (SELFIE_REFERENCE_DATA_URL && identityMode(data) === 'image') {
           $('selfiePreview').src = SELFIE_REFERENCE_DATA_URL;
           $('selfiePreview').style.display = 'block';
         } else {
           $('selfiePreview').removeAttribute('src');
           $('selfiePreview').style.display = 'none';
         }
-        const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
-        $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
         let dailySchedule = data.daily_schedule;
         let scheduleError = '';
         let scheduleLoadSeq = dailyLoadSeq;
@@ -9187,15 +9398,33 @@ Source prompt:
       const file = $('selfieFile').files[0];
       if (!file) { showToast('请选择图片', 'bad'); return; }
       const mutationSeq = beginSelfieMutation();
+      const uploadButton = $('uploadSelfie');
+      if (uploadButton) uploadButton.disabled = true;
       try {
         const image = await readFileDataUrl(file);
-        await api('/api/selfie-reference', {method:'POST', body: JSON.stringify({image, mime_type:file.type, filename:file.name})});
+        const res = await api('/api/selfie-reference', {method:'POST', body: JSON.stringify({image, mime_type:file.type, filename:file.name})});
         if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
-        await refreshSelfie();
-        showToast('参考图已更新', 'ok');
+        if (hasIdentityPoolPayload(res.data)) {
+          renderSelfieIdentity(res.data);
+          $('selfieFile').value = '';
+          showToast('形象图已添加并选中', 'ok');
+        } else {
+          await refreshSelfie();
+          showToast('参考图已更新', 'ok');
+        }
       } catch (e) { if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message || '参考图上传失败', 'bad'); }
+      finally {
+        if (uploadButton) {
+          const limit = identityPoolLimit(SELFIE_IDENTITY_DATA || {});
+          const count = Array.isArray(SELFIE_IDENTITY_DATA?.image_pool)
+            ? SELFIE_IDENTITY_DATA.image_pool.filter(item => item && (item.mime_type || item.available !== undefined)).length : 0;
+          uploadButton.disabled = count >= limit;
+        }
+      }
     }
     async function clearSelfie() {
+      const slot = Number(SELFIE_IDENTITY_DATA?.active_image_slot) || 0;
+      if (slot) return removeSelfieImage(slot);
       if (!await confirmAction('确定清除当前自拍形象参考图吗？清除后后续生成将不再使用这张形象图。', {title:'清除形象参考图', confirmText:'清除参考图'})) return;
       const mutationSeq = beginSelfieMutation();
       try { await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); if (mutationSeq !== SELFIE_MUTATION_SEQ) return; await refreshSelfie(); showToast('参考图已清除', 'ok'); }
@@ -9208,9 +9437,13 @@ Source prompt:
         const res = await api('/api/selfie-appearance-type', {method:'POST', body: JSON.stringify({appearance_type})});
         if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         const data = res.data || {};
+        const hasIdentity = hasIdentityPoolPayload(data);
+        if (hasIdentity) renderSelfieIdentity(data);
         if ($('selfieAppearanceType')) $('selfieAppearanceType').value = data.appearance_type || appearance_type;
-        const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || appearance_type] || '自动';
-        $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
+        if (!hasIdentity) {
+          const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || appearance_type] || '自动';
+          $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
+        }
         showToast('形象类型已保存', 'ok');
       } catch (e) {
         if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message, 'bad');
@@ -12819,6 +13052,13 @@ Source prompt:
     };
 
     $('uploadSelfie').onclick = uploadSelfie;
+    if ($('refreshSelfieBtn')) $('refreshSelfieBtn').onclick = () => refreshSelfie(true);
+    if ($('clearSelfieBtn')) $('clearSelfieBtn').onclick = clearSelfie;
+    if ($('selfiePersonaEnabled')) $('selfiePersonaEnabled').onchange = saveSelfieIdentityMode;
+    if ($('addSelfiePersona')) $('addSelfiePersona').onclick = addSelfiePersona;
+    if ($('selfiePersonaPrompt')) $('selfiePersonaPrompt').onkeydown = event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addSelfiePersona();
+    };
     if ($('uploadWardrobe')) $('uploadWardrobe').onclick = uploadWardrobe;
     if ($('wardrobeSelectionMode')) $('wardrobeSelectionMode').onchange = saveWardrobeMode;
     if ($('wardrobeBatchCancel')) $('wardrobeBatchCancel').onclick = cancelWardrobeBatch;

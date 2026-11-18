@@ -9,6 +9,8 @@ import pytest
 
 from astrbot_plugin_selfie_image.core.models import AICatConfig
 from astrbot_plugin_selfie_image.features.reference_media import ImageDeliveryOutcome
+from astrbot_plugin_selfie_image.generation.counted_workflow import CountedGenerationWorkflow
+from astrbot_plugin_selfie_image.generation.image_scheduler import ImageJobScheduler
 from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
 
@@ -159,6 +161,67 @@ def test_batch_without_generated_images_does_not_report_delivery(plugin, cancell
     assert result["delivery_failed"] is result["delivery_unknown"] is False
     assert result["status"] == ("cancelled" if cancelled else "failed")
     plugin._send_generated_images.assert_not_awaited()
+
+
+def test_three_hundred_shots_drain_through_shared_scheduler(plugin):
+    scheduler = ImageJobScheduler(limit=5)
+    plugin._image_scheduler = scheduler
+    plugin._image_inflight_limit = lambda: 5
+    plugin._web_tasks = {f"task-{batch}": {"requested_count": 100} for batch in range(3)}
+    plugin._set_web_image_task = Mock()
+    plugin._batch_success_text = Mock(return_value="")
+    plugin._normalize_generation_result = lambda result, _total: result
+
+    active = 0
+    peak = 0
+    completed = 0
+
+    async def run_batch(batch):
+        task_id = f"task-{batch}"
+
+        async def run_one(index):
+            async def upstream_request():
+                nonlocal active, peak, completed
+                active += 1
+                peak = max(peak, active)
+                try:
+                    await asyncio.sleep(0)
+                    completed += 1
+                    return True
+                finally:
+                    active -= 1
+
+            await scheduler.submit(task_id, upstream_request)
+            return {"success": True, "files": [f"{task_id}-{index}.png"]}
+
+        workflow = CountedGenerationWorkflow(
+            plugin,
+            task_id=task_id,
+            event=object(),
+            total=100,
+            fail_label="failed",
+            run_one=run_one,
+            log_prefix="scheduler pressure test",
+            log_info=lambda _message: None,
+        )
+        return await workflow.run()
+
+    async def run():
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*(run_batch(batch) for batch in range(3))),
+                timeout=15,
+            )
+            snapshot = await scheduler.snapshot()
+        finally:
+            await scheduler.aclose()
+
+        assert all(result["completed_count"] == 100 for result in results)
+        assert completed == 300
+        assert peak == 5
+        assert snapshot == {"limit": 5, "active": 0, "pending": 0, "queued_tasks": 0}
+
+    asyncio.run(run())
 
 
 def test_legacy_generation_slot_is_released_on_exception(plugin):

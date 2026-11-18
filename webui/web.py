@@ -703,6 +703,18 @@ class FlaskWebServer:
                 return error_response
             return selfie_profile_result(selfie_profile_controller.clear_reference)
 
+        def selfie_identity() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            if request.method.upper() == "GET":
+                return selfie_profile_result(selfie_profile_controller.get_reference)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return selfie_profile_result(
+                lambda: selfie_profile_controller.identity_mutation(payload)
+            )
+
         def selfie_appearance_type() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
@@ -760,6 +772,7 @@ class FlaskWebServer:
             return selfie_profile_result(selfie_profile_controller.wardrobe_export)
 
         selfie_profile_handlers = {
+            "selfie_identity": selfie_identity,
             "selfie_reference_get": selfie_reference_get,
             "selfie_reference_post": selfie_reference_post,
             "selfie_reference_clear": selfie_reference_clear,

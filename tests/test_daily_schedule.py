@@ -350,13 +350,13 @@ def test_reference_driven_selfie_does_not_inject_daily_schedule(tmp_path) -> Non
     with_reference = manager.build_selfie_prompt(
         "自拍", "小助", "温柔", True, 1, has_external_reference=True
     )
-    persona_auxiliary_only = manager.build_selfie_prompt(
+    non_external_reference = manager.build_selfie_prompt(
         "自拍", "小助", "温柔", True, 1, has_external_reference=False
     )
     without_reference = manager.build_selfie_prompt("自拍", "小助", "温柔", True, 0)
     assert "日程穿搭" not in with_reference
     assert "当前日程事件" not in with_reference
-    assert "当前时间段" in persona_auxiliary_only
+    assert "当前时间段" in non_external_reference
     assert "当前时间段" in without_reference
 
 

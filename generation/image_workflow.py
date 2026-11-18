@@ -359,7 +359,6 @@ async def run_image_generation_workflow(
             and (
                 reference_selection.get("used_persona")
                 or selection_roles.get("persona")
-                or selection_roles.get("persona_extra")
             )
         )
     )
@@ -405,7 +404,7 @@ async def run_image_generation_workflow(
                 source_meta[key] = value
             elif isinstance(value, list):
                 source_meta[key] = [str(item).strip() for item in value if str(item).strip()][:24]
-    request_image_paths = self._save_reference_images_to_cache(refs)
+    request_image_paths = await asyncio.to_thread(self._save_reference_images_to_cache, refs)
     task_id = str(record_context.get("task_id") or "").strip() if isinstance(record_context, Mapping) else ""
     if task_id:
         task_setter = getattr(self, "_set_web_image_task", None)
@@ -563,7 +562,7 @@ async def run_image_generation_workflow(
     request_data["composition"] = self._composition_metadata(
         request_prompt, source, aspect_ratio, resolution, len(refs)
     )
-    request_cleanup = self._cleanup_image_cache_if_needed(request_image_paths)
+    request_cleanup = await asyncio.to_thread(self._cleanup_image_cache_if_needed, request_image_paths)
     if request_cleanup.get("deleted"):
         request_data["cache_cleanup_before_generation"] = request_cleanup
 
@@ -825,7 +824,8 @@ async def run_image_generation_workflow(
     max_dimension, max_pixels, max_frames = image_validation_limits(getattr(self, "config", None))
     geometry_error = ""
     for image in generated_images:
-        geometry_error = image_geometry_error(
+        geometry_error = await asyncio.to_thread(
+            image_geometry_error,
             image,
             max_dimension=max_dimension,
             max_pixels=max_pixels,
@@ -879,11 +879,14 @@ async def run_image_generation_workflow(
             "request_image_paths": request_image_paths,
             "attempts": result.attempts,
         }
-    generated_image_paths = [
-        self._save_cache_image(image, "generated", detect_mime_by_bytes(image))
+    generated_image_paths = await asyncio.gather(*(
+        asyncio.to_thread(self._save_cache_image, image, "generated", detect_mime_by_bytes(image))
         for image in generated_images
-    ]
-    generated_image_md5s = [hashlib.md5(image).hexdigest() for image in generated_images]
+    ))
+    generated_image_md5s = await asyncio.gather(*(
+        asyncio.to_thread(lambda data=image: hashlib.md5(data).hexdigest())
+        for image in generated_images
+    ))
     files = [self._cache_absolute_path(path) for path in generated_image_paths]
     self._set_generation_stage(
         record_context,
@@ -950,7 +953,10 @@ async def run_image_generation_workflow(
             "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
         }
 
-    cleanup = self._cleanup_image_cache_if_needed([*request_image_paths, *generated_image_paths])
+    cleanup = await asyncio.to_thread(
+        self._cleanup_image_cache_if_needed,
+        [*request_image_paths, *generated_image_paths],
+    )
     response_data = {
         "success": True,
         "used_model": result.used_model,

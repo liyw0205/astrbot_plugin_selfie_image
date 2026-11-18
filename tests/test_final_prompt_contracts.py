@@ -63,7 +63,6 @@ def plugin_for_prompts(tmp_path, english=False):
     plugin.config = SimpleNamespace(image_max_batch_count=10)
     plugin._ensure_daily_selfie_schedule = AsyncMock()
     plugin._persona_identity_reference = lambda **_kw: ImageReference(data=b"identity", mime_type="image/png")
-    plugin._persona_auxiliary_references = lambda action="": []
     plugin._prompt_en_needed = lambda *_a, **_kw: english
     # Exercise the supported translation-failure fallback without a network LLM.
     plugin._translate_prompt_to_english = AsyncMock(side_effect=lambda text, **_kw: (text, {"applied": False}))

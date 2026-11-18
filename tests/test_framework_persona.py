@@ -159,7 +159,6 @@ def test_image_prompt_uses_framework_identity_only_without_identity_image(tmp_pa
         context=context, persona=persona,
         _ensure_daily_selfie_schedule=AsyncMock(),
         _persona_identity_reference=lambda **kwargs: None,
-        _persona_auxiliary_references=lambda action: [],
         _select_selfie_references=lambda action, refs: None,
         _is_cos_action=lambda action: False,
     )
@@ -183,6 +182,50 @@ def test_leg_normalization_obeys_known_reference_origin_instead_of_image_presenc
             "看看腿", "", "", has_reference_image=True, has_external_reference=external,
         )
         assert ("【outfit:reference】" in prompt) is external
+
+
+def test_selected_text_persona_replaces_framework_identity_and_survives_english(tmp_path):
+    persona = PersonaManager(str(tmp_path))
+    persona.set_identity_mode("persona")
+    selected = persona.get_active_persona()
+    resolver = AsyncMock(side_effect=AssertionError("text identity should not query the framework"))
+    plugin = SimpleNamespace(
+        persona=persona,
+        context=SimpleNamespace(persona_manager=SimpleNamespace(get_default_persona_v3=resolver)),
+        _ensure_daily_selfie_schedule=AsyncMock(),
+        _persona_identity_reference=lambda **kwargs: None,
+        _select_selfie_references=lambda action, refs: None,
+        _is_cos_action=lambda action: False,
+    )
+    prompt, refs = asyncio.run(SelfieImagePlugin._build_selfie_prompt_and_refs(plugin, "自拍", [], _event()))
+    assert refs == []
+    assert prompt.count(selected["prompt"]) == 1
+    assert selected["name"] in prompt
+    english = append_daily_context_to_english_prompt("Create a portrait.", prompt)
+    assert english.count(selected["prompt"]) == 1
+    resolver.assert_not_awaited()
+
+    persona.remove_persona(1)
+    empty_prompt, _ = asyncio.run(SelfieImagePlugin._build_selfie_prompt_and_refs(plugin, "自拍", [], _event()))
+    assert selected["prompt"] not in empty_prompt
+    assert "角色设定：" not in empty_prompt
+    resolver.assert_not_awaited()
+
+
+def test_text_mode_disables_stored_image_pool_and_logo(tmp_path):
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(str(tmp_path))
+    plugin.config = AICatConfig.from_dict({"image": {"use_logo_when_no_persona": True}})
+    plugin._bundled_logo_path = str(tmp_path / "logo.png")
+    (tmp_path / "logo.png").write_bytes(b"logo")
+    plugin.persona.save_reference_image(b"primary", "image/png")
+    plugin.persona.save_reference_image(b"second", "image/png")
+    plugin.persona.select_reference_image(1)
+    plugin.persona.set_identity_mode("persona")
+    assert plugin._persona_identity_reference(allow_logo=True) is None
+    plugin.persona.set_identity_mode("image")
+    assert plugin._persona_identity_reference().data == b"primary"
+    assert [item["slot"] for item in plugin.persona.list_image_pool()] == [1, 2]
 
 
 def test_dashboard_has_no_separate_persona_controls():
