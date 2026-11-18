@@ -122,15 +122,19 @@ const context = vm.createContext({
     return {data:{items:[],max:5,can_create:true,restore_pending:false}};
   },
 });
-vm.runInContext(source + '\nglobalThis.handlers={loadBackupManager};', context);
+vm.runInContext(source + '\nglobalThis.handlers={loadBackupManager,loadBackupOptions};', context);
 (async () => {
   await Promise.all([context.handlers.loadBackupManager(), context.handlers.loadBackupManager()]);
-  assert.deepEqual(calls, ['/api/backups/options', '/api/backups']);
+  assert.deepEqual(calls, ['/api/backups']);
   await context.handlers.loadBackupManager();
-  assert.deepEqual(calls, ['/api/backups/options', '/api/backups']);
+  assert.deepEqual(calls, ['/api/backups']);
   now += 30001;
   await context.handlers.loadBackupManager();
-  assert.deepEqual(calls, ['/api/backups/options', '/api/backups', '/api/backups']);
+  assert.deepEqual(calls, ['/api/backups', '/api/backups']);
+  await Promise.all([context.handlers.loadBackupOptions(), context.handlers.loadBackupOptions()]);
+  assert.deepEqual(calls, ['/api/backups', '/api/backups', '/api/backups/options']);
+  await context.handlers.loadBackupOptions();
+  assert.deepEqual(calls, ['/api/backups', '/api/backups', '/api/backups/options']);
 })().catch(error => { process.stderr.write(error.stack + '\n'); process.exitCode = 1; });
 """
     result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)

@@ -52,6 +52,11 @@
     const DASHBOARD_PERSIST_CACHE_MAX_ENTRIES = 160;
     const DASHBOARD_PERSIST_CACHE_MAX_BYTES = 3 * 1024 * 1024;
     const DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES = 700 * 1024;
+    // Sandboxed AstrBot iframes have an opaque origin, so both Web Storage and
+    // CacheStorage are unavailable. window.name is scoped to this browsing
+    // context and survives same-page reloads; keep it bounded and namespaced.
+    const DASHBOARD_WINDOW_NAME_PREFIX = '__selfie_image_dashboard_cache_v1__:';
+    const DASHBOARD_WINDOW_NAME_MAX_BYTES = 2 * 1024 * 1024;
     const DASHBOARD_PERSIST_CACHE_NAME = 'selfie-image-dashboard-v1';
     const DASHBOARD_PERSIST_MEMORY = new Map();
     const DASHBOARD_PERSIST_CACHE_WRITE_SEQ = new Map();
@@ -83,6 +88,70 @@
     }
     function dashboardPersistCacheUrl(storageKey) {
       return `/__selfie_dashboard_cache__/${encodeURIComponent(storageKey)}`;
+    }
+    function readDashboardWindowNameCache() {
+      try {
+        const raw = String(window.name || '');
+        if (!raw.startsWith(DASHBOARD_WINDOW_NAME_PREFIX)) return {};
+        const value = JSON.parse(raw.slice(DASHBOARD_WINDOW_NAME_PREFIX.length));
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+      } catch (_) {
+        return {};
+      }
+    }
+    function writeDashboardWindowNameCache(value) {
+      try {
+        const encoded = JSON.stringify(value || {});
+        if (encoded.length > DASHBOARD_WINDOW_NAME_MAX_BYTES) return false;
+        window.name = DASHBOARD_WINDOW_NAME_PREFIX + encoded;
+        return String(window.name || '') === DASHBOARD_WINDOW_NAME_PREFIX + encoded;
+      } catch (_) {
+        return false;
+      }
+    }
+    function readDashboardWindowNameEntry(storageKey) {
+      const value = readDashboardWindowNameCache()[storageKey];
+      return value && typeof value === 'object' ? value : null;
+    }
+    function writeDashboardWindowNameEntry(storageKey, entry) {
+      const cache = readDashboardWindowNameCache();
+      cache[storageKey] = entry;
+      return writeDashboardWindowNameCache(cache);
+    }
+    function removeDashboardWindowNameEntry(storageKey) {
+      const cache = readDashboardWindowNameCache();
+      if (!Object.prototype.hasOwnProperty.call(cache, storageKey)) return;
+      delete cache[storageKey];
+      writeDashboardWindowNameCache(cache);
+    }
+    function clearDashboardWindowNameNamespace(namespace, predicate = null) {
+      const cache = readDashboardWindowNameCache();
+      let changed = false;
+      for (const [storageKey, value] of Object.entries(cache)) {
+        if (value?.namespace !== namespace) continue;
+        if (typeof predicate === 'function' && !predicate(String(value.key || ''))) continue;
+        delete cache[storageKey];
+        changed = true;
+      }
+      if (changed) writeDashboardWindowNameCache(cache);
+    }
+    function pruneDashboardWindowNameCache() {
+      const cache = readDashboardWindowNameCache();
+      const now = Date.now();
+      const entries = Object.entries(cache).filter(([, value]) => {
+        if (!value || !value.storedAt || now - Number(value.storedAt) > DASHBOARD_PERSIST_CACHE_TTL_MS) return false;
+        return true;
+      }).sort((a, b) => Number(a[1]?.lastAccessed || a[1]?.storedAt || 0) - Number(b[1]?.lastAccessed || b[1]?.storedAt || 0));
+      const kept = {};
+      let total = 0;
+      for (const [storageKey, value] of entries.reverse()) {
+        const size = Math.max(0, Number(value?.size || 0));
+        if (Object.keys(kept).length >= DASHBOARD_PERSIST_CACHE_MAX_ENTRIES || total + size > DASHBOARD_WINDOW_NAME_MAX_BYTES) continue;
+        kept[storageKey] = value;
+        total += size;
+      }
+      if (Object.keys(kept).length !== Object.keys(cache).length) writeDashboardWindowNameCache(kept);
+      return kept;
     }
     function scheduleDashboardPersistCacheDelete(storageKey) {
       const sequence = (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) || 0) + 1;
@@ -178,6 +247,7 @@
     function removeDashboardPersistEntry(storageKey, index = readDashboardPersistIndex()) {
       safeStorageRemove(storageKey);
       DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+      removeDashboardWindowNameEntry(storageKey);
       scheduleDashboardPersistCacheDelete(storageKey);
       if (Object.prototype.hasOwnProperty.call(index, storageKey)) {
         delete index[storageKey];
@@ -199,6 +269,7 @@
         if (missing || dashboardPersistEntryExpired(item, now)) {
           safeStorageRemove(storageKey);
           DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+          removeDashboardWindowNameEntry(storageKey);
           scheduleDashboardPersistCacheDelete(storageKey);
           delete index[storageKey];
           changed = true;
@@ -215,6 +286,7 @@
         totalBytes -= Number(oldest.item.size || 0);
         safeStorageRemove(oldest.storageKey);
         DASHBOARD_PERSIST_MEMORY.delete(oldest.storageKey);
+        removeDashboardWindowNameEntry(oldest.storageKey);
         scheduleDashboardPersistCacheDelete(oldest.storageKey);
         delete index[oldest.storageKey];
         changed = true;
@@ -229,16 +301,20 @@
       const raw = safeStorageGet(storageKey, '');
       if (!raw) {
         const memory = DASHBOARD_PERSIST_MEMORY.get(storageKey);
-        if (!memory) {
+        const fallback = memory || readDashboardWindowNameEntry(storageKey);
+        if (!fallback) {
           if (index[storageKey]) removeDashboardPersistEntry(storageKey, index);
           return null;
         }
-        if (dashboardPersistEntryExpired(memory) || memory.scope !== scope) {
+        const fallbackScope = String(fallback.scope || '');
+        if (dashboardPersistEntryExpired(fallback) || fallbackScope !== scope) {
           removeDashboardPersistEntry(storageKey, index);
           return null;
         }
-        memory.lastAccessed = Date.now();
-        return {data: memory.data, storedAt: Number(memory.storedAt || 0)};
+        fallback.lastAccessed = Date.now();
+        DASHBOARD_PERSIST_MEMORY.set(storageKey, fallback);
+        writeDashboardWindowNameEntry(storageKey, fallback);
+        return {data: fallback.data, storedAt: Number(fallback.storedAt || 0)};
       }
       try {
         const value = JSON.parse(raw);
@@ -291,7 +367,12 @@
           writeDashboardPersistIndex(index);
           pruneDashboardPersistCache();
         }
-        return storedInLocalStorage || Boolean(dashboardPersistCacheStorage());
+        const storedInWindowName = !storedInLocalStorage && writeDashboardWindowNameEntry(
+          storageKey,
+          Object.assign({}, entry, {size: encoded.length}),
+        );
+        if (storedInWindowName) pruneDashboardWindowNameCache();
+        return storedInLocalStorage || storedInWindowName || Boolean(dashboardPersistCacheStorage());
       } catch (_) {
         return false;
       }
@@ -308,6 +389,7 @@
         if (typeof predicate === 'function' && !predicate(String(item.key || ''))) continue;
         safeStorageRemove(storageKey);
         DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+        removeDashboardWindowNameEntry(storageKey);
         scheduleDashboardPersistCacheDelete(storageKey);
         delete index[storageKey];
         changed = true;
@@ -316,9 +398,11 @@
         if (item.namespace !== namespace) continue;
         if (typeof predicate === 'function' && !predicate(String(item.key || ''))) continue;
         DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+        removeDashboardWindowNameEntry(storageKey);
         scheduleDashboardPersistCacheDelete(storageKey);
       }
       if (changed) writeDashboardPersistIndex(index);
+      clearDashboardWindowNameNamespace(namespace, predicate);
     }
     function listDashboardPersistCache(namespace) {
       const index = pruneDashboardPersistCache();
@@ -352,7 +436,19 @@
           continue;
         }
         item.lastAccessed = Date.now();
+        seen.add(storageKey);
         rows.push({key: String(item.key || ''), data: item.data, storedAt: Number(item.storedAt || 0)});
+      }
+      const fallback = pruneDashboardWindowNameCache();
+      for (const [storageKey, value] of Object.entries(fallback)) {
+        if (seen.has(storageKey) || value?.namespace !== namespace || value?.scope !== scope) continue;
+        if (dashboardPersistEntryExpired(value)) {
+          removeDashboardWindowNameEntry(storageKey);
+          continue;
+        }
+        value.lastAccessed = Date.now();
+        DASHBOARD_PERSIST_MEMORY.set(storageKey, value);
+        rows.push({key: String(value.key || ''), data: value.data, storedAt: Number(value.storedAt || 0)});
       }
       writeDashboardPersistIndex(index);
       return rows;

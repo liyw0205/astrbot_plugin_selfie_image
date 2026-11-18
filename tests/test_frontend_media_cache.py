@@ -195,6 +195,56 @@ def test_dashboard_catalog_pages_and_gallery_survive_a_reload_with_bounded_ttl()
     assert "clearDashboardPersistNamespace('media')" in PAGE
 
 
+def test_dashboard_persistence_has_sandboxed_iframe_fallback():
+    assert "DASHBOARD_WINDOW_NAME_PREFIX" in PAGE
+    assert "window.name" in PAGE
+    assert "pruneDashboardWindowNameCache" in PAGE
+
+
+def test_dashboard_persistence_fallback_survives_storage_failure_and_expires():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable")
+    source = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "source" / "runtime.js"
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+let now = 1000;
+const window = {
+  name: '',
+  localStorage: {
+    getItem() { throw new Error('opaque origin'); },
+    setItem() { throw new Error('opaque origin'); },
+    removeItem() { throw new Error('opaque origin'); },
+  },
+  location: {pathname: ''},
+};
+window.parent = window;
+const context = vm.createContext({
+  window, Date: {now: () => now}, AUTH_TOKEN: '',
+  document: {getElementById: () => null, querySelectorAll: () => []},
+  setTimeout, clearTimeout,
+});
+vm.runInContext(source + `
+globalThis.handlers = {
+  write: writeDashboardPersistCache,
+  read: readDashboardPersistCacheEntry,
+  clearMemory: () => DASHBOARD_PERSIST_MEMORY.clear(),
+  ttl: DASHBOARD_PERSIST_CACHE_TTL_MS,
+};`, context);
+assert.equal(context.handlers.write('fixture', 'state', {value: 42}), true);
+context.handlers.clearMemory();
+assert.equal(context.handlers.read('fixture', 'state').data.value, 42);
+now += context.handlers.ttl + 1;
+assert.equal(context.handlers.read('fixture', 'state'), null);
+assert(!String(window.name).includes('fixture'));
+"""
+    result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_backup_metadata_uses_short_persisted_cache_without_scanning_selected_data():
     assert "const BACKUP_PERSIST_NAMESPACE = 'backup-manager';" in PAGE
     assert "restorePersistedBackupManager()" in PAGE

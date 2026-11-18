@@ -4,6 +4,8 @@
     let BACKUP_LOAD_SEQ = 0;
     let BACKUP_MUTATION_SEQ = 0;
     let BACKUP_LOAD_REQUEST = null;
+    let BACKUP_OPTIONS_REQUEST = null;
+    let BACKUP_OPTIONS_LOADED = false;
     let BACKUP_OPTIONS_CACHE = null;
     let BACKUP_LIST_CACHE = null;
     let BACKUP_LIST_CACHE_AT = 0;
@@ -148,6 +150,10 @@
     function renderBackupOptions() {
       const root = $('backupOptions');
       if (!root) return;
+      if (!BACKUP_OPTIONS.length) {
+        root.innerHTML = '<div class="muted">点击“开始备份”后读取可选数据项，避免进入页面时扫描备份范围。</div>';
+        return;
+      }
       root.innerHTML = BACKUP_OPTIONS.map(item => {
         const required = item.required === true;
         const checked = required || item.default_selected !== false;
@@ -201,6 +207,7 @@
       if (!storedAt || Date.now() - storedAt >= BACKUP_LIST_CACHE_TTL_MS
         || !Array.isArray(value?.options) || !value?.list || typeof value.list !== 'object') return false;
       BACKUP_OPTIONS_CACHE = value.options;
+      BACKUP_OPTIONS_LOADED = true;
       BACKUP_LIST_CACHE = value.list;
       BACKUP_LIST_CACHE_AT = storedAt;
       return true;
@@ -215,11 +222,35 @@
     }
 
     function renderCachedBackupManager() {
-      if (!BACKUP_OPTIONS_CACHE || !BACKUP_LIST_CACHE) return false;
-      BACKUP_OPTIONS = BACKUP_OPTIONS_CACHE;
+      if (!BACKUP_LIST_CACHE) return false;
+      if (BACKUP_OPTIONS_CACHE) BACKUP_OPTIONS = BACKUP_OPTIONS_CACHE;
       renderBackupOptions();
       renderBackupList(BACKUP_LIST_CACHE);
       return true;
+    }
+
+    async function loadBackupOptions(force = false) {
+      if (!force && Array.isArray(BACKUP_OPTIONS_CACHE)) {
+        BACKUP_OPTIONS_LOADED = true;
+        BACKUP_OPTIONS = BACKUP_OPTIONS_CACHE;
+        renderBackupOptions();
+        return BACKUP_OPTIONS;
+      }
+      if (BACKUP_OPTIONS_REQUEST) return BACKUP_OPTIONS_REQUEST;
+      const request = (async () => {
+        const response = await api('/api/backups/options');
+        const items = Array.isArray(response.data?.items) ? response.data.items : [];
+        BACKUP_OPTIONS = items;
+        BACKUP_OPTIONS_CACHE = items;
+        BACKUP_OPTIONS_LOADED = true;
+        renderBackupOptions();
+        persistBackupManager();
+        return items;
+      })().finally(() => {
+        if (BACKUP_OPTIONS_REQUEST === request) BACKUP_OPTIONS_REQUEST = null;
+      });
+      BACKUP_OPTIONS_REQUEST = request;
+      return request;
     }
 
     async function loadBackupManager(force = false) {
@@ -236,13 +267,8 @@
       const mutationSeq = BACKUP_MUTATION_SEQ;
       const request = (async () => {
         try {
-          const optionsRequest = BACKUP_OPTIONS_CACHE
-            ? Promise.resolve({data:{items:BACKUP_OPTIONS_CACHE}})
-            : api('/api/backups/options');
-          const [options, list] = await Promise.all([optionsRequest, api('/api/backups')]);
+          const list = await api('/api/backups');
           if (loadSeq !== BACKUP_LOAD_SEQ || mutationSeq !== BACKUP_MUTATION_SEQ) return;
-          BACKUP_OPTIONS = Array.isArray(options.data?.items) ? options.data.items : [];
-          BACKUP_OPTIONS_CACHE = BACKUP_OPTIONS;
           BACKUP_LIST_CACHE = list.data || {};
           BACKUP_LIST_CACHE_AT = Date.now();
           persistBackupManager();
@@ -284,6 +310,15 @@
 
     async function createBackup() {
       if (BACKUP_BUSY || BACKUP_RESTORE_PENDING) return;
+      if (!BACKUP_OPTIONS_LOADED) {
+        try {
+          await loadBackupOptions();
+          showToast('备份范围已加载，请确认选择后再次点击开始备份', 'ok');
+        } catch (error) {
+          showToast(error.message || '备份选项读取失败', 'bad');
+        }
+        return;
+      }
       const selected = [...document.querySelectorAll('#backupOptions input[type="checkbox"]:checked')].map(input => input.value);
       setBackupBusy(true);
       let refresh = false;
@@ -323,14 +358,23 @@
       $('backupRestoreOptions').innerHTML = options.map(item => `<label class="backup-option"><input type="checkbox" value="${escapeHtml(item.id)}" checked><span><strong>${escapeHtml(item.label || item.id)}</strong><small>${escapeHtml(item.description || '')}</small></span></label>`).join('');
     }
 
-    function openBackupRestore(id = '') {
+    async function openBackupRestore(id = '') {
       if (BACKUP_BUSY || BACKUP_RESTORE_PENDING) return;
       BACKUP_RESTORE_FOCUS = document.activeElement;
       $('backupRestoreSource').innerHTML = '<option value="">上传本地备份文件</option>' + BACKUP_LIST.map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.filename || row.id)}</option>`).join('');
       $('backupRestoreSource').value = id;
       $('backupUploadFile').value = '';
-      updateBackupRestoreSource();
       $('backupRestoreModal').classList.add('show');
+      if (!BACKUP_OPTIONS_LOADED) {
+        $('backupRestoreStatus').textContent = '正在读取可恢复的数据项…';
+        try {
+          await loadBackupOptions();
+        } catch (error) {
+          $('backupRestoreStatus').textContent = error.message || '备份选项读取失败';
+          return;
+        }
+      }
+      updateBackupRestoreSource();
       $('backupRestoreSource').focus();
     }
 
