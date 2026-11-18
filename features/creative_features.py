@@ -338,6 +338,8 @@ class CreativeFeaturesMixin:
         from ..cos.cos_looks import list_cos_look_sets
 
         pool = getattr(self, "cos_pool", None)
+        if pool is not None and callable(getattr(pool, "load", None)):
+            pool.load()
         favorites = set(pool.list_favorites()) if pool is not None else set()
         builtins = list_cos_look_sets()
         builtin_ids = {str(item.get("id") or "").strip() for item in builtins if str(item.get("id") or "").strip()}
@@ -357,25 +359,47 @@ class CreativeFeaturesMixin:
             "favorites": sorted(favorites),
             "builtin": builtins,
             "custom": custom,
+            "revision": pool.get_revision() if pool is not None and hasattr(pool, "get_revision") else 1,
         }
 
-    def set_cos_favorite_for_web(self, look_id: str, enabled: bool) -> Dict[str, Any]:
+    def set_cos_favorite_for_web(
+        self,
+        look_id: str,
+        enabled: bool,
+        *,
+        expected_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
         pool = getattr(self, "cos_pool", None)
         if pool is None:
             raise RuntimeError("COS 收藏池未初始化")
-        return pool.set_favorite(look_id, enabled)
+        kwargs = {} if expected_revision is None else {"expected_revision": expected_revision}
+        result = pool.set_favorite(look_id, enabled, **kwargs)
+        result["revision"] = pool.get_revision() if hasattr(pool, "get_revision") else 1
+        return result
 
     def save_custom_cos_for_web(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         pool = getattr(self, "cos_pool", None)
         if pool is None:
             raise RuntimeError("COS 自定义池未初始化")
-        return pool.save_custom(payload)
+        revision = payload.get("revision") if isinstance(payload, Mapping) else None
+        kwargs = {} if revision in (None, "") else {"expected_revision": int(revision)}
+        result = pool.save_custom(payload, **kwargs)
+        result["revision"] = pool.get_revision() if hasattr(pool, "get_revision") else 1
+        return result
 
-    def delete_custom_cos_for_web(self, look_id: str) -> Dict[str, Any]:
+    def delete_custom_cos_for_web(
+        self,
+        look_id: str,
+        *,
+        expected_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
         pool = getattr(self, "cos_pool", None)
         if pool is None:
             raise RuntimeError("COS 自定义池未初始化")
-        return pool.delete_custom(look_id)
+        kwargs = {} if expected_revision is None else {"expected_revision": expected_revision}
+        result = pool.delete_custom(look_id, **kwargs)
+        result["revision"] = pool.get_revision() if hasattr(pool, "get_revision") else 1
+        return result
 
     def export_cos_pool_for_web(self) -> Dict[str, Any]:
         pool = getattr(self, "cos_pool", None)
@@ -385,7 +409,11 @@ class CreativeFeaturesMixin:
         pool = getattr(self, "cos_pool", None)
         if pool is None:
             raise RuntimeError("COS 自定义池未初始化")
-        return pool.import_data(payload)
+        revision = payload.get("revision") if isinstance(payload, Mapping) else None
+        kwargs = {} if revision in (None, "") else {"expected_revision": int(revision)}
+        result = pool.import_data(payload, **kwargs)
+        result["revision"] = pool.get_revision() if hasattr(pool, "get_revision") else 1
+        return result
 
     def compare_records_for_web(self, record_ids: Iterable[Any], limit: int = 8) -> Dict[str, Any]:
         ids = list(dict.fromkeys(str(item or "").strip() for item in (record_ids or []) if str(item or "").strip()))

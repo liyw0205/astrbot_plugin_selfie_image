@@ -11,6 +11,13 @@ from typing import Dict, List, Optional, Tuple
 from astrbot.api import logger
 
 from ..core.utils import load_json_file_result, save_json_file
+from ..core.persistent_store import (
+    PersistentStoreConflictError,
+    cross_process_file_lock,
+    file_fingerprint,
+    read_revision_state,
+    write_revision_state,
+)
 
 def _preset_group_for_name(name: object) -> str:
     try:
@@ -104,10 +111,14 @@ class ImagePresetManager:
 
     def __init__(self, data_dir: str):
         self.file_path = os.path.join(data_dir, self.PRESET_FILENAME)
+        self._lock_path = f"{self.file_path}.lock"
+        self._revision_path = f"{self.file_path}.revision.json"
         self._lock = threading.RLock()
         self.presets: Dict[str, ImagePreset] = {}
         self._deleted_builtin_names: set[str] = set()
         self._storage_blocked = False
+        self._storage_revision = 1
+        self._storage_fingerprint: Optional[str] = None
         self.load_status: Dict[str, object] = {
             "ok": True,
             "source": "builtin",
@@ -117,10 +128,36 @@ class ImagePresetManager:
 
     def load(self) -> None:
         with self._lock:
-            self._load_locked()
+            with cross_process_file_lock(self._lock_path):
+                self._load_locked()
 
     def _load_locked(self) -> None:
-        result = load_json_file_result(self.file_path)
+        # Atomic replacement keeps each read coherent, but an older writer may
+        # not use our sidecar lock.  Refuse to publish a mixed snapshot if the
+        # file changes while it is being decoded.
+        result = None
+        revision = 1
+        fingerprint = ""
+        changed = False
+        for _ in range(2):
+            revision, fingerprint, changed = read_revision_state(
+                self.file_path,
+                self._revision_path,
+                current_revision=self._storage_revision,
+                current_fingerprint=self._storage_fingerprint,
+            )
+            result = load_json_file_result(self.file_path)
+            if file_fingerprint(self.file_path) == fingerprint:
+                break
+        if result is None or file_fingerprint(self.file_path) != fingerprint:
+            self._storage_blocked = True
+            self.load_status = {
+                "ok": False,
+                "source": self.file_path,
+                "status": "changed_during_read",
+                "error": "预设文件读取期间发生变化，已保留当前内存数据",
+            }
+            return
         if not result.ok and result.status != "missing":
             self._storage_blocked = True
             self.load_status = {
@@ -131,6 +168,15 @@ class ImagePresetManager:
             }
             return
         self._storage_blocked = False
+        self._storage_revision = revision
+        self._storage_fingerprint = fingerprint
+        if changed:
+            try:
+                write_revision_state(self._revision_path, revision, fingerprint)
+            except Exception:
+                # The JSON remains readable on read-only installations.  The
+                # next successful save will reconcile the sidecar again.
+                logger.warning("[SelfieImage] 预设 revision 元数据写入失败", exc_info=True)
         raw = result.data
         deleted = raw.get(self._DELETED_BUILTINS_KEY)
         if isinstance(deleted, dict):
@@ -178,7 +224,7 @@ class ImagePresetManager:
 
         self.presets = presets
         if dirty or (not raw and presets):
-            self.save()
+            self._save_locked()
         if self.load_status.get("ok", True):
             self.load_status = {
                 "ok": True,
@@ -214,26 +260,73 @@ class ImagePresetManager:
         """Return a safe status object for management/health APIs."""
         return dict(self.load_status)
 
-    def save(self) -> None:
+    def save(self, *, expected_revision: Optional[int] = None) -> None:
         with self._lock:
-            if self._storage_blocked:
-                raise RuntimeError("预设文件读取失败，已停止覆盖原文件")
-            payload = {
-                name: {
-                    "prompt": preset.prompt,
-                    "aspect_ratio": preset.aspect_ratio,
-                    "resolution": preset.resolution,
-                    "description": preset.description,
-                    "extra_prompt": preset.extra_prompt,
-                }
-                for name, preset in self.presets.items()
+            with cross_process_file_lock(self._lock_path):
+                self._save_locked(expected_revision=expected_revision)
+
+    def _save_locked(self, *, expected_revision: Optional[int] = None) -> None:
+        if self._storage_blocked:
+            raise RuntimeError("预设文件读取失败，已停止覆盖原文件")
+        disk_revision, disk_fingerprint, changed = read_revision_state(
+            self.file_path,
+            self._revision_path,
+            current_revision=self._storage_revision,
+            current_fingerprint=self._storage_fingerprint,
+        )
+        if changed:
+            try:
+                write_revision_state(self._revision_path, disk_revision, disk_fingerprint)
+            except Exception:
+                pass
+        if expected_revision is not None and int(expected_revision) != self._storage_revision:
+            raise PersistentStoreConflictError(expected_revision, self._storage_revision, "预设")
+        if self._storage_fingerprint is not None and disk_fingerprint != self._storage_fingerprint:
+            raise PersistentStoreConflictError(self._storage_revision, disk_revision, "预设")
+        if self._storage_fingerprint is not None and self._storage_revision != disk_revision:
+            raise PersistentStoreConflictError(self._storage_revision, disk_revision, "预设")
+        payload = {
+            name: {
+                "prompt": preset.prompt,
+                "aspect_ratio": preset.aspect_ratio,
+                "resolution": preset.resolution,
+                "description": preset.description,
+                "extra_prompt": preset.extra_prompt,
             }
-            if self._deleted_builtin_names:
-                payload[self._DELETED_BUILTINS_KEY] = {"names": sorted(self._deleted_builtin_names)}
-            save_json_file(self.file_path, payload)
+            for name, preset in self.presets.items()
+        }
+        if self._deleted_builtin_names:
+            payload[self._DELETED_BUILTINS_KEY] = {"names": sorted(self._deleted_builtin_names)}
+        save_json_file(self.file_path, payload)
+        new_fingerprint = file_fingerprint(self.file_path)
+        new_revision = max(self._storage_revision, disk_revision, 1) + 1
+        try:
+            write_revision_state(self._revision_path, new_revision, new_fingerprint)
+        except Exception:
+            logger.warning("[SelfieImage] 预设 revision 元数据写入失败，已保留预设文件", exc_info=True)
+        self._storage_revision = new_revision
+        self._storage_fingerprint = new_fingerprint
+        self.load_status = {"ok": True, "source": self.file_path, "error": ""}
+
+    def get_revision(self) -> int:
+        with self._lock:
+            with cross_process_file_lock(self._lock_path):
+                revision, fingerprint, changed = read_revision_state(
+                    self.file_path,
+                    self._revision_path,
+                    current_revision=self._storage_revision,
+                    current_fingerprint=self._storage_fingerprint,
+                )
+                if changed:
+                    try:
+                        write_revision_state(self._revision_path, revision, fingerprint)
+                    except Exception:
+                        pass
+                return revision
 
     def list(self) -> List[Tuple[str, ImagePreset]]:
-        return list(self.presets.items())
+        with self._lock:
+            return list(self.presets.items())
 
     def is_builtin_deleted(self, name: str) -> bool:
         """Whether a seeded preset was explicitly removed by the user."""
@@ -259,7 +352,9 @@ class ImagePresetManager:
         rows.sort(key=preset_row_display_sort_key)
         return rows
 
-    def add(self, name: str, raw_value: str) -> Tuple[bool, str]:
+    def add(
+        self, name: str, raw_value: str, *, expected_revision: Optional[int] = None
+    ) -> Tuple[bool, str]:
         key = str(name or "").strip()
         value = str(raw_value or "").strip()
         if not key:
@@ -277,14 +372,14 @@ class ImagePresetManager:
             self.presets[key] = preset
             self._deleted_builtin_names.discard(key)
             try:
-                self.save()
+                self.save(expected_revision=expected_revision)
             except Exception:
                 self.presets = previous_presets
                 self._deleted_builtin_names = previous_deleted
                 raise
         return True, f"已添加预设 {key}"
 
-    def remove(self, name: str) -> Tuple[bool, str]:
+    def remove(self, name: str, *, expected_revision: Optional[int] = None) -> Tuple[bool, str]:
         key = str(name or "").strip()
         if not key:
             return False, "预设名不能为空"
@@ -298,7 +393,7 @@ class ImagePresetManager:
             if key in self._load_builtin_seed():
                 self._deleted_builtin_names.add(key)
             try:
-                self.save()
+                self.save(expected_revision=expected_revision)
             except Exception:
                 self.presets = previous_presets
                 self._deleted_builtin_names = previous_deleted
@@ -327,7 +422,12 @@ class ImagePresetManager:
         rows.sort(key=preset_row_display_sort_key)
         return rows
 
-    def save_management(self, payload: Dict[str, object]) -> Tuple[bool, str]:
+    def save_management(
+        self,
+        payload: Dict[str, object],
+        *,
+        expected_revision: Optional[int] = None,
+    ) -> Tuple[bool, str]:
         prepared, error = self._prepare_management_payload(payload)
         if prepared is None:
             return False, error
@@ -342,7 +442,7 @@ class ImagePresetManager:
             self.presets[name] = preset
             self._deleted_builtin_names.discard(name)
             try:
-                self.save()
+                self.save(expected_revision=expected_revision)
             except Exception:
                 self.presets = previous_presets
                 self._deleted_builtin_names = previous_deleted
@@ -381,7 +481,12 @@ class ImagePresetManager:
             "",
         )
 
-    def import_management(self, items: object) -> Tuple[int, str]:
+    def import_management(
+        self,
+        items: object,
+        *,
+        expected_revision: Optional[int] = None,
+    ) -> Tuple[int, str]:
         if isinstance(items, dict):
             normalized = []
             for name, value in items.items():
@@ -424,7 +529,7 @@ class ImagePresetManager:
             self.presets = candidate_presets
             self._deleted_builtin_names = candidate_deleted
             try:
-                self.save()
+                self.save(expected_revision=expected_revision)
             except Exception:
                 self.presets = previous_presets
                 self._deleted_builtin_names = previous_deleted

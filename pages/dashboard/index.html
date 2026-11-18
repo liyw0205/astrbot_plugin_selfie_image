@@ -2861,6 +2861,8 @@
     const PRESET_MANAGER_TOTALS = {image: 0, cos: 0, nai: 0};
     const PRESET_MANAGER_SEARCH_TIMERS = {image: null, cos: null, nai: null};
     const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};
+    const PRESET_MANAGER_REVISIONS = {image: 0, cos: 0, nai: 0};
+    let COS_POOL_REVISION = 0;
     let CURRENT_COMPARE = null;
     let DASHBOARD_PERSIST_HYDRATED_SCOPE = '';
     let DASHBOARD_PERSIST_HYDRATION_SCOPE = '';
@@ -10083,6 +10085,17 @@ Source prompt:
         }
       }
     }
+    function currentCosPoolRevision() {
+      const revision = Number(COS_POOL_REVISION || PRESET_MANAGER_REVISIONS.cos || 0);
+      return revision > 0 ? revision : undefined;
+    }
+    function updateCosPoolRevision(payload) {
+      const revision = Number(payload?.revision || 0);
+      if (revision > 0) {
+        COS_POOL_REVISION = revision;
+        PRESET_MANAGER_REVISIONS.cos = revision;
+      }
+    }
     function syncPresetToggleButton(btnId, open) {
       const btn = $(btnId);
       if (!btn) return;
@@ -10150,7 +10163,8 @@ Source prompt:
           items = filtered.slice(offset, offset + PICKER_PAGE_SIZE);
         }
         if (kind === 'image') items = mergePromptPresets(items);
-        const data = {items, total, offset, limit: PICKER_PAGE_SIZE};
+        const data = {items, total, offset, limit: PICKER_PAGE_SIZE, revision: Number(payload.revision || 0)};
+        if (kind === 'cos') updateCosPoolRevision(data);
         if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('picker-page', key, data);
@@ -10236,7 +10250,8 @@ Source prompt:
           }
         }
         if (normalizedKind === 'image') items = mergePromptPresets(items);
-        const value = {items, total, offset: (page - 1) * PICKER_PAGE_SIZE, limit: PICKER_PAGE_SIZE};
+        const value = {items, total, offset: (page - 1) * PICKER_PAGE_SIZE, limit: PICKER_PAGE_SIZE, revision: Number(data.revision || 0)};
+        if (normalizedKind === 'cos') updateCosPoolRevision(value);
         if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           MANAGED_PAGE_CACHE.set(key, {data: value, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('managed-page', key, value);
@@ -10423,7 +10438,8 @@ Source prompt:
         if (!item?.id) return;
         button.disabled = true;
         try {
-          await api('/api/cos-pools/favorite', {method:'POST', body:JSON.stringify({id:item.id, enabled:!item.favorite})});
+          const res = await api('/api/cos-pools/favorite', {method:'POST', body:JSON.stringify({id:item.id, enabled:!item.favorite, revision:currentCosPoolRevision()})});
+          updateCosPoolRevision(res.data);
           await refreshCosCatalogViews(true);
         } catch (e) {
           presetCosManagerStatus(e.message || '收藏失败', true);
@@ -10434,7 +10450,8 @@ Source prompt:
         const item = rows[Number(button.dataset.cosManagerDelete)];
         if (!item?.id || !await confirmAction(`确定删除自定义 COS「${item.title || item.id}」吗？`, {title:'删除自定义 COS', confirmText:'删除'})) return;
         try {
-          await api('/api/cos-pools/custom/delete', {method:'POST', body:JSON.stringify({id:item.id})});
+          const res = await api('/api/cos-pools/custom/delete', {method:'POST', body:JSON.stringify({id:item.id, revision:currentCosPoolRevision()})});
+          updateCosPoolRevision(res.data);
           await refreshCosCatalogViews(true);
           showToast('自定义 COS 已删除', 'ok');
         } catch (e) { presetCosManagerStatus(e.message || '删除失败', true); }
@@ -10451,6 +10468,7 @@ Source prompt:
         const data = await fetchManagedCatalogPage('cos', query, page, force);
         if (loadSeq !== PRESET_LOAD_SEQ || PRESET_KIND !== 'cos') return;
         COS_MANAGE_ROWS = data.items;
+        PRESET_MANAGER_REVISIONS.cos = Number(data.revision || 0);
         PRESET_MANAGER_TOTALS.cos = Number(data.total || 0);
         const pageCount = Math.max(1, Math.ceil(PRESET_MANAGER_TOTALS.cos / PICKER_PAGE_SIZE));
         if (page > pageCount) { PRESET_MANAGER_PAGES.cos = pageCount; return loadManagedCosPool(force); }
@@ -10478,6 +10496,7 @@ Source prompt:
         // A slower request from the previous tab must not overwrite the current list.
         if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
         PRESET_MANAGE_ROWS = data.items;
+        PRESET_MANAGER_REVISIONS[requestedKind] = Number(data.revision || 0);
         PRESET_MANAGER_TOTALS[requestedKind] = Number(data.total || 0);
         const pageCount = Math.max(1, Math.ceil(PRESET_MANAGER_TOTALS[requestedKind] / PICKER_PAGE_SIZE));
         if (page > pageCount) { PRESET_MANAGER_PAGES[requestedKind] = pageCount; return loadManagedPromptPresets(requestedKind); }
@@ -10606,7 +10625,8 @@ Source prompt:
         aspect_ratio: $('presetAspect').value.trim(),
         resolution: $('presetResolution').value.trim(),
         extra_prompt: $('presetExtraPrompt').value.trim(),
-        kind: PRESET_EDIT_KIND
+        kind: PRESET_EDIT_KIND,
+        revision: Number(PRESET_MANAGER_REVISIONS[PRESET_EDIT_KIND] || 0) || undefined,
       };
       if (!body.name || !body.prompt) {
         $('presetEditorStatus').textContent = '预设名和提示词不能为空';
@@ -10631,7 +10651,7 @@ Source prompt:
       const kind = PRESET_KIND;
       if (!await confirmAction(`确定删除预设「${row.name}」吗？`, {title:'删除预设', confirmText:'删除预设'})) return;
       try {
-        const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name, kind})});
+        const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name, kind, revision:Number(PRESET_MANAGER_REVISIONS[kind] || 0) || undefined})});
         clearPickerCache(kind);
         if (kind === 'image') await refreshPromptCatalogViews(true);
         if (PRESET_KIND === kind) await loadManagedPromptPresets(kind);
@@ -10723,7 +10743,7 @@ Source prompt:
       }
       $('presetTransferStatus').textContent = '导入中…';
       try {
-        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind})});
+        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind, revision:Number(PRESET_MANAGER_REVISIONS[kind] || 0) || undefined})});
         closePresetTransfer();
         PRESET_MANAGER_PAGES[kind] = 1;
         clearPickerCache(kind);
@@ -10787,7 +10807,8 @@ Source prompt:
         const item = rows[Number(btn.dataset.cosFavorite)];
         if (!item?.id) return;
         try {
-          await api('/api/cos-pools/favorite', {method:'POST', body: JSON.stringify({id:item.id, enabled:!item.favorite})});
+          const res = await api('/api/cos-pools/favorite', {method:'POST', body: JSON.stringify({id:item.id, enabled:!item.favorite, revision:currentCosPoolRevision()})});
+          updateCosPoolRevision(res.data);
           await refreshCosCatalogViews(true);
         } catch (e) { showToast(e.message || '收藏失败', 'bad'); }
       });
@@ -10796,7 +10817,8 @@ Source prompt:
         const item = rows[Number(btn.dataset.cosDelete)];
         if (!item?.id || !await confirmAction(`确定删除自定义 COS「${item.title || item.id}」吗？`, {title:'删除自定义 COS', confirmText:'删除'})) return;
         try {
-          await api('/api/cos-pools/custom/delete', {method:'POST', body: JSON.stringify({id:item.id})});
+          const res = await api('/api/cos-pools/custom/delete', {method:'POST', body: JSON.stringify({id:item.id, revision:currentCosPoolRevision()})});
+          updateCosPoolRevision(res.data);
           await refreshCosCatalogViews(true);
           showToast('自定义 COS 已删除', 'ok');
         } catch (e) { showToast(e.message || '删除失败', 'bad'); }
@@ -10860,7 +10882,8 @@ Source prompt:
       const status = $('cosPoolStatus');
       if (!id || !title || !prompt) { if (status) status.textContent = 'ID、名称和服饰提示词不能为空'; return; }
       try {
-        await api('/api/cos-pools/custom/save', {method:'POST', body: JSON.stringify({id, title, prompt, tags:String($('cosCustomTags')?.value || '').split(/[,，]/).map(v => v.trim()).filter(Boolean)})});
+        const res = await api('/api/cos-pools/custom/save', {method:'POST', body: JSON.stringify({id, title, prompt, tags:String($('cosCustomTags')?.value || '').split(/[,，]/).map(v => v.trim()).filter(Boolean), revision:currentCosPoolRevision()})});
+        updateCosPoolRevision(res.data);
         await ensureCosLooksLoaded(true);
         closeCosPoolModal();
         showToast('自定义 COS 已保存', 'ok');
@@ -10880,7 +10903,9 @@ Source prompt:
         const file = input.files?.[0]; if (!file) return;
         try {
           const payload = JSON.parse(await file.text());
-          await api('/api/cos-pools/import', {method:'POST', body: JSON.stringify(payload)});
+          payload.revision = currentCosPoolRevision();
+          const res = await api('/api/cos-pools/import', {method:'POST', body: JSON.stringify(payload)});
+          updateCosPoolRevision(res.data);
           await ensureCosLooksLoaded(true); closeCosPoolModal();
           showToast('COS 池已导入', 'ok');
         } catch (e) { if ($('cosPoolStatus')) $('cosPoolStatus').textContent = e.message || '导入失败'; }

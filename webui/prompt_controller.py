@@ -74,6 +74,8 @@ class PromptCatalogController:
             except Exception as exc:
                 raise WebContractError(str(exc), 500) from exc
             page["load_status"] = status
+            if isinstance(status, Mapping) and "revision" in status:
+                page["revision"] = status["revision"]
             extra["count"] = page["total"]
             return PromptCatalogControllerResult(page, extra)
 
@@ -98,7 +100,13 @@ class PromptCatalogController:
             raise WebContractError("缺少预设名", 400)
         kind = str(body.get("kind") or body.get("media_type") or "image")
         try:
-            data = self.plugin.delete_prompt_preset_from_web(name, kind)
+            revision = body.get("revision")
+            if revision in (None, ""):
+                data = self.plugin.delete_prompt_preset_from_web(name, kind)
+            else:
+                data = self.plugin.delete_prompt_preset_from_web(
+                    name, kind, expected_revision=int(revision)
+                )
         except Exception as exc:
             raise WebContractError(str(exc), 400) from exc
         return PromptCatalogControllerResult(data)
@@ -141,6 +149,8 @@ class PromptCatalogController:
             )
         except Exception as exc:
             raise WebContractError(str(exc), 500) from exc
+        if isinstance(data, Mapping):
+            page["revision"] = data.get("revision", 1)
         return PromptCatalogControllerResult(page, {"count": page["total"]})
 
     def favorite_cos(self, payload: Any) -> PromptCatalogControllerResult:
@@ -150,7 +160,13 @@ class PromptCatalogController:
         if not isinstance(enabled, bool):
             enabled = str(enabled).lower() in {"1", "true", "yes", "on", "是", "开启"}
         try:
-            data = self.plugin.set_cos_favorite_for_web(look_id, enabled)
+            revision = body.get("revision")
+            if revision in (None, ""):
+                data = self.plugin.set_cos_favorite_for_web(look_id, enabled)
+            else:
+                data = self.plugin.set_cos_favorite_for_web(
+                    look_id, enabled, expected_revision=int(revision)
+                )
         except Exception as exc:
             raise WebContractError(str(exc), 400) from exc
         return PromptCatalogControllerResult(data)
@@ -166,7 +182,13 @@ class PromptCatalogController:
         body = self._body(payload)
         look_id = str(body.get("id") or body.get("look_id") or "").strip()
         try:
-            data = self.plugin.delete_custom_cos_for_web(look_id)
+            revision = body.get("revision")
+            if revision in (None, ""):
+                data = self.plugin.delete_custom_cos_for_web(look_id)
+            else:
+                data = self.plugin.delete_custom_cos_for_web(
+                    look_id, expected_revision=int(revision)
+                )
         except Exception as exc:
             raise WebContractError(str(exc), 400) from exc
         return PromptCatalogControllerResult(data, {"message": "自定义 COS 已删除"})

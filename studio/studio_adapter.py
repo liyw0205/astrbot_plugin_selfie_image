@@ -256,7 +256,17 @@ class StudioMixin:
         if manager is None:
             return {"ok": False, "source": "manager", "error": "预设管理器不可用"}
         getter = getattr(manager, "get_load_status", None)
-        return getter() if callable(getter) else {"ok": True, "source": "legacy", "error": ""}
+        status = getter() if callable(getter) else {"ok": True, "source": "legacy", "error": ""}
+        if not isinstance(status, dict):
+            status = {"ok": True, "source": "legacy", "error": ""}
+        revision_getter = getattr(manager, "get_revision", None)
+        if callable(revision_getter):
+            try:
+                status = dict(status)
+                status["revision"] = revision_getter()
+            except Exception:
+                pass
+        return status
 
     def list_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, Any]]:
         """Return the picker presets for one media kind."""
@@ -311,19 +321,38 @@ class StudioMixin:
         kind = "nai" if payload.get("kind") == "nai" else "image"
         manager = self.nai_artist_presets if kind == "nai" else self.presets
         manager.load()
-        ok, message = manager.save_management(payload)
+        revision = payload.get("revision")
+        kwargs = {} if revision in (None, "") else {"expected_revision": int(revision)}
+        ok, message = manager.save_management(payload, **kwargs)
         if not ok:
             raise ValueError(message)
-        return {"message": message, "kind": kind, "presets": manager.list_management()}
+        return {
+            "message": message,
+            "kind": kind,
+            "revision": manager.get_revision(),
+            "presets": manager.list_management(),
+        }
 
-    def delete_prompt_preset_from_web(self, name: str, kind: str = "image") -> Dict[str, Any]:
+    def delete_prompt_preset_from_web(
+        self,
+        name: str,
+        kind: str = "image",
+        *,
+        expected_revision: Optional[int] = None,
+    ) -> Dict[str, Any]:
         kind = "nai" if kind == "nai" else "image"
         manager = self.nai_artist_presets if kind == "nai" else self.presets
         manager.load()
-        ok, message = manager.remove(name)
+        kwargs = {} if expected_revision is None else {"expected_revision": expected_revision}
+        ok, message = manager.remove(name, **kwargs)
         if not ok:
             raise ValueError(message)
-        return {"message": message, "kind": kind, "presets": manager.list_management()}
+        return {
+            "message": message,
+            "kind": kind,
+            "revision": manager.get_revision(),
+            "presets": manager.list_management(),
+        }
 
     def import_prompt_presets_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(payload or {})
@@ -333,8 +362,16 @@ class StudioMixin:
         source = payload.get("presets") if isinstance(payload, dict) else None
         if source is None and isinstance(payload, dict):
             source = payload.get("items")
-        imported, message = manager.import_management(source)
-        return {"message": message, "imported": imported, "kind": kind, "presets": manager.list_management()}
+        revision = payload.get("revision")
+        kwargs = {} if revision in (None, "") else {"expected_revision": int(revision)}
+        imported, message = manager.import_management(source, **kwargs)
+        return {
+            "message": message,
+            "imported": imported,
+            "kind": kind,
+            "revision": manager.get_revision(),
+            "presets": manager.list_management(),
+        }
 
     def list_cos_look_sets_for_web(self) -> List[Dict[str, Any]]:
         """Expose the command COS pool to the canvas and quick-test pickers."""

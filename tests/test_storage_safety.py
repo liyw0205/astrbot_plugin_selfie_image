@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 
 from astrbot_plugin_selfie_image.core.models import AICatConfig, DEFAULT_CONFIG
+from astrbot_plugin_selfie_image.core.persistent_store import PersistentStoreConflictError
 from astrbot_plugin_selfie_image.core.utils import load_json_file_result
+from astrbot_plugin_selfie_image.cos.cos_pool import CosPoolStore
 from astrbot_plugin_selfie_image.features import config_manager
 from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMixin
 from astrbot_plugin_selfie_image.features.daily_schedule import DailySchedule, DailyScheduleStore, ScheduleEvent
@@ -47,6 +49,40 @@ def test_corrupt_preset_file_is_not_seeded_or_overwritten(tmp_path):
         manager.add("new", "new prompt")
     assert path.read_bytes() == original
     assert manager.has_preset("new") is False
+
+
+def test_preset_store_reloads_external_changes_and_rejects_stale_writer(tmp_path):
+    first = ImagePresetManager(str(tmp_path))
+    stale = ImagePresetManager(str(tmp_path))
+    stale_revision = stale.get_revision()
+
+    first.add("writer-one", "first snapshot")
+    with pytest.raises(PersistentStoreConflictError):
+        stale.add("writer-two", "stale snapshot", expected_revision=stale_revision)
+
+    assert not stale.has_preset("writer-two")
+    stale.load()
+    assert stale.has_preset("writer-one")
+    assert not stale.has_preset("writer-two")
+    assert stale.get_revision() == first.get_revision()
+
+
+def test_cos_pool_reloads_external_changes_and_rejects_stale_writer(tmp_path):
+    first = CosPoolStore(str(tmp_path))
+    stale = CosPoolStore(str(tmp_path))
+    stale_revision = stale.get_revision()
+
+    first.save_custom({"id": "writer-one", "title": "first", "prompt": "first snapshot"})
+    with pytest.raises(PersistentStoreConflictError):
+        stale.save_custom(
+            {"id": "writer-two", "title": "stale", "prompt": "stale snapshot"},
+            expected_revision=stale_revision,
+        )
+
+    assert [item["id"] for item in stale.list_custom()] == []
+    stale.load()
+    assert [item["id"] for item in stale.list_custom()] == ["writer-one"]
+    assert stale.get_revision() == first.get_revision()
 
 
 def test_corrupt_asset_collection_file_is_not_overwritten(tmp_path):
