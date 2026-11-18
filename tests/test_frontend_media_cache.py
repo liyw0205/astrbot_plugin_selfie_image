@@ -281,6 +281,60 @@ assert.match(context.handlers.key('managed-page', 'image::1'), /^selfieImageDash
     assert result.returncode == 0, result.stderr
 
 
+def test_dashboard_persistence_recovers_value_when_index_write_was_lost():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable")
+    source = Path(__file__).resolve().parents[1] / "pages/dashboard/source/runtime.js"
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+let now = 1000;
+let loseIndexWrite = true;
+const values = new Map();
+const storage = {
+  get length() { return values.size; },
+  key(index) { return [...values.keys()][index] || null; },
+  getItem(key) { return values.get(String(key)) ?? null; },
+  setItem(key, value) {
+    // Simulate the index write being lost while the payload itself survives.
+    if (String(key).endsWith(':index')) {
+      if (loseIndexWrite) return;
+      values.set(String(key), String(value));
+      return;
+    }
+    values.set(String(key), String(value));
+  },
+  removeItem(key) { values.delete(String(key)); },
+};
+const window = {localStorage: storage, name: '', location: {pathname: ''}};
+window.parent = window;
+const context = vm.createContext({
+  window, Date: {now: () => now}, setTimeout, clearTimeout,
+  document: {getElementById: () => null, querySelectorAll: () => []},
+});
+vm.runInContext(source + `
+globalThis.handlers = {
+  write: writeDashboardPersistCache,
+  read: readDashboardPersistCacheEntry,
+  key: dashboardPersistKey,
+};`, context);
+assert.equal(context.handlers.write('fixture', 'state', {value: 42}), true);
+const storageKey = context.handlers.key('fixture', 'state');
+assert(values.has(storageKey));
+assert.equal(values.has('selfieImageDashboardCache:v1:index'), false);
+loseIndexWrite = false;
+assert.equal(context.handlers.read('fixture', 'state').data.value, 42);
+assert(values.has('selfieImageDashboardCache:v1:index'));
+now += 3 * 24 * 60 * 60 * 1000 + 1;
+assert.equal(context.handlers.read('fixture', 'state'), null);
+""";
+    result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_backup_metadata_uses_short_persisted_cache_without_scanning_selected_data():
     assert "const BACKUP_PERSIST_NAMESPACE = 'backup-manager';" in PAGE
     assert "restorePersistedBackupManager()" in PAGE
@@ -292,6 +346,7 @@ def test_media_persistence_falls_back_when_cache_storage_is_unavailable():
     assert "if (!mediaPersistentSupported()) return readFallback();" in PAGE
     assert "writeDashboardPersistCache('media', key, entry);" in PAGE
     assert "const fallback = readFallback();" in PAGE
+    assert "const DASHBOARD_PERSIST_MEDIA_ENTRY_MAX_BYTES = 2 * 1024 * 1024;" in PAGE
 
 
 def test_record_source_buttons_copy_and_response_base64_opens():

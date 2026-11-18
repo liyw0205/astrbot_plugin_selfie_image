@@ -52,6 +52,10 @@
     const DASHBOARD_PERSIST_CACHE_MAX_ENTRIES = 160;
     const DASHBOARD_PERSIST_CACHE_MAX_BYTES = 3 * 1024 * 1024;
     const DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES = 700 * 1024;
+    // Media payloads are data URLs and are larger than catalog JSON. Keep a
+    // separate bound so an opaque embedded frame can retain normal previews
+    // without allowing one unusually large catalog entry to consume the cache.
+    const DASHBOARD_PERSIST_MEDIA_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
     // Sandboxed AstrBot iframes have an opaque origin, so both Web Storage and
     // CacheStorage are unavailable. window.name is scoped to this browsing
     // context and survives same-page reloads; keep it bounded and namespaced.
@@ -248,6 +252,50 @@
     function writeDashboardPersistIndex(index) {
       safeStorageSet(DASHBOARD_PERSIST_CACHE_INDEX_KEY, JSON.stringify(index || {}));
     }
+    function dashboardPersistStorageKeys() {
+      const keys = [];
+      try {
+        const storage = window.localStorage;
+        if (!storage || typeof storage.length !== 'number') return keys;
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          if (!key || key === DASHBOARD_PERSIST_CACHE_INDEX_KEY || !key.startsWith(DASHBOARD_PERSIST_CACHE_PREFIX)) continue;
+          keys.push(key);
+        }
+      } catch (_) {}
+      return keys;
+    }
+    function dashboardPersistEntryMetadata(value, storageKey = '') {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const key = String(value.key || '');
+      const namespace = String(value.namespace || '');
+      const scope = String(value.scope || '');
+      const storedAt = Number(value.storedAt || 0);
+      const resolvedKey = String(value.storageKey || storageKey || '');
+      if (!resolvedKey || !namespace || !scope || !storedAt) return null;
+      return {
+        namespace, key, scope, storedAt,
+        lastAccessed: Number(value.lastAccessed || storedAt),
+        size: Math.max(0, Number(value.size || 0)),
+      };
+    }
+    function recoverDashboardPersistIndex(index = readDashboardPersistIndex()) {
+      let changed = false;
+      for (const storageKey of dashboardPersistStorageKeys()) {
+        if (index[storageKey]) continue;
+        const raw = safeStorageGet(storageKey, '');
+        if (!raw) continue;
+        try {
+          const value = JSON.parse(raw);
+          const metadata = dashboardPersistEntryMetadata(value, storageKey);
+          if (!metadata || value.storageKey !== storageKey) continue;
+          index[storageKey] = metadata;
+          changed = true;
+        } catch (_) {}
+      }
+      if (changed) writeDashboardPersistIndex(index);
+      return index;
+    }
     function removeDashboardPersistEntry(storageKey, index = readDashboardPersistIndex()) {
       safeStorageRemove(storageKey);
       DASHBOARD_PERSIST_MEMORY.delete(storageKey);
@@ -262,7 +310,7 @@
       return !item || now - Number(item.storedAt || 0) > DASHBOARD_PERSIST_CACHE_TTL_MS;
     }
     function pruneDashboardPersistCache() {
-      const index = readDashboardPersistIndex();
+      const index = recoverDashboardPersistIndex();
       const now = Date.now();
       let changed = false;
       let totalBytes = 0;
@@ -322,10 +370,18 @@
       }
       try {
         const value = JSON.parse(raw);
-        const item = index[storageKey];
+        let item = index[storageKey];
         if (!item) {
-          safeStorageRemove(storageKey);
-          return null;
+          // A previous quota error can leave the value written while the
+          // shared index write fails. Rebuild that one entry instead of
+          // discarding otherwise valid cached data.
+          item = dashboardPersistEntryMetadata(value, storageKey);
+          if (!item || value.storageKey !== storageKey) {
+            safeStorageRemove(storageKey);
+            return null;
+          }
+          index[storageKey] = item;
+          writeDashboardPersistIndex(index);
         }
         if (dashboardPersistEntryExpired(item) || value.scope !== scope) {
           removeDashboardPersistEntry(storageKey, index);
@@ -357,7 +413,10 @@
         const storageKey = dashboardPersistKey(namespace, key, scope);
         const entry = {scope, namespace, key: String(key || ''), storageKey, storedAt, lastAccessed: storedAt, data};
         encoded = JSON.stringify(entry);
-        if (encoded.length > DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES) return false;
+        const entryLimit = namespace === 'media'
+          ? DASHBOARD_PERSIST_MEDIA_ENTRY_MAX_BYTES
+          : DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES;
+        if (encoded.length > entryLimit) return false;
         DASHBOARD_PERSIST_MEMORY.set(storageKey, {
           namespace, key: String(key || ''), scope, storedAt, lastAccessed: storedAt,
           size: encoded.length, data,
