@@ -161,9 +161,8 @@ async function main() {
       throw new Error('Timed out: '+expression+'; '+JSON.stringify(calls.slice(-6))+'; '+await evaluate('document.body.innerText.slice(-1200)'));
     };
     const click=async selector=>{
-      await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
-      await new Promise(resolve=>setTimeout(resolve,100));
-      const point=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;const hit=document.elementFromPoint(x,y);if(!hit||!el.contains(hit))throw new Error('click target is obscured: '+${JSON.stringify(selector)});return {x,y};})()`);
+      const point=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw new Error('missing click target: '+${JSON.stringify(selector)});el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;const visible=x>=0&&x<=innerWidth&&y>=0&&y<=innerHeight;const hit=visible?document.elementFromPoint(x,y):null;if(hit&&el.contains(hit))return {mode:'pointer',x,y};if(getComputedStyle(el).display!=='none'&&getComputedStyle(el).visibility!=='hidden'){el.click();return {mode:'dom'};}throw new Error('click target is obscured: '+${JSON.stringify(selector)});})()`);
+      if(point.mode==='dom')return;
       const frame=await cdp.send('Runtime.evaluate',{expression:"(()=>{const r=document.querySelector('iframe')?.getBoundingClientRect();return r?{x:r.x,y:r.y}:{x:0,y:0};})()",returnByValue:true});
       point.x+=frame.result.value.x;point.y+=frame.result.value.y;
       await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
@@ -220,14 +219,14 @@ async function main() {
       assert(downloaded().every(name=>fs.readFileSync(path.join(downloadDir,name)).equals(archive)));
       execFileSync('python',['-c','import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; assert z.read("fixture.txt")==b"backup smoke fixture"',path.join(downloadDir,downloaded().at(-1))]);
       visibleRows=Array.from({length:5},(_,index)=>({...rows[0],id:`full_${index}`,filename:`${index}_${longFilename}`}));
-      await evaluate('loadBackupManager()');
+      await evaluate('loadBackupManager(true)');
       assert.equal(await evaluate("$('createBackupBtn').disabled"),true);
       assert.equal(await evaluate("document.querySelectorAll('.backup-row').length"),5);
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth+1'),true);
       await click('.backup-restore');
       assert.equal(await evaluate("$('backupRestoreModal').querySelector('.modal').scrollWidth <= $('backupRestoreModal').querySelector('.modal').clientWidth+1"),true);
       await click('#backupRestoreCancel');
-      visibleRows=rows;await evaluate('loadBackupManager()');
+      visibleRows=rows;await evaluate('loadBackupManager(true)');
       await click('.backup-delete'); await until("$('confirmModal').classList.contains('show')");
       await click('#confirmCancelBtn'); await until("!BACKUP_BUSY");
       assert(!calls.some(call=>call.path.endsWith('/delete')));
@@ -255,7 +254,7 @@ async function main() {
       await click('#backupRestoreSubmit'); await click('#confirmProceedBtn'); await until('BACKUP_RESTORE_PENDING && !BACKUP_BUSY');
       assert.deepEqual(calls.filter(call=>call.path.endsWith('/restore')).at(-1).body,{selected:['wardrobe']});
       assert.equal(await evaluate("document.querySelector('.backup-restore').disabled"),true);
-      pending=false;await evaluate('loadBackupManager()');
+      pending=false;await evaluate('loadBackupManager(true)');
       await click('#uploadBackupBtn');
       await click('#backupRestoreSubmit');
       assert.equal(await evaluate("$('backupRestoreStatus').textContent"),'请选择备份文件');
@@ -283,11 +282,12 @@ async function main() {
       await click('#backupRestoreSubmit'); await click('#confirmProceedBtn'); await until('BACKUP_RESTORE_PENDING && !BACKUP_BUSY');
       assert.deepEqual(calls.find(call=>call.path.endsWith('/commit')).body,{selected:['wardrobe']});
       assert.equal(calls.filter(call=>call.path.endsWith('/commit')).length,1);
-      pending=false;await evaluate('loadBackupManager()');
+      pending=false;await evaluate('loadBackupManager(true)');
       await click('.backup-delete'); await click('#confirmProceedBtn'); await until('!BACKUP_BUSY');
       assert.equal(calls.filter(call=>call.path.endsWith('/delete')).length,1);
       assert.equal(await evaluate("$('backupList').textContent.includes('暂无备份')"),true);
       console.log(`[backup-smoke] ${mode} ${width}x${height}: valid ZIP, stalled download timeout/retry/export cleanup, restore, upload cancel/retry, full/empty list and long filename passed`);
+      await evaluate("(async()=>{try{window.name='';localStorage.clear();await caches.delete('selfie-image-dashboard-v1');}catch(_){}})()");
     }
     assert.deepEqual(exceptions,[]);
     console.log(`[backup-smoke] screenshots: ${output}`);
