@@ -258,6 +258,7 @@
     }
 
     async function loadBackupManager(force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       if (BACKUP_LOAD_REQUEST) {
         const pending = BACKUP_LOAD_REQUEST;
         return force ? pending.then(() => loadBackupManager(true)) : pending;

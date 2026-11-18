@@ -401,7 +401,7 @@
       ensureProtectedMediaScope();
       // A standalone page may boot before the user enters a token. Hydrate the
       // token-scoped page/catalog cache after authentication is established.
-      await hydrateDashboardPersistentCaches();
+      await ensureDashboardPersistentCachesHydrated();
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};

@@ -115,6 +115,7 @@ const context = vm.createContext({
   $: id => elements.get(id) || element(),
   escapeHtml: String,
   showToast: () => {},
+  ensureDashboardPersistentCachesHydrated: async () => {},
   api: async path => {
     calls.push(path);
     if (path === '/api/backups/options') return {data:{items:[{id:'config',label:'配置',required:true}]}};

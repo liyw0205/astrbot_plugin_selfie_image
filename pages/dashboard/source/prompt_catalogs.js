@@ -30,6 +30,7 @@
       return entry.loadedAt > 0 && (Date.now() - entry.loadedAt) < PICKER_CATALOG_CACHE_TTL_MS;
     }
     async function loadAssetTagsCached(force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const entry = PICKER_CACHE.tags;
       if (!force && pickerCacheFresh(entry)) return entry.data;
       if (entry.request) return entry.request;
@@ -119,6 +120,7 @@
       return PICKER_PANEL_STATES.get(panelId);
     }
     async function fetchCatalogPage(kind, query, page, force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const offset = Math.max(0, (page - 1) * PICKER_PAGE_SIZE);
       const normalizedQuery = String(query || '').trim();
       const key = `${kind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
@@ -189,6 +191,7 @@
       });
     }
     async function fetchManagedCatalogPage(kind, searchQuery, page, force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const normalizedQuery = String(searchQuery || '').trim();
       const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
       const query = normalizedQuery;

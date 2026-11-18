@@ -195,6 +195,15 @@ def test_dashboard_catalog_pages_and_gallery_survive_a_reload_with_bounded_ttl()
     assert "clearDashboardPersistNamespace('media')" in PAGE
 
 
+def test_cache_aware_page_loads_wait_for_persistent_hydration():
+    for name in ("prompt_catalogs.js", "records_assets.js", "protected_media.js", "backup_manager.js", "selfie_auth.js"):
+        source = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "source" / name).read_text(encoding="utf-8")
+        assert "await ensureDashboardPersistentCachesHydrated();" in source, name
+    runtime = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "source" / "runtime.js").read_text(encoding="utf-8")
+    assert "function ensureDashboardPersistentCachesHydrated()" in runtime
+    assert "DASHBOARD_PERSIST_HYDRATION_READY" in runtime
+
+
 def test_dashboard_persistence_has_sandboxed_iframe_fallback():
     assert "DASHBOARD_WINDOW_NAME_PREFIX" in PAGE
     assert "window.name" in PAGE

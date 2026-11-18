@@ -651,6 +651,8 @@
     const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};
     let CURRENT_COMPARE = null;
     let DASHBOARD_PERSIST_HYDRATED_SCOPE = '';
+    let DASHBOARD_PERSIST_HYDRATION_SCOPE = '';
+    let DASHBOARD_PERSIST_HYDRATION_READY = null;
 
     async function hydrateDashboardPersistentCaches() {
       // Standalone login pages do not have a trustworthy scope until a token is entered.
@@ -698,7 +700,23 @@
         GALLERY_PICKER_CACHE.loaded = true;
       }
     }
-    void hydrateDashboardPersistentCaches();
+    function ensureDashboardPersistentCachesHydrated() {
+      // Page handlers can run as soon as the bridge becomes visible. Gate all
+      // cache-aware reads on the same promise so a slow CacheStorage restore
+      // cannot race the first API request and make a refresh look uncached.
+      if (!isDashboardPage() && !AUTH_TOKEN) return Promise.resolve();
+      const scope = dashboardPersistScope();
+      if (DASHBOARD_PERSIST_HYDRATION_READY && DASHBOARD_PERSIST_HYDRATION_SCOPE === scope) {
+        return DASHBOARD_PERSIST_HYDRATION_READY;
+      }
+      DASHBOARD_PERSIST_HYDRATION_SCOPE = scope;
+      const ready = Promise.resolve()
+        .then(() => hydrateDashboardPersistentCaches())
+        .catch(() => {});
+      DASHBOARD_PERSIST_HYDRATION_READY = ready;
+      return ready;
+    }
+    void ensureDashboardPersistentCachesHydrated();
 
     function isEmbeddedFrame() {
       try {

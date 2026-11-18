@@ -46,6 +46,7 @@
       return result;
     }
     async function loadGalleryPickerItems() {
+      await ensureDashboardPersistentCachesHydrated();
       if (GALLERY_PICKER_CACHE.loaded) return {success:true, data:{items:GALLERY_PICKER_CACHE.items}};
       if (GALLERY_PICKER_CACHE.request) return GALLERY_PICKER_CACHE.request;
       const version = GALLERY_PICKER_CACHE.version;

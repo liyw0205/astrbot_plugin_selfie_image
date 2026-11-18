@@ -2834,6 +2834,8 @@
     const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};
     let CURRENT_COMPARE = null;
     let DASHBOARD_PERSIST_HYDRATED_SCOPE = '';
+    let DASHBOARD_PERSIST_HYDRATION_SCOPE = '';
+    let DASHBOARD_PERSIST_HYDRATION_READY = null;
 
     async function hydrateDashboardPersistentCaches() {
       // Standalone login pages do not have a trustworthy scope until a token is entered.
@@ -2881,7 +2883,23 @@
         GALLERY_PICKER_CACHE.loaded = true;
       }
     }
-    void hydrateDashboardPersistentCaches();
+    function ensureDashboardPersistentCachesHydrated() {
+      // Page handlers can run as soon as the bridge becomes visible. Gate all
+      // cache-aware reads on the same promise so a slow CacheStorage restore
+      // cannot race the first API request and make a refresh look uncached.
+      if (!isDashboardPage() && !AUTH_TOKEN) return Promise.resolve();
+      const scope = dashboardPersistScope();
+      if (DASHBOARD_PERSIST_HYDRATION_READY && DASHBOARD_PERSIST_HYDRATION_SCOPE === scope) {
+        return DASHBOARD_PERSIST_HYDRATION_READY;
+      }
+      DASHBOARD_PERSIST_HYDRATION_SCOPE = scope;
+      const ready = Promise.resolve()
+        .then(() => hydrateDashboardPersistentCaches())
+        .catch(() => {});
+      DASHBOARD_PERSIST_HYDRATION_READY = ready;
+      return ready;
+    }
+    void ensureDashboardPersistentCachesHydrated();
 
     function isEmbeddedFrame() {
       try {
@@ -6081,6 +6099,7 @@ Source prompt:
     }
 
     async function loadRecords(showRefreshToast = false) {
+      await ensureDashboardPersistentCachesHydrated();
       if (showRefreshToast) clearGalleryPickerCache();
       const requestSeq = ++RECORD_LOAD_SEQ;
       const cacheVersion = RECORD_PAGE_CACHE_VERSION;
@@ -6586,6 +6605,7 @@ Source prompt:
       }
     }
     async function loadAssets(showRefreshToast = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const requestSeq = ++ASSET_LOAD_SEQ;
       const cacheVersion = ASSET_PAGE_CACHE_VERSION;
       const requestPath = assetQueryPath(ASSET_PAGE);
@@ -6945,6 +6965,7 @@ Source prompt:
       clearDashboardPersistNamespace('asset-collections');
     }
     async function loadAssetCollections(showRefreshToast = false, force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const scope = dashboardPersistScope();
       if (ASSET_COLLECTION_CACHE_SCOPE && ASSET_COLLECTION_CACHE_SCOPE !== scope) {
         ASSET_COLLECTION_CACHE_AT = 0;
@@ -7109,6 +7130,7 @@ Source prompt:
       return result;
     }
     async function loadGalleryPickerItems() {
+      await ensureDashboardPersistentCachesHydrated();
       if (GALLERY_PICKER_CACHE.loaded) return {success:true, data:{items:GALLERY_PICKER_CACHE.items}};
       if (GALLERY_PICKER_CACHE.request) return GALLERY_PICKER_CACHE.request;
       const version = GALLERY_PICKER_CACHE.version;
@@ -9141,7 +9163,7 @@ Source prompt:
       ensureProtectedMediaScope();
       // A standalone page may boot before the user enters a token. Hydrate the
       // token-scoped page/catalog cache after authentication is established.
-      await hydrateDashboardPersistentCaches();
+      await ensureDashboardPersistentCachesHydrated();
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};
@@ -9519,6 +9541,7 @@ Source prompt:
     }
 
     async function loadBackupManager(force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       if (BACKUP_LOAD_REQUEST) {
         const pending = BACKUP_LOAD_REQUEST;
         return force ? pending.then(() => loadBackupManager(true)) : pending;
@@ -9849,6 +9872,7 @@ Source prompt:
       return entry.loadedAt > 0 && (Date.now() - entry.loadedAt) < PICKER_CATALOG_CACHE_TTL_MS;
     }
     async function loadAssetTagsCached(force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const entry = PICKER_CACHE.tags;
       if (!force && pickerCacheFresh(entry)) return entry.data;
       if (entry.request) return entry.request;
@@ -9938,6 +9962,7 @@ Source prompt:
       return PICKER_PANEL_STATES.get(panelId);
     }
     async function fetchCatalogPage(kind, query, page, force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const offset = Math.max(0, (page - 1) * PICKER_PAGE_SIZE);
       const normalizedQuery = String(query || '').trim();
       const key = `${kind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
@@ -10008,6 +10033,7 @@ Source prompt:
       });
     }
     async function fetchManagedCatalogPage(kind, searchQuery, page, force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const normalizedQuery = String(searchQuery || '').trim();
       const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
       const query = normalizedQuery;

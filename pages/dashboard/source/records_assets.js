@@ -172,6 +172,7 @@
     }
 
     async function loadRecords(showRefreshToast = false) {
+      await ensureDashboardPersistentCachesHydrated();
       if (showRefreshToast) clearGalleryPickerCache();
       const requestSeq = ++RECORD_LOAD_SEQ;
       const cacheVersion = RECORD_PAGE_CACHE_VERSION;
@@ -677,6 +678,7 @@
       }
     }
     async function loadAssets(showRefreshToast = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const requestSeq = ++ASSET_LOAD_SEQ;
       const cacheVersion = ASSET_PAGE_CACHE_VERSION;
       const requestPath = assetQueryPath(ASSET_PAGE);
@@ -1036,6 +1038,7 @@
       clearDashboardPersistNamespace('asset-collections');
     }
     async function loadAssetCollections(showRefreshToast = false, force = false) {
+      await ensureDashboardPersistentCachesHydrated();
       const scope = dashboardPersistScope();
       if (ASSET_COLLECTION_CACHE_SCOPE && ASSET_COLLECTION_CACHE_SCOPE !== scope) {
         ASSET_COLLECTION_CACHE_AT = 0;
