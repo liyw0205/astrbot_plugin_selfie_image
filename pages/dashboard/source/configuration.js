@@ -202,20 +202,35 @@
       }
     }
 
-    async function loadConfig() {
+    async function loadConfig(force = false) {
+      if (!force && CONFIG_LOAD_REQUEST) return CONFIG_LOAD_REQUEST;
+      if (!force && CONFIG_SERVER_SNAPSHOT
+        && CONFIG_LOADED_MUTATION_SEQ === CONFIG_MUTATION_SEQ
+        && Date.now() - CONFIG_LOADED_AT < CONFIG_READ_CACHE_TTL_MS) {
+        renderProxyList();
+        return CONFIG;
+      }
       const loadSeq = ++CONFIG_LOAD_SEQ;
       const mutationSeq = CONFIG_MUTATION_SEQ;
-      try {
-        const res = await api('/api/config');
-        if (loadSeq !== CONFIG_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
-        CONFIG = res.data || {};
-        if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
-        rememberConfigServerSnapshot(CONFIG);
-        fillForms();
-        renderProxyList();
-      } catch (e) {
-        if (loadSeq === CONFIG_LOAD_SEQ) showToast(e.message || '配置读取失败', 'bad');
-      }
+      const request = (async () => {
+        try {
+          const res = await api('/api/config');
+          if (loadSeq !== CONFIG_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
+          CONFIG = res.data || {};
+          if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+          rememberConfigServerSnapshot(CONFIG);
+          markConfigLoaded();
+          fillForms();
+          renderProxyList();
+          return CONFIG;
+        } catch (e) {
+          if (loadSeq === CONFIG_LOAD_SEQ) showToast(e.message || '配置读取失败', 'bad');
+        }
+      })().finally(() => {
+        if (CONFIG_LOAD_REQUEST === request) CONFIG_LOAD_REQUEST = null;
+      });
+      CONFIG_LOAD_REQUEST = request;
+      return request;
     }
     function configWriteBody(patch) {
       const body = {config: patch && typeof patch === 'object' ? patch : {}};
@@ -240,6 +255,17 @@
         if (before !== after) patch[key] = cloneConfigValue(current[key]);
       }
       return patch;
+    }
+    function restoreConfigFromServerSnapshot() {
+      if (!CONFIG_SERVER_SNAPSHOT || typeof CONFIG_SERVER_SNAPSHOT !== 'object') return false;
+      try {
+        CONFIG = JSON.parse(JSON.stringify(CONFIG_SERVER_SNAPSHOT));
+      } catch (_) {
+        return false;
+      }
+      ensureConfig();
+      fillForms();
+      return true;
     }
     async function reloadConfigAfterConflict() {
       CONFIG_MUTATION_SEQ += 1;
@@ -328,6 +354,7 @@
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         rememberConfigServerSnapshot(CONFIG);
+        markConfigLoaded();
         ensureConfig();
         $('configText').value = JSON.stringify(CONFIG, null, 2);
         if (renderAfterSave) fillForms();
@@ -347,6 +374,7 @@
           await reloadConfigAfterConflict();
           return false;
         }
+        restoreConfigFromServerSnapshot();
         if (toastOnError) setMultiStatus(e.message, 'bad');
         return false;
       }
@@ -743,6 +771,7 @@
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         rememberConfigServerSnapshot(CONFIG);
+        markConfigLoaded();
         ensureConfig();
         // Channel-list mutations already update their local card. Rebuilding
         // every card after a priority-only autosave makes mobile WebViews hitch.
@@ -759,12 +788,7 @@
         // A failed autosave must leave the visible priority order aligned with
         // the last known server config, so a retry cannot submit a partial or
         // reordered snapshot by accident.
-        ensureConfig();
-        if ($('priorityList')) $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
-        if ($('auditPriorityList')) $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
-        renderAllChannelLists();
-        refreshModelSelectors();
-        renderAllPriorityRows();
+        restoreConfigFromServerSnapshot();
         setMultiStatus(e.message, 'bad');
         return false;
       }
@@ -798,13 +822,17 @@
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         rememberConfigServerSnapshot(CONFIG);
+        markConfigLoaded();
         fillForms();
         showToast('JSON 配置已保存', 'ok');
         return true;
       } catch (e) {
         if (mutationSeq === CONFIG_MUTATION_SEQ) {
           if (e.status === 409) await reloadConfigAfterConflict();
-          else showToast(e.message || 'JSON 配置保存失败', 'bad');
+          else {
+            restoreConfigFromServerSnapshot();
+            showToast(e.message || 'JSON 配置保存失败', 'bad');
+          }
         }
         return false;
       }

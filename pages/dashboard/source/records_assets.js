@@ -187,7 +187,7 @@
         setPagerLoading('monitorPager', false);
         renderRecords();
         const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / MONITOR_PAGE_SIZE));
-        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION && requestSeq === RECORD_LOAD_SEQ);
         return;
       } else {
         RECORD_LOADING = true;
@@ -208,7 +208,7 @@
         }
         RECORD_LOADING = false;
         renderRecords();
-        prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION && requestSeq === RECORD_LOAD_SEQ);
         if (showRefreshToast) showToast('记录已刷新', 'ok');
       } catch (e) {
         if (isAbortError(e)) return;
@@ -232,6 +232,7 @@
         RECORDS = [];
         RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
         renderRecords();
+        invalidateMetricsRequests();
         await loadMetrics();
         showToast('记录已清空', 'ok');
       } catch (e) { $('monitorStats').textContent = e.message; }
@@ -692,7 +693,7 @@
         setPagerLoading('assetPager', false);
         renderAssets();
         const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / ASSET_PAGE_SIZE));
-        prefetchPages(requestPath, ASSET_PAGE, cachedPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, ASSET_PAGE, cachedPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION && requestSeq === ASSET_LOAD_SEQ);
         return;
       } else {
         ASSET_LOADING = true;
@@ -712,7 +713,7 @@
         }
         ASSET_LOADING = false;
         renderAssets();
-        prefetchPages(requestPath, ASSET_PAGE, totalPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, ASSET_PAGE, totalPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION && requestSeq === ASSET_LOAD_SEQ);
         if (showRefreshToast) showToast('资产库已刷新', 'ok');
       } catch (e) {
         if (isAbortError(e)) return;
@@ -737,9 +738,11 @@
     }
     async function loadAssetTags(force = false) {
       const cache = PICKER_CACHE.tags;
+      const requestSeq = ++ASSET_TAG_LOAD_SEQ;
       try {
         const fresh = !force && cache.loadedAt > 0 && (Date.now() - cache.loadedAt) < PICKER_CATALOG_CACHE_TTL_MS;
         const rows = fresh ? cache.data : await loadAssetTagsCached(force);
+        if (requestSeq !== ASSET_TAG_LOAD_SEQ) return;
         const list = $('assetTagList');
         if (!list) return;
         list.replaceChildren();
@@ -752,7 +755,9 @@
           list.appendChild(option);
         });
       } catch (e) {
-        if ($('assetStatus')) $('assetStatus').textContent = e.message || '资产标签读取失败';
+        if (requestSeq === ASSET_TAG_LOAD_SEQ && $('assetStatus')) {
+          $('assetStatus').textContent = e.message || '资产标签读取失败';
+        }
       }
     }
     async function loadAssetStudioPresets(page = ASSET_STUDIO_PRESET_PAGE) {

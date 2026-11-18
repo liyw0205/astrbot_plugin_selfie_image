@@ -179,10 +179,10 @@ def test_dashboard_catalog_pages_and_gallery_survive_a_reload_with_bounded_ttl()
     assert "scheduleDashboardPersistCacheWrite(storageKey" in PAGE
     assert "await hydrateDashboardPersistStorage();" in PAGE
     assert "async function hydrateDashboardPersistentCaches()" in PAGE
-    assert "listDashboardPersistCache('picker-page')" in PAGE
-    assert "listDashboardPersistCache('managed-page')" in PAGE
-    assert "listDashboardPersistCache('record-page')" in PAGE
-    assert "listDashboardPersistCache('asset-page')" in PAGE
+    assert "listDashboardPersistCache('picker-page', listOptions)" in PAGE
+    assert "listDashboardPersistCache('managed-page', listOptions)" in PAGE
+    assert "listDashboardPersistCache('record-page', listOptions)" in PAGE
+    assert "listDashboardPersistCache('asset-page', listOptions)" in PAGE
     assert "readDashboardPersistCache('gallery-picker', 'items')" in PAGE
     assert "readDashboardPersistCacheEntry('asset-collections', 'all')" in PAGE
     assert "writeDashboardPersistCache('picker-page', key, data)" in PAGE
@@ -202,6 +202,29 @@ def test_cache_aware_page_loads_wait_for_persistent_hydration():
     runtime = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "source" / "runtime.js").read_text(encoding="utf-8")
     assert "function ensureDashboardPersistentCachesHydrated()" in runtime
     assert "DASHBOARD_PERSIST_HYDRATION_READY" in runtime
+
+
+def test_cache_refreshes_reject_stale_catalog_pages_tags_prefetch_and_studio_gallery():
+    assert "PICKER_PAGE_REQUEST_GENERATIONS" in PAGE
+    assert "MANAGED_PAGE_REQUEST_GENERATIONS" in PAGE
+    assert "requestGenerations.get(key) === requestGeneration" in PAGE
+    assert "requestSeq === RECORD_LOAD_SEQ" in PAGE
+    assert "requestSeq === ASSET_LOAD_SEQ" in PAGE
+    assert "let ASSET_TAG_LOAD_SEQ = 0;" in PAGE
+    assert "if (requestSeq !== ASSET_TAG_LOAD_SEQ) return;" in PAGE
+    assert "STUDIO.galleryRequestSeq += 1;" in PAGE
+    assert "requestSeq !== STUDIO.galleryRequestSeq" in PAGE
+
+
+def test_dashboard_cache_hydration_is_bounded_and_config_reads_are_deduplicated():
+    assert "DASHBOARD_PERSIST_STORAGE_HYDRATION_TIMEOUT_MS = 1200" in PAGE
+    assert "DASHBOARD_PERSIST_STORAGE_DISABLED = true" in PAGE
+    assert "CONFIG_LOAD_REQUEST" in PAGE
+    assert "CONFIG_READ_CACHE_TTL_MS = 5000" in PAGE
+    assert "CONFIG_LOADED_MUTATION_SEQ === CONFIG_MUTATION_SEQ" in PAGE
+    assert "METRICS_LOAD_SEQ" in PAGE
+    assert "requestSeq !== METRICS_LOAD_SEQ" in PAGE
+    assert "SELFIE_REFERENCE_VERSION" in PAGE
 
 
 def test_dashboard_persistence_has_sandboxed_iframe_fallback():

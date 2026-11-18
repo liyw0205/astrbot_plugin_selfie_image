@@ -56,6 +56,9 @@
     }
     function beginSelfieMutation() {
       SELFIE_MUTATION_SEQ += 1;
+      SELFIE_REFERENCE_VERSION += 1;
+      SELFIE_REFERENCE_DATA_URL = '';
+      SELFIE_REFERENCE_REQUEST = null;
       invalidateSelfieDailySchedule();
       return SELFIE_MUTATION_SEQ;
     }
@@ -374,7 +377,7 @@
           // state. Refresh only pages the user has actually opened.
           const refreshes = [];
           if (DASHBOARD_VISITED_TABS.has('monitor')) {
-            METRICS_REQUESTS.clear();
+            invalidateMetricsRequests();
             TASK_LOAD_SEQ += 1;
             TASK_REQUESTS.clear();
             refreshes.push(loadRecords(true), loadMetrics(), loadTasks(false));
@@ -407,6 +410,7 @@
         CONFIG = res.data || {};
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         rememberConfigServerSnapshot(CONFIG);
+        markConfigLoaded();
         if (!isDashboardPage()) {
           if (AUTH_TOKEN) safeStorageSet('selfieImageToken', AUTH_TOKEN);
           else safeStorageRemove('selfieImageToken');
@@ -479,7 +483,14 @@
         const section = el.closest('section');
         if (section && section.id && !allowSections.has(section.id) && section.id !== 'channels') return;
         const eventName = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';
-        el.addEventListener(eventName, () => scheduleFormAutoSave());
+        el.addEventListener(eventName, () => {
+          // A pending autosave is still local state. Invalidate config reads
+          // immediately so changing tabs cannot repaint the old server form.
+          CONFIG_MUTATION_SEQ += 1;
+          CONFIG_LOADED_MUTATION_SEQ = -1;
+          CONFIG_LOADED_AT = 0;
+          scheduleFormAutoSave();
+        });
       });
     }
 

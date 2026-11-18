@@ -2250,6 +2250,9 @@
     const DASHBOARD_PERSIST_CACHE_WRITE_OP = new Map();
     let DASHBOARD_PERSIST_STORAGE_HYDRATION = null;
     let DASHBOARD_PERSIST_STORAGE_HYDRATED = false;
+    let DASHBOARD_PERSIST_STORAGE_DISABLED = false;
+    let DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ = 0;
+    const DASHBOARD_PERSIST_STORAGE_HYDRATION_TIMEOUT_MS = 1200;
     function dashboardPersistHash(value) {
       let hash = 2166136261;
       for (const char of String(value || '')) {
@@ -2372,7 +2375,7 @@
       }).catch(() => {});
     }
     async function hydrateDashboardPersistStorage() {
-      if (DASHBOARD_PERSIST_STORAGE_HYDRATED) return;
+      if (DASHBOARD_PERSIST_STORAGE_HYDRATED || DASHBOARD_PERSIST_STORAGE_DISABLED) return;
       if (DASHBOARD_PERSIST_STORAGE_HYDRATION) return DASHBOARD_PERSIST_STORAGE_HYDRATION;
       const cachesApi = dashboardPersistCacheStorage();
       if (!cachesApi) {
@@ -2380,11 +2383,13 @@
         return;
       }
       DASHBOARD_PERSIST_STORAGE_HYDRATION = (async () => {
+        const hydrationSeq = DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ;
         try {
           const cache = await cachesApi.open(DASHBOARD_PERSIST_CACHE_NAME);
           const requests = await cache.keys();
           const now = Date.now();
           for (const request of requests) {
+            if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
             const response = await cache.match(request);
             if (!response) continue;
             try {
@@ -2395,15 +2400,21 @@
               const scope = String(value?.scope || '');
               const storedAt = Number(value?.storedAt || 0);
               if (!storageKey || !namespace || !scope || !storedAt || now - storedAt > DASHBOARD_PERSIST_CACHE_TTL_MS) {
+                if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
                 await cache.delete(request);
                 continue;
               }
-              DASHBOARD_PERSIST_MEMORY.set(storageKey, {
-                namespace, key, scope, storedAt,
-                lastAccessed: Number(value?.lastAccessed || storedAt),
-                size: Number(value?.size || 0), data: value.data,
-              });
+              if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
+              const existing = DASHBOARD_PERSIST_MEMORY.get(storageKey);
+              if (!existing || Number(existing.storedAt || 0) <= storedAt) {
+                DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+                  namespace, key, scope, storedAt,
+                  lastAccessed: Number(value?.lastAccessed || storedAt),
+                  size: Number(value?.size || 0), data: value.data,
+                });
+              }
             } catch (_) {
+              if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
               await cache.delete(request);
             }
           }
@@ -2411,15 +2422,17 @@
             .sort((a, b) => Number(a[1]?.lastAccessed || 0) - Number(b[1]?.lastAccessed || 0));
           let totalBytes = entries.reduce((sum, item) => sum + Math.max(0, Number(item[1]?.size || 0)), 0);
           while (entries.length > DASHBOARD_PERSIST_CACHE_MAX_ENTRIES || totalBytes > DASHBOARD_PERSIST_CACHE_MAX_BYTES) {
+            if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
             const [storageKey, item] = entries.shift() || [];
             if (!storageKey) break;
             totalBytes -= Math.max(0, Number(item?.size || 0));
             DASHBOARD_PERSIST_MEMORY.delete(storageKey);
             await cache.delete(dashboardPersistCacheUrl(storageKey)).catch(() => {});
           }
-          DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
+          if (hydrationSeq === DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
         } catch (_) {
           // CacheStorage is optional in embedded/sandboxed browsers.
+          if (hydrationSeq === DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
         }
       })().finally(() => { DASHBOARD_PERSIST_STORAGE_HYDRATION = null; });
       return DASHBOARD_PERSIST_STORAGE_HYDRATION;
@@ -2650,8 +2663,11 @@
       if (changed) writeDashboardPersistIndex(index);
       clearDashboardWindowNameNamespace(namespace, predicate);
     }
-    function listDashboardPersistCache(namespace) {
-      const index = pruneDashboardPersistCache();
+    function listDashboardPersistCache(namespace, options = null) {
+      // Hydration restores several namespaces in one pass. Reusing the same
+      // pruned index/window snapshot avoids rescanning and reparsing the whole
+      // storage for every namespace on an embedded WebView refresh.
+      const index = options?.index || pruneDashboardPersistCache();
       const scope = dashboardPersistScope();
       const rows = [];
       const seen = new Set();
@@ -2685,7 +2701,7 @@
         seen.add(storageKey);
         rows.push({key: String(item.key || ''), data: item.data, storedAt: Number(item.storedAt || 0)});
       }
-      const fallback = pruneDashboardWindowNameCache();
+      const fallback = options?.windowCache || pruneDashboardWindowNameCache();
       for (const [storageKey, value] of Object.entries(fallback)) {
         if (seen.has(storageKey) || value?.namespace !== namespace || value?.scope !== scope) continue;
         if (dashboardPersistEntryExpired(value)) {
@@ -2706,6 +2722,8 @@
     const PAGE_PREFETCH_AHEAD = 3;
     const PICKER_PAGE_CACHE = new Map();
     const MANAGED_PAGE_CACHE = new Map();
+    const PICKER_PAGE_REQUEST_GENERATIONS = new Map();
+    const MANAGED_PAGE_REQUEST_GENERATIONS = new Map();
     let PICKER_CATALOG_CACHE_VERSION = 0;
     const PICKER_PANEL_STATES = new Map();
     const PICKER_SEARCH_TIMERS = new Map();
@@ -2728,17 +2746,23 @@
     let CONFIG_SERVER_SNAPSHOT = null;
     let CONFIG_REVISION = 0;
     let CONFIG_LOAD_SEQ = 0;
+    let CONFIG_LOAD_REQUEST = null;
+    let CONFIG_LOADED_AT = 0;
+    let CONFIG_LOADED_MUTATION_SEQ = -1;
+    const CONFIG_READ_CACHE_TTL_MS = 5000;
     let QQ_GROUP_LOAD_SEQ = 0;
     let CONFIG_MUTATION_SEQ = 0;
     // Pages are loaded on demand; startup refreshes only tabs the user opened.
     const DASHBOARD_VISITED_TABS = new Set(['base']);
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
-    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
+    let SELFIE_REFERENCE_VERSION = 0;
+    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", galleryRequestSeq: 0, nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
     let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0 };
     const PICKER_CACHE = {
       tags: {data: [], loadedAt: 0, request: null, version: 0},
     };
+    let ASSET_TAG_LOAD_SEQ = 0;
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -2754,6 +2778,7 @@
     let RECORD_LOAD_SEQ = 0;
     let ASSET_LOAD_SEQ = 0;
     const METRICS_REQUESTS = new Map();
+    let METRICS_LOAD_SEQ = 0;
     let METRICS_CONTENTS = {};
     let ACTIVE_METRICS_CATEGORY = '';
     const TASK_REQUESTS = new Map();
@@ -2843,6 +2868,19 @@
       await hydrateDashboardPersistStorage();
       const scope = dashboardPersistScope();
       if (DASHBOARD_PERSIST_HYDRATED_SCOPE && DASHBOARD_PERSIST_HYDRATED_SCOPE !== scope) {
+        DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ += 1;
+        PICKER_CATALOG_CACHE_VERSION += 1;
+        RECORD_PAGE_CACHE_VERSION += 1;
+        ASSET_PAGE_CACHE_VERSION += 1;
+        RECORD_LOAD_SEQ += 1;
+        ASSET_LOAD_SEQ += 1;
+        ASSET_TAG_LOAD_SEQ += 1;
+        PICKER_PAGE_REQUEST_GENERATIONS.clear();
+        MANAGED_PAGE_REQUEST_GENERATIONS.clear();
+        PICKER_CACHE.tags.version += 1;
+        GALLERY_PICKER_CACHE.version += 1;
+        STUDIO.galleryRequestSeq += 1;
+        CREATIVE_CANVAS.galleryRequestSeq += 1;
         for (const controller of [...RECORD_PAGE_CONTROLLERS.values(), ...ASSET_PAGE_CONTROLLERS.values()]) {
           try { controller.abort(); } catch (_) {}
         }
@@ -2858,10 +2896,13 @@
         GALLERY_PICKER_CACHE.loaded = false;
       }
       DASHBOARD_PERSIST_HYDRATED_SCOPE = scope;
-      for (const entry of listDashboardPersistCache('picker-page')) {
+      const persistedIndex = pruneDashboardPersistCache();
+      const persistedWindowName = pruneDashboardWindowNameCache();
+      const listOptions = {index: persistedIndex, windowCache: persistedWindowName};
+      for (const entry of listDashboardPersistCache('picker-page', listOptions)) {
         if (entry.key) PICKER_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
       }
-      for (const entry of listDashboardPersistCache('managed-page')) {
+      for (const entry of listDashboardPersistCache('managed-page', listOptions)) {
         if (entry.key) MANAGED_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
       }
       const tags = readDashboardPersistCache('asset-tags', 'all');
@@ -2869,11 +2910,11 @@
         PICKER_CACHE.tags.data = tags;
         PICKER_CACHE.tags.loadedAt = Date.now();
       }
-      const recordPages = listDashboardPersistCache('record-page');
+      const recordPages = listDashboardPersistCache('record-page', listOptions);
       for (const entry of recordPages) {
         if (entry.key && entry.data?.rows && entry.data?.meta) RECORD_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: Date.now(), persistedAt: entry.storedAt || 0}));
       }
-      const assetPages = listDashboardPersistCache('asset-page');
+      const assetPages = listDashboardPersistCache('asset-page', listOptions);
       for (const entry of assetPages) {
         if (entry.key && entry.data?.rows && entry.data?.meta) ASSET_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: Date.now(), persistedAt: entry.storedAt || 0}));
       }
@@ -2894,7 +2935,22 @@
       }
       DASHBOARD_PERSIST_HYDRATION_SCOPE = scope;
       const ready = Promise.resolve()
-        .then(() => hydrateDashboardPersistentCaches())
+        .then(async () => {
+          const hydration = hydrateDashboardPersistStorage();
+          let timedOut = false;
+          await Promise.race([
+            hydration,
+            new Promise(resolve => setTimeout(() => { timedOut = true; resolve(); }, DASHBOARD_PERSIST_STORAGE_HYDRATION_TIMEOUT_MS)),
+          ]);
+          if (timedOut && !DASHBOARD_PERSIST_STORAGE_HYDRATED) {
+            // A hung CacheStorage must not block the first API request. The
+            // late operation may finish in the background, but this page will
+            // not await it again during the current session.
+            DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ += 1;
+            DASHBOARD_PERSIST_STORAGE_DISABLED = true;
+          }
+          await hydrateDashboardPersistentCaches();
+        })
         .catch(() => {});
       DASHBOARD_PERSIST_HYDRATION_READY = ready;
       return ready;
@@ -3219,6 +3275,10 @@ Source prompt:
         CONFIG_SERVER_SNAPSHOT = {};
       }
       return CONFIG_SERVER_SNAPSHOT;
+    }
+    function markConfigLoaded() {
+      CONFIG_LOADED_AT = Date.now();
+      CONFIG_LOADED_MUTATION_SEQ = CONFIG_MUTATION_SEQ;
     }
 
     function fillForms() {
@@ -4597,20 +4657,35 @@ Source prompt:
       }
     }
 
-    async function loadConfig() {
+    async function loadConfig(force = false) {
+      if (!force && CONFIG_LOAD_REQUEST) return CONFIG_LOAD_REQUEST;
+      if (!force && CONFIG_SERVER_SNAPSHOT
+        && CONFIG_LOADED_MUTATION_SEQ === CONFIG_MUTATION_SEQ
+        && Date.now() - CONFIG_LOADED_AT < CONFIG_READ_CACHE_TTL_MS) {
+        renderProxyList();
+        return CONFIG;
+      }
       const loadSeq = ++CONFIG_LOAD_SEQ;
       const mutationSeq = CONFIG_MUTATION_SEQ;
-      try {
-        const res = await api('/api/config');
-        if (loadSeq !== CONFIG_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
-        CONFIG = res.data || {};
-        if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
-        rememberConfigServerSnapshot(CONFIG);
-        fillForms();
-        renderProxyList();
-      } catch (e) {
-        if (loadSeq === CONFIG_LOAD_SEQ) showToast(e.message || '配置读取失败', 'bad');
-      }
+      const request = (async () => {
+        try {
+          const res = await api('/api/config');
+          if (loadSeq !== CONFIG_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
+          CONFIG = res.data || {};
+          if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
+          rememberConfigServerSnapshot(CONFIG);
+          markConfigLoaded();
+          fillForms();
+          renderProxyList();
+          return CONFIG;
+        } catch (e) {
+          if (loadSeq === CONFIG_LOAD_SEQ) showToast(e.message || '配置读取失败', 'bad');
+        }
+      })().finally(() => {
+        if (CONFIG_LOAD_REQUEST === request) CONFIG_LOAD_REQUEST = null;
+      });
+      CONFIG_LOAD_REQUEST = request;
+      return request;
     }
     function configWriteBody(patch) {
       const body = {config: patch && typeof patch === 'object' ? patch : {}};
@@ -4635,6 +4710,17 @@ Source prompt:
         if (before !== after) patch[key] = cloneConfigValue(current[key]);
       }
       return patch;
+    }
+    function restoreConfigFromServerSnapshot() {
+      if (!CONFIG_SERVER_SNAPSHOT || typeof CONFIG_SERVER_SNAPSHOT !== 'object') return false;
+      try {
+        CONFIG = JSON.parse(JSON.stringify(CONFIG_SERVER_SNAPSHOT));
+      } catch (_) {
+        return false;
+      }
+      ensureConfig();
+      fillForms();
+      return true;
     }
     async function reloadConfigAfterConflict() {
       CONFIG_MUTATION_SEQ += 1;
@@ -4723,6 +4809,7 @@ Source prompt:
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         rememberConfigServerSnapshot(CONFIG);
+        markConfigLoaded();
         ensureConfig();
         $('configText').value = JSON.stringify(CONFIG, null, 2);
         if (renderAfterSave) fillForms();
@@ -4742,6 +4829,7 @@ Source prompt:
           await reloadConfigAfterConflict();
           return false;
         }
+        restoreConfigFromServerSnapshot();
         if (toastOnError) setMultiStatus(e.message, 'bad');
         return false;
       }
@@ -5138,6 +5226,7 @@ Source prompt:
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         rememberConfigServerSnapshot(CONFIG);
+        markConfigLoaded();
         ensureConfig();
         // Channel-list mutations already update their local card. Rebuilding
         // every card after a priority-only autosave makes mobile WebViews hitch.
@@ -5154,12 +5243,7 @@ Source prompt:
         // A failed autosave must leave the visible priority order aligned with
         // the last known server config, so a retry cannot submit a partial or
         // reordered snapshot by accident.
-        ensureConfig();
-        if ($('priorityList')) $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
-        if ($('auditPriorityList')) $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
-        renderAllChannelLists();
-        refreshModelSelectors();
-        renderAllPriorityRows();
+        restoreConfigFromServerSnapshot();
         setMultiStatus(e.message, 'bad');
         return false;
       }
@@ -5193,13 +5277,17 @@ Source prompt:
         CONFIG = res.data || CONFIG;
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         rememberConfigServerSnapshot(CONFIG);
+        markConfigLoaded();
         fillForms();
         showToast('JSON 配置已保存', 'ok');
         return true;
       } catch (e) {
         if (mutationSeq === CONFIG_MUTATION_SEQ) {
           if (e.status === 409) await reloadConfigAfterConflict();
-          else showToast(e.message || 'JSON 配置保存失败', 'bad');
+          else {
+            restoreConfigFromServerSnapshot();
+            showToast(e.message || 'JSON 配置保存失败', 'bad');
+          }
         }
         return false;
       }
@@ -5414,6 +5502,7 @@ Source prompt:
         if (root) root.dataset.dirty = '';
         syncMetricAlertForm(true);
         showToast('告警阈值已保存', 'ok');
+        invalidateMetricsRequests();
         await loadMetrics();
       } catch (error) {
         showToast(error.message || '告警阈值保存失败', 'bad');
@@ -5421,12 +5510,14 @@ Source prompt:
         if (button) button.disabled = false;
       }
     }
-    async function loadMetricsNow() {
+    async function loadMetricsNow(windowKey = 'all', requestSeq = METRICS_LOAD_SEQ) {
       const root = $('monitorMetricButtons');
       if (!root) return;
       try {
-        const windowKey = $('monitorMetricsWindow')?.value || 'all';
         const res = await api('/api/metrics?window=' + encodeURIComponent(windowKey));
+        // Changing the statistics window starts a new generation. A slower
+        // response for the previous window must not replace the current view.
+        if (requestSeq !== METRICS_LOAD_SEQ || windowKey !== String($('monitorMetricsWindow')?.value || 'all')) return;
         const d = res.data || {};
         syncMetricAlertForm();
         const windowLabel = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部保留记录';
@@ -5524,6 +5615,7 @@ Source prompt:
         root.innerHTML = categories.map(category => `<button class="secondary metrics-launcher" type="button" data-metrics-category="${category.key}"><strong>${category.title}</strong><span>${category.summary}</span></button>`).join('');
         if (ACTIVE_METRICS_CATEGORY && $('metricsModal')?.classList.contains('show')) renderMetricsCategory(ACTIVE_METRICS_CATEGORY);
       } catch (e) {
+        if (requestSeq !== METRICS_LOAD_SEQ || windowKey !== String($('monitorMetricsWindow')?.value || 'all')) return;
         METRICS_CONTENTS = {};
         root.classList.add('metrics-error');
         root.textContent = e.message || '统计读取失败';
@@ -5548,13 +5640,19 @@ Source prompt:
     async function loadMetrics() {
       const key = String($('monitorMetricsWindow')?.value || 'all');
       const existing = METRICS_REQUESTS.get(key);
-      if (existing) return existing;
-      let request;
-      request = loadMetricsNow().finally(() => {
-        if (METRICS_REQUESTS.get(key) === request) METRICS_REQUESTS.delete(key);
+      if (existing && existing.seq === METRICS_LOAD_SEQ) return existing.promise;
+      if (existing) METRICS_REQUESTS.delete(key);
+      const requestSeq = ++METRICS_LOAD_SEQ;
+      const entry = {seq: requestSeq, promise: null};
+      entry.promise = loadMetricsNow(key, requestSeq).finally(() => {
+        if (METRICS_REQUESTS.get(key) === entry) METRICS_REQUESTS.delete(key);
       });
-      METRICS_REQUESTS.set(key, request);
-      return request;
+      METRICS_REQUESTS.set(key, entry);
+      return entry.promise;
+    }
+    function invalidateMetricsRequests() {
+      METRICS_LOAD_SEQ += 1;
+      METRICS_REQUESTS.clear();
     }
     function taskQueueStatusLabel(status) {
       return ({queued:'排队', running:'进行中', succeeded:'完成', partial_success:'部分完成', failed:'失败', delivery_failed:'生成成功但发送失败', cancelled:'已取消', expired:'已过期'})[status] || status || '未知';
@@ -6114,7 +6212,7 @@ Source prompt:
         setPagerLoading('monitorPager', false);
         renderRecords();
         const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / MONITOR_PAGE_SIZE));
-        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION && requestSeq === RECORD_LOAD_SEQ);
         return;
       } else {
         RECORD_LOADING = true;
@@ -6135,7 +6233,7 @@ Source prompt:
         }
         RECORD_LOADING = false;
         renderRecords();
-        prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION && requestSeq === RECORD_LOAD_SEQ);
         if (showRefreshToast) showToast('记录已刷新', 'ok');
       } catch (e) {
         if (isAbortError(e)) return;
@@ -6159,6 +6257,7 @@ Source prompt:
         RECORDS = [];
         RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
         renderRecords();
+        invalidateMetricsRequests();
         await loadMetrics();
         showToast('记录已清空', 'ok');
       } catch (e) { $('monitorStats').textContent = e.message; }
@@ -6619,7 +6718,7 @@ Source prompt:
         setPagerLoading('assetPager', false);
         renderAssets();
         const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / ASSET_PAGE_SIZE));
-        prefetchPages(requestPath, ASSET_PAGE, cachedPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, ASSET_PAGE, cachedPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION && requestSeq === ASSET_LOAD_SEQ);
         return;
       } else {
         ASSET_LOADING = true;
@@ -6639,7 +6738,7 @@ Source prompt:
         }
         ASSET_LOADING = false;
         renderAssets();
-        prefetchPages(requestPath, ASSET_PAGE, totalPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, ASSET_PAGE, totalPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION && requestSeq === ASSET_LOAD_SEQ);
         if (showRefreshToast) showToast('资产库已刷新', 'ok');
       } catch (e) {
         if (isAbortError(e)) return;
@@ -6664,9 +6763,11 @@ Source prompt:
     }
     async function loadAssetTags(force = false) {
       const cache = PICKER_CACHE.tags;
+      const requestSeq = ++ASSET_TAG_LOAD_SEQ;
       try {
         const fresh = !force && cache.loadedAt > 0 && (Date.now() - cache.loadedAt) < PICKER_CATALOG_CACHE_TTL_MS;
         const rows = fresh ? cache.data : await loadAssetTagsCached(force);
+        if (requestSeq !== ASSET_TAG_LOAD_SEQ) return;
         const list = $('assetTagList');
         if (!list) return;
         list.replaceChildren();
@@ -6679,7 +6780,9 @@ Source prompt:
           list.appendChild(option);
         });
       } catch (e) {
-        if ($('assetStatus')) $('assetStatus').textContent = e.message || '资产标签读取失败';
+        if (requestSeq === ASSET_TAG_LOAD_SEQ && $('assetStatus')) {
+          $('assetStatus').textContent = e.message || '资产标签读取失败';
+        }
       }
     }
     async function loadAssetStudioPresets(page = ASSET_STUDIO_PRESET_PAGE) {
@@ -7115,6 +7218,11 @@ Source prompt:
       GALLERY_PICKER_CACHE.request = null;
       GALLERY_PICKER_CACHE.items = [];
       GALLERY_PICKER_CACHE.loaded = false;
+      // A gallery panel may remain open while records/assets are invalidated.
+      // Invalidate its consumer generations too, so a late response cannot
+      // repaint an already-cleared panel with stale items.
+      if (typeof STUDIO !== 'undefined') STUDIO.galleryRequestSeq += 1;
+      if (typeof CREATIVE_CANVAS !== 'undefined') CREATIVE_CANVAS.galleryRequestSeq += 1;
       removeDashboardPersistCache('gallery-picker', 'items');
     }
     function normalizeGalleryPickerItems(items) {
@@ -7693,13 +7801,18 @@ Source prompt:
     async function loadSelfieReferenceDataUrl() {
       if (SELFIE_REFERENCE_DATA_URL) return SELFIE_REFERENCE_DATA_URL;
       if (!SELFIE_REFERENCE_REQUEST) {
-        SELFIE_REFERENCE_REQUEST = api('/api/selfie-reference').then(res => {
+        const version = SELFIE_REFERENCE_VERSION;
+        let request;
+        request = api('/api/selfie-reference').then(res => {
           const image = String(res?.data?.image || '').trim();
-          SELFIE_REFERENCE_DATA_URL = image.startsWith('data:image/') ? image : '';
+          if (version === SELFIE_REFERENCE_VERSION) {
+            SELFIE_REFERENCE_DATA_URL = image.startsWith('data:image/') ? image : '';
+          }
           return SELFIE_REFERENCE_DATA_URL;
         }).catch(() => '').finally(() => {
-          SELFIE_REFERENCE_REQUEST = null;
+          if (SELFIE_REFERENCE_REQUEST === request) SELFIE_REFERENCE_REQUEST = null;
         });
+        SELFIE_REFERENCE_REQUEST = request;
       }
       return SELFIE_REFERENCE_REQUEST;
     }
@@ -8818,6 +8931,9 @@ Source prompt:
     }
     function beginSelfieMutation() {
       SELFIE_MUTATION_SEQ += 1;
+      SELFIE_REFERENCE_VERSION += 1;
+      SELFIE_REFERENCE_DATA_URL = '';
+      SELFIE_REFERENCE_REQUEST = null;
       invalidateSelfieDailySchedule();
       return SELFIE_MUTATION_SEQ;
     }
@@ -9136,7 +9252,7 @@ Source prompt:
           // state. Refresh only pages the user has actually opened.
           const refreshes = [];
           if (DASHBOARD_VISITED_TABS.has('monitor')) {
-            METRICS_REQUESTS.clear();
+            invalidateMetricsRequests();
             TASK_LOAD_SEQ += 1;
             TASK_REQUESTS.clear();
             refreshes.push(loadRecords(true), loadMetrics(), loadTasks(false));
@@ -9169,6 +9285,7 @@ Source prompt:
         CONFIG = res.data || {};
         if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         rememberConfigServerSnapshot(CONFIG);
+        markConfigLoaded();
         if (!isDashboardPage()) {
           if (AUTH_TOKEN) safeStorageSet('selfieImageToken', AUTH_TOKEN);
           else safeStorageRemove('selfieImageToken');
@@ -9241,7 +9358,14 @@ Source prompt:
         const section = el.closest('section');
         if (section && section.id && !allowSections.has(section.id) && section.id !== 'channels') return;
         const eventName = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';
-        el.addEventListener(eventName, () => scheduleFormAutoSave());
+        el.addEventListener(eventName, () => {
+          // A pending autosave is still local state. Invalidate config reads
+          // immediately so changing tabs cannot repaint the old server form.
+          CONFIG_MUTATION_SEQ += 1;
+          CONFIG_LOADED_MUTATION_SEQ = -1;
+          CONFIG_LOADED_AT = 0;
+          scheduleFormAutoSave();
+        });
       });
     }
 
@@ -9874,6 +9998,16 @@ Source prompt:
     async function loadAssetTagsCached(force = false) {
       await ensureDashboardPersistentCachesHydrated();
       const entry = PICKER_CACHE.tags;
+      if (force) {
+        // A forced refresh must not reuse a request started before the
+        // mutation. Its response may still resolve, but the version check
+        // below prevents it from repopulating the current cache.
+        entry.version += 1;
+        entry.request = null;
+        entry.data = [];
+        entry.loadedAt = 0;
+        removeDashboardPersistCache('asset-tags', 'all');
+      }
       if (!force && pickerCacheFresh(entry)) return entry.data;
       if (entry.request) return entry.request;
       if (!force) {
@@ -9911,6 +10045,7 @@ Source prompt:
         entry.version += 1;
       };
       if (!normalized || normalized === 'tags') {
+        ASSET_TAG_LOAD_SEQ += 1;
         clearEntry(PICKER_CACHE.tags);
         clearDashboardPersistNamespace('asset-tags');
       }
@@ -9966,8 +10101,10 @@ Source prompt:
       const offset = Math.max(0, (page - 1) * PICKER_PAGE_SIZE);
       const normalizedQuery = String(query || '').trim();
       const key = `${kind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
+      const requestGenerations = PICKER_PAGE_REQUEST_GENERATIONS;
       let cached = PICKER_PAGE_CACHE.get(key);
       if (force) {
+        requestGenerations.set(key, (requestGenerations.get(key) || 0) + 1);
         PICKER_PAGE_CACHE.delete(key);
         removeDashboardPersistCache('picker-page', key);
         cached = null;
@@ -9982,6 +10119,7 @@ Source prompt:
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
       const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
+      const requestGeneration = requestGenerations.get(key) || 0;
       const params = new URLSearchParams({limit: String(PICKER_PAGE_SIZE), offset: String(offset), search: normalizedQuery});
       if (kind === 'image') params.set('kind', 'image');
       const endpoint = kind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets?';
@@ -10008,14 +10146,14 @@ Source prompt:
         }
         if (kind === 'image') items = mergePromptPresets(items);
         const data = {items, total, offset, limit: PICKER_PAGE_SIZE};
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('picker-page', key, data);
           while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
         }
         return data;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           PICKER_PAGE_CACHE.delete(key);
           removeDashboardPersistCache('picker-page', key);
         }
@@ -10038,8 +10176,10 @@ Source prompt:
       const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
       const query = normalizedQuery;
       const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
+      const requestGenerations = MANAGED_PAGE_REQUEST_GENERATIONS;
       let cached = MANAGED_PAGE_CACHE.get(key);
       if (force) {
+        requestGenerations.set(key, (requestGenerations.get(key) || 0) + 1);
         MANAGED_PAGE_CACHE.delete(key);
         removeDashboardPersistCache('managed-page', key);
         cached = null;
@@ -10054,6 +10194,7 @@ Source prompt:
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
       const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
+      const requestGeneration = requestGenerations.get(key) || 0;
       const params = new URLSearchParams({
         limit: String(PICKER_PAGE_SIZE),
         offset: String(Math.max(0, (page - 1) * PICKER_PAGE_SIZE)),
@@ -10091,14 +10232,14 @@ Source prompt:
         }
         if (normalizedKind === 'image') items = mergePromptPresets(items);
         const value = {items, total, offset: (page - 1) * PICKER_PAGE_SIZE, limit: PICKER_PAGE_SIZE};
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           MANAGED_PAGE_CACHE.set(key, {data: value, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('managed-page', key, value);
           while (MANAGED_PAGE_CACHE.size > 80) MANAGED_PAGE_CACHE.delete(MANAGED_PAGE_CACHE.keys().next().value);
         }
         return value;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           MANAGED_PAGE_CACHE.delete(key);
           removeDashboardPersistCache('managed-page', key);
         }
@@ -11070,6 +11211,7 @@ Source prompt:
       }
     }
     function closeStudioGallery() {
+      STUDIO.galleryRequestSeq += 1;
       const panel = $('studioGallery');
       if (panel) { panel.classList.remove('open'); panel.innerHTML = ''; }
       document.querySelectorAll('#studioSlots .studio-slot-picker').forEach(picker => {
@@ -11098,7 +11240,9 @@ Source prompt:
       }
       if (!panel) return;
       panel.innerHTML = '<div class="status">加载记录图…</div>';
+      const requestSeq = STUDIO.galleryRequestSeq;
       const res = await loadGalleryPickerItems();
+      if (requestSeq !== STUDIO.galleryRequestSeq || (slotId && !panel.isConnected)) return;
       if (!res.success) {
         panel.innerHTML = `<div class="between"><div class="status">${escapeHtml(res.message || '加载失败')}</div>
           <button type="button" class="secondary mini" data-studio-gallery-close>收起</button></div>`;
@@ -12522,7 +12666,7 @@ Source prompt:
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
     $('presetTransferCopyBtn').onclick = copyPresetTransfer;
     $('presetTransferImportBtn').onclick = importPresetTransfer;
-    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); await loadAssetCollections(true); };
+    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); invalidateMetricsRequests(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); await loadAssetCollections(true); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;

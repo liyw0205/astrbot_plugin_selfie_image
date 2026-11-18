@@ -32,6 +32,16 @@
     async function loadAssetTagsCached(force = false) {
       await ensureDashboardPersistentCachesHydrated();
       const entry = PICKER_CACHE.tags;
+      if (force) {
+        // A forced refresh must not reuse a request started before the
+        // mutation. Its response may still resolve, but the version check
+        // below prevents it from repopulating the current cache.
+        entry.version += 1;
+        entry.request = null;
+        entry.data = [];
+        entry.loadedAt = 0;
+        removeDashboardPersistCache('asset-tags', 'all');
+      }
       if (!force && pickerCacheFresh(entry)) return entry.data;
       if (entry.request) return entry.request;
       if (!force) {
@@ -69,6 +79,7 @@
         entry.version += 1;
       };
       if (!normalized || normalized === 'tags') {
+        ASSET_TAG_LOAD_SEQ += 1;
         clearEntry(PICKER_CACHE.tags);
         clearDashboardPersistNamespace('asset-tags');
       }
@@ -124,8 +135,10 @@
       const offset = Math.max(0, (page - 1) * PICKER_PAGE_SIZE);
       const normalizedQuery = String(query || '').trim();
       const key = `${kind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
+      const requestGenerations = PICKER_PAGE_REQUEST_GENERATIONS;
       let cached = PICKER_PAGE_CACHE.get(key);
       if (force) {
+        requestGenerations.set(key, (requestGenerations.get(key) || 0) + 1);
         PICKER_PAGE_CACHE.delete(key);
         removeDashboardPersistCache('picker-page', key);
         cached = null;
@@ -140,6 +153,7 @@
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
       const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
+      const requestGeneration = requestGenerations.get(key) || 0;
       const params = new URLSearchParams({limit: String(PICKER_PAGE_SIZE), offset: String(offset), search: normalizedQuery});
       if (kind === 'image') params.set('kind', 'image');
       const endpoint = kind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets?';
@@ -166,14 +180,14 @@
         }
         if (kind === 'image') items = mergePromptPresets(items);
         const data = {items, total, offset, limit: PICKER_PAGE_SIZE};
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('picker-page', key, data);
           while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
         }
         return data;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           PICKER_PAGE_CACHE.delete(key);
           removeDashboardPersistCache('picker-page', key);
         }
@@ -196,8 +210,10 @@
       const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
       const query = normalizedQuery;
       const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
+      const requestGenerations = MANAGED_PAGE_REQUEST_GENERATIONS;
       let cached = MANAGED_PAGE_CACHE.get(key);
       if (force) {
+        requestGenerations.set(key, (requestGenerations.get(key) || 0) + 1);
         MANAGED_PAGE_CACHE.delete(key);
         removeDashboardPersistCache('managed-page', key);
         cached = null;
@@ -212,6 +228,7 @@
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
       const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
+      const requestGeneration = requestGenerations.get(key) || 0;
       const params = new URLSearchParams({
         limit: String(PICKER_PAGE_SIZE),
         offset: String(Math.max(0, (page - 1) * PICKER_PAGE_SIZE)),
@@ -249,14 +266,14 @@
         }
         if (normalizedKind === 'image') items = mergePromptPresets(items);
         const value = {items, total, offset: (page - 1) * PICKER_PAGE_SIZE, limit: PICKER_PAGE_SIZE};
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           MANAGED_PAGE_CACHE.set(key, {data: value, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('managed-page', key, value);
           while (MANAGED_PAGE_CACHE.size > 80) MANAGED_PAGE_CACHE.delete(MANAGED_PAGE_CACHE.keys().next().value);
         }
         return value;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           MANAGED_PAGE_CACHE.delete(key);
           removeDashboardPersistCache('managed-page', key);
         }

@@ -767,9 +767,24 @@ class ConfigurationMixin:
                 # prevent a subsequent write from destroying that file.
                 if not result.ok and result.status != "missing":
                     return False
-            source, normalized = self._load_initial_config_state()
-            if getattr(self, "_config_storage_blocked", False):
-                return False
+                source, normalized = self._build_config_from_result(result)
+                if getattr(self, "_config_storage_blocked", False):
+                    return False
+                # An external writer may not use our advisory lock.  Do not
+                # publish a mixed snapshot when the file changed mid-read.
+                if self._config_file_fingerprint() != current:
+                    return False
+                revision, fingerprint, changed = self._read_config_revision_state()
+                if changed:
+                    try:
+                        self._write_config_revision_state(revision, fingerprint)
+                    except Exception:
+                        logger.warning(
+                            "[SelfieImage] 外部配置刷新时 revision 元数据写入失败",
+                            exc_info=True,
+                        )
+                self._config_revision = revision
+                self._config_fingerprint = fingerprint
             self.raw_config = source
             self.config = normalized
             scheduler = getattr(self, "_image_scheduler", None)
@@ -784,13 +799,8 @@ class ConfigurationMixin:
         source, _ = self._load_initial_config_state()
         return source
 
-    def _load_initial_config_state(self) -> tuple[Dict[str, Any], AICatConfig]:
-        """Load raw/runtime config together, reusing normalization when safe."""
-        # Revision is deliberately kept out of the persisted JSON.  It is a
-        # transport guard for browser snapshots.  The sidecar extends that
-        # guard across plugin instances without exposing metadata in config.
-        self._initialize_config_revision_state()
-        result = load_json_file_result(self.config_path)
+    def _build_config_from_result(self, result: Any) -> tuple[Dict[str, Any], AICatConfig]:
+        """Normalize one already-read JSON result without touching the file again."""
         self._config_storage_status = {
             "ok": result.ok,
             "status": result.status,
@@ -828,6 +838,15 @@ class ConfigurationMixin:
             normalized = AICatConfig.from_dict(source)
             break
         return source, normalized
+
+    def _load_initial_config_state(self) -> tuple[Dict[str, Any], AICatConfig]:
+        """Load raw/runtime config together, reusing normalization when safe."""
+        # Revision is deliberately kept out of the persisted JSON.  It is a
+        # transport guard for browser snapshots.  The sidecar extends that
+        # guard across plugin instances without exposing metadata in config.
+        self._initialize_config_revision_state()
+        result = load_json_file_result(self.config_path)
+        return self._build_config_from_result(result)
 
     def _persist_config(self) -> None:
         with self._config_lock:

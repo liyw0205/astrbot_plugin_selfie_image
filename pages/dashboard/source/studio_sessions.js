@@ -271,6 +271,7 @@
       }
     }
     function closeStudioGallery() {
+      STUDIO.galleryRequestSeq += 1;
       const panel = $('studioGallery');
       if (panel) { panel.classList.remove('open'); panel.innerHTML = ''; }
       document.querySelectorAll('#studioSlots .studio-slot-picker').forEach(picker => {
@@ -299,7 +300,9 @@
       }
       if (!panel) return;
       panel.innerHTML = '<div class="status">加载记录图…</div>';
+      const requestSeq = STUDIO.galleryRequestSeq;
       const res = await loadGalleryPickerItems();
+      if (requestSeq !== STUDIO.galleryRequestSeq || (slotId && !panel.isConnected)) return;
       if (!res.success) {
         panel.innerHTML = `<div class="between"><div class="status">${escapeHtml(res.message || '加载失败')}</div>
           <button type="button" class="secondary mini" data-studio-gallery-close>收起</button></div>`;

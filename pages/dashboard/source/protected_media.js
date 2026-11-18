@@ -31,6 +31,11 @@
       GALLERY_PICKER_CACHE.request = null;
       GALLERY_PICKER_CACHE.items = [];
       GALLERY_PICKER_CACHE.loaded = false;
+      // A gallery panel may remain open while records/assets are invalidated.
+      // Invalidate its consumer generations too, so a late response cannot
+      // repaint an already-cleared panel with stale items.
+      if (typeof STUDIO !== 'undefined') STUDIO.galleryRequestSeq += 1;
+      if (typeof CREATIVE_CANVAS !== 'undefined') CREATIVE_CANVAS.galleryRequestSeq += 1;
       removeDashboardPersistCache('gallery-picker', 'items');
     }
     function normalizeGalleryPickerItems(items) {
@@ -609,13 +614,18 @@
     async function loadSelfieReferenceDataUrl() {
       if (SELFIE_REFERENCE_DATA_URL) return SELFIE_REFERENCE_DATA_URL;
       if (!SELFIE_REFERENCE_REQUEST) {
-        SELFIE_REFERENCE_REQUEST = api('/api/selfie-reference').then(res => {
+        const version = SELFIE_REFERENCE_VERSION;
+        let request;
+        request = api('/api/selfie-reference').then(res => {
           const image = String(res?.data?.image || '').trim();
-          SELFIE_REFERENCE_DATA_URL = image.startsWith('data:image/') ? image : '';
+          if (version === SELFIE_REFERENCE_VERSION) {
+            SELFIE_REFERENCE_DATA_URL = image.startsWith('data:image/') ? image : '';
+          }
           return SELFIE_REFERENCE_DATA_URL;
         }).catch(() => '').finally(() => {
-          SELFIE_REFERENCE_REQUEST = null;
+          if (SELFIE_REFERENCE_REQUEST === request) SELFIE_REFERENCE_REQUEST = null;
         });
+        SELFIE_REFERENCE_REQUEST = request;
       }
       return SELFIE_REFERENCE_REQUEST;
     }

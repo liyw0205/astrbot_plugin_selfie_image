@@ -22,6 +22,8 @@ def test_dashboard_tracks_server_config_baseline_for_domain_patches():
     assert "patch: monitoringPatch" in (ROOT / "pages" / "dashboard" / "source" / "monitoring.js").read_text(encoding="utf-8")
     assert SOURCE.count("rememberConfigServerSnapshot(res.data)") >= 3
     assert "const requestPayload = {...payload};" in SOURCE
+    assert "function restoreConfigFromServerSnapshot()" in SOURCE
+    assert "restoreConfigFromServerSnapshot();" in SOURCE
 
 
 def test_domain_patch_replaces_arrays_without_sending_unrelated_domains():

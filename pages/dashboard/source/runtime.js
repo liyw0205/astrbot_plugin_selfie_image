@@ -67,6 +67,9 @@
     const DASHBOARD_PERSIST_CACHE_WRITE_OP = new Map();
     let DASHBOARD_PERSIST_STORAGE_HYDRATION = null;
     let DASHBOARD_PERSIST_STORAGE_HYDRATED = false;
+    let DASHBOARD_PERSIST_STORAGE_DISABLED = false;
+    let DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ = 0;
+    const DASHBOARD_PERSIST_STORAGE_HYDRATION_TIMEOUT_MS = 1200;
     function dashboardPersistHash(value) {
       let hash = 2166136261;
       for (const char of String(value || '')) {
@@ -189,7 +192,7 @@
       }).catch(() => {});
     }
     async function hydrateDashboardPersistStorage() {
-      if (DASHBOARD_PERSIST_STORAGE_HYDRATED) return;
+      if (DASHBOARD_PERSIST_STORAGE_HYDRATED || DASHBOARD_PERSIST_STORAGE_DISABLED) return;
       if (DASHBOARD_PERSIST_STORAGE_HYDRATION) return DASHBOARD_PERSIST_STORAGE_HYDRATION;
       const cachesApi = dashboardPersistCacheStorage();
       if (!cachesApi) {
@@ -197,11 +200,13 @@
         return;
       }
       DASHBOARD_PERSIST_STORAGE_HYDRATION = (async () => {
+        const hydrationSeq = DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ;
         try {
           const cache = await cachesApi.open(DASHBOARD_PERSIST_CACHE_NAME);
           const requests = await cache.keys();
           const now = Date.now();
           for (const request of requests) {
+            if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
             const response = await cache.match(request);
             if (!response) continue;
             try {
@@ -212,15 +217,21 @@
               const scope = String(value?.scope || '');
               const storedAt = Number(value?.storedAt || 0);
               if (!storageKey || !namespace || !scope || !storedAt || now - storedAt > DASHBOARD_PERSIST_CACHE_TTL_MS) {
+                if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
                 await cache.delete(request);
                 continue;
               }
-              DASHBOARD_PERSIST_MEMORY.set(storageKey, {
-                namespace, key, scope, storedAt,
-                lastAccessed: Number(value?.lastAccessed || storedAt),
-                size: Number(value?.size || 0), data: value.data,
-              });
+              if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
+              const existing = DASHBOARD_PERSIST_MEMORY.get(storageKey);
+              if (!existing || Number(existing.storedAt || 0) <= storedAt) {
+                DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+                  namespace, key, scope, storedAt,
+                  lastAccessed: Number(value?.lastAccessed || storedAt),
+                  size: Number(value?.size || 0), data: value.data,
+                });
+              }
             } catch (_) {
+              if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
               await cache.delete(request);
             }
           }
@@ -228,15 +239,17 @@
             .sort((a, b) => Number(a[1]?.lastAccessed || 0) - Number(b[1]?.lastAccessed || 0));
           let totalBytes = entries.reduce((sum, item) => sum + Math.max(0, Number(item[1]?.size || 0)), 0);
           while (entries.length > DASHBOARD_PERSIST_CACHE_MAX_ENTRIES || totalBytes > DASHBOARD_PERSIST_CACHE_MAX_BYTES) {
+            if (hydrationSeq !== DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) return;
             const [storageKey, item] = entries.shift() || [];
             if (!storageKey) break;
             totalBytes -= Math.max(0, Number(item?.size || 0));
             DASHBOARD_PERSIST_MEMORY.delete(storageKey);
             await cache.delete(dashboardPersistCacheUrl(storageKey)).catch(() => {});
           }
-          DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
+          if (hydrationSeq === DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
         } catch (_) {
           // CacheStorage is optional in embedded/sandboxed browsers.
+          if (hydrationSeq === DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ) DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
         }
       })().finally(() => { DASHBOARD_PERSIST_STORAGE_HYDRATION = null; });
       return DASHBOARD_PERSIST_STORAGE_HYDRATION;
@@ -467,8 +480,11 @@
       if (changed) writeDashboardPersistIndex(index);
       clearDashboardWindowNameNamespace(namespace, predicate);
     }
-    function listDashboardPersistCache(namespace) {
-      const index = pruneDashboardPersistCache();
+    function listDashboardPersistCache(namespace, options = null) {
+      // Hydration restores several namespaces in one pass. Reusing the same
+      // pruned index/window snapshot avoids rescanning and reparsing the whole
+      // storage for every namespace on an embedded WebView refresh.
+      const index = options?.index || pruneDashboardPersistCache();
       const scope = dashboardPersistScope();
       const rows = [];
       const seen = new Set();
@@ -502,7 +518,7 @@
         seen.add(storageKey);
         rows.push({key: String(item.key || ''), data: item.data, storedAt: Number(item.storedAt || 0)});
       }
-      const fallback = pruneDashboardWindowNameCache();
+      const fallback = options?.windowCache || pruneDashboardWindowNameCache();
       for (const [storageKey, value] of Object.entries(fallback)) {
         if (seen.has(storageKey) || value?.namespace !== namespace || value?.scope !== scope) continue;
         if (dashboardPersistEntryExpired(value)) {
@@ -523,6 +539,8 @@
     const PAGE_PREFETCH_AHEAD = 3;
     const PICKER_PAGE_CACHE = new Map();
     const MANAGED_PAGE_CACHE = new Map();
+    const PICKER_PAGE_REQUEST_GENERATIONS = new Map();
+    const MANAGED_PAGE_REQUEST_GENERATIONS = new Map();
     let PICKER_CATALOG_CACHE_VERSION = 0;
     const PICKER_PANEL_STATES = new Map();
     const PICKER_SEARCH_TIMERS = new Map();
@@ -545,17 +563,23 @@
     let CONFIG_SERVER_SNAPSHOT = null;
     let CONFIG_REVISION = 0;
     let CONFIG_LOAD_SEQ = 0;
+    let CONFIG_LOAD_REQUEST = null;
+    let CONFIG_LOADED_AT = 0;
+    let CONFIG_LOADED_MUTATION_SEQ = -1;
+    const CONFIG_READ_CACHE_TTL_MS = 5000;
     let QQ_GROUP_LOAD_SEQ = 0;
     let CONFIG_MUTATION_SEQ = 0;
     // Pages are loaded on demand; startup refreshes only tabs the user opened.
     const DASHBOARD_VISITED_TABS = new Set(['base']);
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
-    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
+    let SELFIE_REFERENCE_VERSION = 0;
+    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", galleryRequestSeq: 0, nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
     let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0 };
     const PICKER_CACHE = {
       tags: {data: [], loadedAt: 0, request: null, version: 0},
     };
+    let ASSET_TAG_LOAD_SEQ = 0;
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -571,6 +595,7 @@
     let RECORD_LOAD_SEQ = 0;
     let ASSET_LOAD_SEQ = 0;
     const METRICS_REQUESTS = new Map();
+    let METRICS_LOAD_SEQ = 0;
     let METRICS_CONTENTS = {};
     let ACTIVE_METRICS_CATEGORY = '';
     const TASK_REQUESTS = new Map();
@@ -660,6 +685,19 @@
       await hydrateDashboardPersistStorage();
       const scope = dashboardPersistScope();
       if (DASHBOARD_PERSIST_HYDRATED_SCOPE && DASHBOARD_PERSIST_HYDRATED_SCOPE !== scope) {
+        DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ += 1;
+        PICKER_CATALOG_CACHE_VERSION += 1;
+        RECORD_PAGE_CACHE_VERSION += 1;
+        ASSET_PAGE_CACHE_VERSION += 1;
+        RECORD_LOAD_SEQ += 1;
+        ASSET_LOAD_SEQ += 1;
+        ASSET_TAG_LOAD_SEQ += 1;
+        PICKER_PAGE_REQUEST_GENERATIONS.clear();
+        MANAGED_PAGE_REQUEST_GENERATIONS.clear();
+        PICKER_CACHE.tags.version += 1;
+        GALLERY_PICKER_CACHE.version += 1;
+        STUDIO.galleryRequestSeq += 1;
+        CREATIVE_CANVAS.galleryRequestSeq += 1;
         for (const controller of [...RECORD_PAGE_CONTROLLERS.values(), ...ASSET_PAGE_CONTROLLERS.values()]) {
           try { controller.abort(); } catch (_) {}
         }
@@ -675,10 +713,13 @@
         GALLERY_PICKER_CACHE.loaded = false;
       }
       DASHBOARD_PERSIST_HYDRATED_SCOPE = scope;
-      for (const entry of listDashboardPersistCache('picker-page')) {
+      const persistedIndex = pruneDashboardPersistCache();
+      const persistedWindowName = pruneDashboardWindowNameCache();
+      const listOptions = {index: persistedIndex, windowCache: persistedWindowName};
+      for (const entry of listDashboardPersistCache('picker-page', listOptions)) {
         if (entry.key) PICKER_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
       }
-      for (const entry of listDashboardPersistCache('managed-page')) {
+      for (const entry of listDashboardPersistCache('managed-page', listOptions)) {
         if (entry.key) MANAGED_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
       }
       const tags = readDashboardPersistCache('asset-tags', 'all');
@@ -686,11 +727,11 @@
         PICKER_CACHE.tags.data = tags;
         PICKER_CACHE.tags.loadedAt = Date.now();
       }
-      const recordPages = listDashboardPersistCache('record-page');
+      const recordPages = listDashboardPersistCache('record-page', listOptions);
       for (const entry of recordPages) {
         if (entry.key && entry.data?.rows && entry.data?.meta) RECORD_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: Date.now(), persistedAt: entry.storedAt || 0}));
       }
-      const assetPages = listDashboardPersistCache('asset-page');
+      const assetPages = listDashboardPersistCache('asset-page', listOptions);
       for (const entry of assetPages) {
         if (entry.key && entry.data?.rows && entry.data?.meta) ASSET_PAGE_CACHE.set(entry.key, Object.assign({}, entry.data, {cachedAt: Date.now(), persistedAt: entry.storedAt || 0}));
       }
@@ -711,7 +752,22 @@
       }
       DASHBOARD_PERSIST_HYDRATION_SCOPE = scope;
       const ready = Promise.resolve()
-        .then(() => hydrateDashboardPersistentCaches())
+        .then(async () => {
+          const hydration = hydrateDashboardPersistStorage();
+          let timedOut = false;
+          await Promise.race([
+            hydration,
+            new Promise(resolve => setTimeout(() => { timedOut = true; resolve(); }, DASHBOARD_PERSIST_STORAGE_HYDRATION_TIMEOUT_MS)),
+          ]);
+          if (timedOut && !DASHBOARD_PERSIST_STORAGE_HYDRATED) {
+            // A hung CacheStorage must not block the first API request. The
+            // late operation may finish in the background, but this page will
+            // not await it again during the current session.
+            DASHBOARD_PERSIST_STORAGE_HYDRATION_SEQ += 1;
+            DASHBOARD_PERSIST_STORAGE_DISABLED = true;
+          }
+          await hydrateDashboardPersistentCaches();
+        })
         .catch(() => {});
       DASHBOARD_PERSIST_HYDRATION_READY = ready;
       return ready;
@@ -1036,6 +1092,10 @@ Source prompt:
         CONFIG_SERVER_SNAPSHOT = {};
       }
       return CONFIG_SERVER_SNAPSHOT;
+    }
+    function markConfigLoaded() {
+      CONFIG_LOADED_AT = Date.now();
+      CONFIG_LOADED_MUTATION_SEQ = CONFIG_MUTATION_SEQ;
     }
 
     function fillForms() {

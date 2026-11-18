@@ -80,6 +80,7 @@
         if (root) root.dataset.dirty = '';
         syncMetricAlertForm(true);
         showToast('告警阈值已保存', 'ok');
+        invalidateMetricsRequests();
         await loadMetrics();
       } catch (error) {
         showToast(error.message || '告警阈值保存失败', 'bad');
@@ -87,12 +88,14 @@
         if (button) button.disabled = false;
       }
     }
-    async function loadMetricsNow() {
+    async function loadMetricsNow(windowKey = 'all', requestSeq = METRICS_LOAD_SEQ) {
       const root = $('monitorMetricButtons');
       if (!root) return;
       try {
-        const windowKey = $('monitorMetricsWindow')?.value || 'all';
         const res = await api('/api/metrics?window=' + encodeURIComponent(windowKey));
+        // Changing the statistics window starts a new generation. A slower
+        // response for the previous window must not replace the current view.
+        if (requestSeq !== METRICS_LOAD_SEQ || windowKey !== String($('monitorMetricsWindow')?.value || 'all')) return;
         const d = res.data || {};
         syncMetricAlertForm();
         const windowLabel = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部保留记录';
@@ -190,6 +193,7 @@
         root.innerHTML = categories.map(category => `<button class="secondary metrics-launcher" type="button" data-metrics-category="${category.key}"><strong>${category.title}</strong><span>${category.summary}</span></button>`).join('');
         if (ACTIVE_METRICS_CATEGORY && $('metricsModal')?.classList.contains('show')) renderMetricsCategory(ACTIVE_METRICS_CATEGORY);
       } catch (e) {
+        if (requestSeq !== METRICS_LOAD_SEQ || windowKey !== String($('monitorMetricsWindow')?.value || 'all')) return;
         METRICS_CONTENTS = {};
         root.classList.add('metrics-error');
         root.textContent = e.message || '统计读取失败';
@@ -214,13 +218,19 @@
     async function loadMetrics() {
       const key = String($('monitorMetricsWindow')?.value || 'all');
       const existing = METRICS_REQUESTS.get(key);
-      if (existing) return existing;
-      let request;
-      request = loadMetricsNow().finally(() => {
-        if (METRICS_REQUESTS.get(key) === request) METRICS_REQUESTS.delete(key);
+      if (existing && existing.seq === METRICS_LOAD_SEQ) return existing.promise;
+      if (existing) METRICS_REQUESTS.delete(key);
+      const requestSeq = ++METRICS_LOAD_SEQ;
+      const entry = {seq: requestSeq, promise: null};
+      entry.promise = loadMetricsNow(key, requestSeq).finally(() => {
+        if (METRICS_REQUESTS.get(key) === entry) METRICS_REQUESTS.delete(key);
       });
-      METRICS_REQUESTS.set(key, request);
-      return request;
+      METRICS_REQUESTS.set(key, entry);
+      return entry.promise;
+    }
+    function invalidateMetricsRequests() {
+      METRICS_LOAD_SEQ += 1;
+      METRICS_REQUESTS.clear();
     }
     function taskQueueStatusLabel(status) {
       return ({queued:'排队', running:'进行中', succeeded:'完成', partial_success:'部分完成', failed:'失败', delivery_failed:'生成成功但发送失败', cancelled:'已取消', expired:'已过期'})[status] || status || '未知';
