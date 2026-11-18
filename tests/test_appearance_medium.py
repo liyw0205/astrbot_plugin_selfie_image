@@ -162,6 +162,21 @@ def test_auto_cos_with_reference_preserves_reference_medium():
     assert "禁止动漫插画" not in prompt
 
 
+def test_special_cos_skin_rule_is_not_repeated_by_realism_contract():
+    action = build_cos_look_action(
+        "",
+        camera="third",
+        appearance_type="real",
+        force_id="original_veranda_green_side_profile",
+    )
+    assert action.count("过度磨皮") == 1
+    with tempfile.TemporaryDirectory() as tmp:
+        persona = PersonaManager(tmp)
+        persona.set_appearance_type("real")
+        prompt = persona.build_selfie_prompt(action, "bot", "tone", False, 0)
+    assert prompt.count("磨皮") == 1
+
+
 def test_request_negative_finalization_is_idempotent_and_keeps_special_prompt():
     look = get_cos_look_by_id("ark_ceobe_wilderness")
     action = build_cos_third_person_prompt(look["prompt"])

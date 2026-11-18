@@ -196,6 +196,13 @@ def photographic_realism_prompt(
     kind = resolve_appearance_type(appearance_type)
     if kind == "anime":
         return ""
+    has_skin_retouching_rule = bool(
+        re.search(
+            r"磨皮|美颜(?:滤镜|修图)?|skin\s+smoothing|skin\s+retouching|beauty\s+filter",
+            str(existing_text or ""),
+            re.I,
+        )
+    )
     if language == "en":
         scope = (
             "Apply the following photographic realism rules only when the primary identity reference or character settings use live-action photography. "
@@ -211,7 +218,11 @@ def photographic_realism_prompt(
             "Use the everyday capture quality of an ordinary phone or camera, following the selected camera, pose, framing, scene, and light; an explicitly requested photographic style takes priority. "
             "Retain subtle skin texture and local skin-tone variation visible at this distance, with natural folds, slight deformation, and contact shadows where joints bend or weight is supported. "
             "Fabric detail follows its thickness, tension, and distance. Exposure, white balance, reflections, and depth of field belong to one capture. "
-            "Avoid uniform skin smoothing, waxy highlights, excessive blur, or over-sharpened fabric by default; do not manufacture pores or noise."
+            + (
+                ""
+                if has_skin_retouching_rule
+                else "Avoid uniform skin smoothing, waxy highlights, excessive blur, or over-sharpened fabric by default; do not manufacture pores or noise."
+            )
         )
     else:
         scope = (
@@ -225,10 +236,20 @@ def photographic_realism_prompt(
         finish = (
             "像普通手机或相机在现场拍摄的生活照片，遵循本次选定的机位、姿势、景别、场景和光源，用户明确指定的摄影风格优先。"
             "皮肤保留当前取景尺度可见的轻微纹理和局部肤色差异；屈伸、承重与接触处有自然褶皱、轻微形变和接触阴影，织物细节随厚度、受力与距离变化。"
-            "曝光、白平衡、反光与景深像同一次拍摄，默认避免全身均匀磨皮、蜡质高光、过度虚化或过锐的衣料纹理，不刻意添加毛孔和噪点。"
+            "曝光、白平衡、反光与景深像同一次拍摄。"
+            + (
+                ""
+                if has_skin_retouching_rule
+                else "默认避免全身均匀磨皮、蜡质高光、过度虚化或过锐的衣料纹理，不刻意添加毛孔和噪点。"
+            )
         )
     prompt = _join(scope, reference, finish)
-    return "" if prompt in existing_text else prompt
+    # ``existing_text`` often contains the prompt being assembled as a nested
+    # action body. Checking whether the whole generated prompt is a substring
+    # therefore suppresses a fresh realism contract on every rebuild. Use a
+    # stable detail sentence as the idempotency marker instead.
+    realism_marker = "local skin-tone variation" if language == "en" else "局部肤色差异"
+    return "" if realism_marker in str(existing_text or "") else prompt
 
 
 def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: str) -> str:
@@ -366,7 +387,11 @@ def build_selfie_builtin_prompt(
             effective_appearance_type,
             language=language,
             has_reference_image=has_reference_image,
-            existing_text=prompt,
+            # ``action_content`` is not emitted by every language/mode path
+            # (notably the compact Chinese selfie scaffold).  Only inspect
+            # text that is both a source of custom rules and part of the
+            # assembled prompt when deciding whether realism is already there.
+            existing_text=_join(prompt, raw_action),
         )
         return _join(prompt, realism, final_style)
 
