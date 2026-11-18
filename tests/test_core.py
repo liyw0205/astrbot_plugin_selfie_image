@@ -8379,7 +8379,7 @@ class LegFocusTests(unittest.TestCase):
             {item["id"] for item in plugin_main.match_cos_look_sets("汉服")},
             {
                 "hanfu_peach", "mint_sheer_hanfu", "silver_deepv_hanfu",
-                "ancient_hanfu_halter_dudou",
+                "ancient_hanfu_halter_dudou", "ancient_cream_gray_floral_hanfu",
             },
         )
         for query in ("银紫深V广袖", "古风·汉服·银紫深V广袖"):
@@ -8399,6 +8399,12 @@ class LegFocusTests(unittest.TestCase):
                 "ancient_white_gold_red_sleeves", "ancient_white_blue_backless_gauze",
                 "ancient_moonwhite_gauze_ruqun", "ancient_lotus_short_qipao",
                 "ancient_waterblue_chest_ruqun",
+                "ancient_new_chinese_cool_olive", "ancient_blush_pink_twin_bun_ruqun",
+                "ancient_ming_white_pink_flower_crown", "ancient_pink_floral_wine_sash",
+                "ancient_iceblue_pink_ribbon_dress", "ancient_bluegray_flower_crown_robe",
+                "ancient_cream_gray_floral_hanfu", "ancient_iceblue_sleepwear_ruqun",
+                "ancient_lavender_gold_collar_hanfu", "ancient_palegreen_floral_embroidery",
+                "ancient_warring_states_burgundy_crown",
             },
         )
         self.assertEqual(

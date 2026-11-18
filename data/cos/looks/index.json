@@ -49,7 +49,7 @@
     {
       "cos_type": "古风",
       "file": "古风.json",
-      "count": 17
+      "count": 28
     },
     {
       "cos_type": "和风",
@@ -250,6 +250,17 @@
     "original_wa_lift_yukata_short",
     "ancient_moonwhite_gauze_ruqun",
     "ancient_waterblue_chest_ruqun",
+    "ancient_new_chinese_cool_olive",
+    "ancient_blush_pink_twin_bun_ruqun",
+    "ancient_ming_white_pink_flower_crown",
+    "ancient_pink_floral_wine_sash",
+    "ancient_iceblue_pink_ribbon_dress",
+    "ancient_bluegray_flower_crown_robe",
+    "ancient_cream_gray_floral_hanfu",
+    "ancient_iceblue_sleepwear_ruqun",
+    "ancient_lavender_gold_collar_hanfu",
+    "ancient_palegreen_floral_embroidery",
+    "ancient_warring_states_burgundy_crown",
     "original_wa_yukata_loose",
     "azur_lane_akagi",
     "azur_lane_kaga",
