@@ -205,9 +205,13 @@
       const storedAt = Number(cached?.storedAt || 0);
       const value = cached?.data;
       if (!storedAt || Date.now() - storedAt >= BACKUP_LIST_CACHE_TTL_MS
-        || !Array.isArray(value?.options) || !value?.list || typeof value.list !== 'object') return false;
-      BACKUP_OPTIONS_CACHE = value.options;
-      BACKUP_OPTIONS_LOADED = true;
+        || !value?.list || typeof value.list !== 'object') return false;
+      // The backup list is intentionally persisted before /api/backups/options
+      // is queried. An empty options array therefore means "not loaded yet",
+      // rather than a valid empty selection set.
+      const options = Array.isArray(value.options) && value.options.length ? value.options : null;
+      BACKUP_OPTIONS_CACHE = options;
+      BACKUP_OPTIONS_LOADED = Boolean(options);
       BACKUP_LIST_CACHE = value.list;
       BACKUP_LIST_CACHE_AT = storedAt;
       return true;
@@ -230,7 +234,7 @@
     }
 
     async function loadBackupOptions(force = false) {
-      if (!force && Array.isArray(BACKUP_OPTIONS_CACHE)) {
+      if (!force && BACKUP_OPTIONS_LOADED && Array.isArray(BACKUP_OPTIONS_CACHE)) {
         BACKUP_OPTIONS_LOADED = true;
         BACKUP_OPTIONS = BACKUP_OPTIONS_CACHE;
         renderBackupOptions();

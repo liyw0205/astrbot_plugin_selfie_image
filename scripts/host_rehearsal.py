@@ -37,6 +37,8 @@ MAX_OUTPUT_SAMPLE_BYTES = 8192
 DEFAULT_COMMAND_TIMEOUT = 300.0
 DEFAULT_HEALTH_TIMEOUT = 90.0
 DEFAULT_HEALTH_INTERVAL = 1.0
+DATA_CLEANUP_RETRIES = 5
+DATA_CLEANUP_RETRY_DELAY = 0.1
 
 
 class RehearsalError(ValueError):
@@ -120,6 +122,41 @@ def _directory_identity(path: Path) -> tuple[int, int] | None:
     return info.st_dev, info.st_ino
 
 
+def _probe_data_root_writable(path: Path) -> None:
+    """Exercise the same create/delete operations the host needs at startup.
+
+    ``os.access`` is not reliable for Windows ACLs (and is especially
+    misleading when the runner is elevated), so use a real temporary file
+    probe immediately before launching the host.  The probe is bounded and
+    leaves no file behind when the directory allows cleanup.
+    """
+    probe_path: Path | None = None
+    try:
+        descriptor, raw_path = tempfile.mkstemp(prefix=".selfie-host-probe-", dir=str(path))
+        os.close(descriptor)
+        probe_path = Path(raw_path)
+        probe_path.unlink()
+    except OSError as error:
+        if probe_path is not None:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise RehearsalError("data_root: directory is not writable") from error
+
+
+def _assert_data_root_snapshot(
+    data_root: Path, expected_path: Path, expected_identity: tuple[int, int] | None,
+) -> None:
+    if (
+        data_root.is_symlink()
+        or data_root.resolve(strict=False) != expected_path
+        or _directory_identity(data_root) != expected_identity
+        or any(data_root.iterdir())
+    ):
+        raise RehearsalError("data_root: changed after validation")
+
+
 def _prepare_data_root(config: Mapping[str, Any]) -> tuple[int, int] | None:
     """Recheck the preflight snapshot and create only a still-absent root."""
     data_root = Path(config["data_root"])
@@ -131,10 +168,14 @@ def _prepare_data_root(config: Mapping[str, Any]) -> tuple[int, int] | None:
     if config["data_root_preexisting"]:
         if (
             not data_root.is_dir()
+            or data_root.is_symlink()
+            or data_root.resolve(strict=False) != expected_path
             or _directory_identity(data_root) != expected_identity
             or any(data_root.iterdir())
         ):
             raise RehearsalError("data_root: changed after validation")
+        _probe_data_root_writable(data_root)
+        _assert_data_root_snapshot(data_root, expected_path, expected_identity)
         return None
 
     if data_root.exists():
@@ -149,6 +190,22 @@ def _prepare_data_root(config: Mapping[str, Any]) -> tuple[int, int] | None:
     identity = _directory_identity(data_root)
     if identity is None or not data_root.is_dir() or data_root.is_symlink():
         raise RehearsalError("data_root: changed after validation")
+    try:
+        _probe_data_root_writable(data_root)
+    except RehearsalError:
+        # Do not leave a runner-created empty directory behind when the host
+        # cannot write it.  Preserve it if an external actor changed it.
+        if (
+            not data_root.is_symlink()
+            and _directory_identity(data_root) == identity
+            and not any(data_root.iterdir())
+        ):
+            try:
+                data_root.rmdir()
+            except OSError:
+                pass
+        raise
+    _assert_data_root_snapshot(data_root, expected_path, identity)
     return identity
 
 
@@ -556,6 +613,8 @@ def run_rehearsal(config: Mapping[str, Any], *, keep_data: bool = False) -> dict
         "shutdown": stop_result,
     }
     if not keep_data:
+        cleanup_attempts = 0
+        cleanup_error = ""
         try:
             if config["data_root_preexisting"]:
                 report["data_cleanup"] = "preserved_existing_empty"
@@ -568,13 +627,45 @@ def run_rehearsal(config: Mapping[str, Any], *, keep_data: bool = False) -> dict
                     report["data_cleanup"] = "preserved_changed"
                     report["status"] = "failed"
                 else:
-                    shutil.rmtree(data_root)
-                    report["data_cleanup"] = "removed"
+                    for attempt in range(1, DATA_CLEANUP_RETRIES + 1):
+                        cleanup_attempts = attempt
+                        if (
+                            data_root.is_symlink()
+                            or data_root.resolve(strict=False) != Path(config["data_root_resolved"])
+                            or _directory_identity(data_root) != created_data_root_identity
+                        ):
+                            report["data_cleanup"] = "preserved_changed"
+                            report["status"] = "failed"
+                            cleanup_error = "changed_after_validation"
+                            break
+                        try:
+                            shutil.rmtree(data_root)
+                            report["data_cleanup"] = "removed"
+                            break
+                        except FileNotFoundError:
+                            # A concurrent host shutdown may have removed the
+                            # directory after the identity check.
+                            if not data_root.exists():
+                                report["data_cleanup"] = "removed"
+                                break
+                            cleanup_error = "FileNotFoundError"
+                        except OSError as error:
+                            cleanup_error = type(error).__name__
+                        if attempt < DATA_CLEANUP_RETRIES:
+                            time.sleep(DATA_CLEANUP_RETRY_DELAY)
+                    else:
+                        report["data_cleanup"] = "failed"
+                        report["status"] = "failed"
         except OSError:
             report["data_cleanup"] = "failed"
             report["status"] = "failed"
+            cleanup_error = cleanup_error or "OSError"
+        report["data_cleanup_attempts"] = cleanup_attempts
+        if cleanup_error:
+            report["data_cleanup_error"] = cleanup_error
     else:
         report["data_cleanup"] = "kept"
+        report["data_cleanup_attempts"] = 0
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
     return report

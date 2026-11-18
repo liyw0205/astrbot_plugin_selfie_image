@@ -141,6 +141,55 @@ vm.runInContext(source + '\nglobalThis.handlers={loadBackupManager,loadBackupOpt
     assert result.returncode == 0, result.stderr
 
 
+def test_backup_list_cache_does_not_mark_deferred_options_as_loaded():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable")
+    source = Path(__file__).resolve().parents[1] / "pages/dashboard/source/backup_manager.js"
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+
+async function scenario(cachedOptions, expectedOptionCalls) {
+  const calls = [];
+  const element = () => ({innerHTML:'', textContent:'', hidden:false, disabled:false,
+    querySelectorAll:() => [], addEventListener:() => {}, focus:() => {}});
+  const elements = new Map();
+  const context = vm.createContext({
+    Date: {now: () => 1000}, Promise, setTimeout, clearTimeout,
+    document: {contains:() => false, activeElement:null},
+    $: id => elements.get(id) || (elements.set(id, element()), elements.get(id)),
+    escapeHtml: String,
+    readDashboardPersistCacheEntry: () => ({storedAt: 1000, data: {
+      options: cachedOptions,
+      list: {items: [], max: 5, can_create: true, restore_pending: false},
+    }}),
+    writeDashboardPersistCache: () => true,
+    removeDashboardPersistCache: () => {},
+    api: async path => {
+      calls.push(path);
+      assert.equal(path, '/api/backups/options');
+      return {data: {items: [{id: 'config', label: '配置', required: true}]}};
+    },
+  });
+  vm.runInContext(source + '\nglobalThis.handlers={restorePersistedBackupManager,loadBackupOptions};', context);
+  assert.equal(context.handlers.restorePersistedBackupManager(), true);
+  await context.handlers.loadBackupOptions();
+  await context.handlers.loadBackupOptions();
+  assert.equal(calls.filter(path => path === '/api/backups/options').length, expectedOptionCalls);
+}
+
+(async () => {
+  await scenario([], 1);
+  await scenario([{id:'config', label:'配置', required:true}], 0);
+})().catch(error => { process.stderr.write(error.stack + '\n'); process.exitCode = 1; });
+"""
+    result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_archive_upload_slices_replay_and_cancel():
     node = shutil.which("node")
     if not node:

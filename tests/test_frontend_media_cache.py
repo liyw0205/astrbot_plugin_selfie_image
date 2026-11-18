@@ -245,6 +245,42 @@ assert(!String(window.name).includes('fixture'));
     assert result.returncode == 0, result.stderr
 
 
+def test_dashboard_persistence_scope_uses_active_login_token_before_storage_write():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable")
+    source = Path(__file__).resolve().parents[1] / "pages/dashboard/source/runtime.js"
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+const window = {
+  name: '',
+  localStorage: {
+    getItem() { throw new Error('storage unavailable'); },
+    setItem() { throw new Error('storage unavailable'); },
+    removeItem() { throw new Error('storage unavailable'); },
+  },
+  location: {pathname: '/dashboard'},
+};
+window.parent = window;
+const context = vm.createContext({
+  window, Date: {now: () => 1000},
+  document: {getElementById: () => null, querySelectorAll: () => []},
+  setTimeout, clearTimeout,
+});
+vm.runInContext(source + `
+AUTH_TOKEN = 'entered-before-config';
+globalThis.handlers = {scope: dashboardPersistScope, key: dashboardPersistKey};
+`, context);
+assert.match(context.handlers.scope(), /^token:/);
+assert.match(context.handlers.key('managed-page', 'image::1'), /^selfieImageDashboardCache:v1:token:/);
+""";
+    result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_backup_metadata_uses_short_persisted_cache_without_scanning_selected_data():
     assert "const BACKUP_PERSIST_NAMESPACE = 'backup-manager';" in PAGE
     assert "restorePersistedBackupManager()" in PAGE

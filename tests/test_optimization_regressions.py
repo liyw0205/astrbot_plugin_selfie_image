@@ -48,6 +48,7 @@ from astrbot_plugin_selfie_image.features.config_manager import (
     ConfigurationMixin,
     ConfigRevisionConflictError,
 )
+from astrbot_plugin_selfie_image.features import config_manager as config_manager_module
 from astrbot_plugin_selfie_image.features.conversation_context import ConversationContextMixin
 from astrbot_plugin_selfie_image.generation.asset_collections import AssetCollectionStore
 from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
@@ -415,6 +416,137 @@ def test_config_domain_patch_merges_objects_replaces_lists_and_preserves_credent
     assert plugin.raw_config["proxies"][0]["name"] == "after"
     assert plugin.raw_config["proxies"][0]["password"] == "proxy-secret"
     assert saved["image_channels"][0]["api_key"] == "******"
+
+
+def _shared_config_plugin(path: Path):
+    """Build a lightweight second plugin instance over the same config path."""
+    import threading
+
+    plugin = object.__new__(ConfigurationMixin)
+    plugin._config_lock = threading.RLock()
+    plugin.config_path = str(path)
+    plugin.key_config = {"web": {"enable": False, "token": "token"}}
+    plugin.raw_config, plugin.config = plugin._load_initial_config_state()
+    return plugin
+
+
+def test_config_revision_rejects_stale_second_instance_snapshot(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    first = _shared_config_plugin(path)
+    first._apply_raw_config({"compatibility_field": {"writer": "first"}})
+
+    second = _shared_config_plugin(path)
+    stale_revision = second.get_config_revision()
+    assert stale_revision == first.get_config_revision()
+
+    first.update_config_from_web(
+        {"compatibility_field": {"writer": "first-new"}},
+        expected_revision=stale_revision,
+    )
+    current_revision = first.get_config_revision()
+    assert current_revision > stale_revision
+
+    with pytest.raises(ConfigRevisionConflictError):
+        second.update_config_from_web(
+            {"compatibility_field": {"writer": "stale-second"}},
+            expected_revision=stale_revision,
+        )
+    assert first.raw_config["compatibility_field"]["writer"] == "first-new"
+    assert json.loads(path.read_text(encoding="utf-8"))["compatibility_field"]["writer"] == "first-new"
+
+    # Legacy callers that omit transport revision are still protected by the
+    # file fingerprint check inside the shared write lock.
+    with pytest.raises(ConfigRevisionConflictError):
+        second.update_config_from_web({"compatibility_field": {"writer": "legacy-stale"}})
+    assert json.loads(path.read_text(encoding="utf-8"))["compatibility_field"]["writer"] == "first-new"
+
+
+def test_config_get_reconciles_external_writer_before_returning_snapshot(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    first = _shared_config_plugin(path)
+    first._apply_raw_config({"compatibility_field": {"writer": "first"}})
+    second = _shared_config_plugin(path)
+
+    first.update_config_from_web({"compatibility_field": {"writer": "updated"}})
+    assert second.raw_config["compatibility_field"]["writer"] == "first"
+    exported = second.get_config_for_web()
+    assert exported["compatibility_field"]["writer"] == "updated"
+    assert second.get_config_revision() == first.get_config_revision()
+
+
+def test_config_revision_reconciles_metadata_write_failure(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "config.json"
+    plugin = _shared_config_plugin(path)
+    plugin._apply_raw_config({"compatibility_field": {"writer": "initial"}})
+    before = plugin.get_config_revision()
+    real_save = config_manager_module.save_json_file
+
+    def fail_revision_sidecar(target, data):
+        if str(target).endswith(".revision.json"):
+            raise OSError("injected revision metadata failure")
+        return real_save(target, data)
+
+    monkeypatch.setattr(config_manager_module, "save_json_file", fail_revision_sidecar)
+    plugin.update_config_from_web(
+        {"compatibility_field": {"writer": "after"}},
+        expected_revision=before,
+    )
+    assert json.loads(path.read_text(encoding="utf-8"))["compatibility_field"]["writer"] == "after"
+
+    # A new instance reconstructs the lost sidecar revision from the live file
+    # fingerprint instead of accepting the old revision and overwriting it.
+    monkeypatch.setattr(config_manager_module, "save_json_file", real_save)
+    recovered = _shared_config_plugin(path)
+    assert recovered.get_config_revision() == plugin.get_config_revision()
+    assert recovered.raw_config["compatibility_field"]["writer"] == "after"
+
+
+def test_config_revision_detects_external_creation_after_missing_snapshot(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    stale = _shared_config_plugin(path)
+    stale_revision = stale.get_config_revision()
+    path.write_text(json.dumps({"compatibility_field": {"writer": "external"}}), encoding="utf-8")
+
+    with pytest.raises(ConfigRevisionConflictError) as conflict:
+        stale.update_config_from_web(
+            {"compatibility_field": {"writer": "old"}},
+            expected_revision=stale_revision,
+        )
+    assert conflict.value.current > stale_revision
+    assert json.loads(path.read_text(encoding="utf-8"))["compatibility_field"]["writer"] == "external"
+
+    restarted = _shared_config_plugin(path)
+    assert restarted.get_config_revision() > stale_revision
+
+
+def test_config_revision_lock_failure_preserves_unreadable_source(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "config.json"
+    original = b"{broken-json"
+    path.write_bytes(original)
+
+    class BlockedLock:
+        def __enter__(self):
+            raise PermissionError("locked")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        config_manager_module,
+        "_cross_process_file_lock",
+        lambda *_args, **_kwargs: BlockedLock(),
+    )
+    plugin = object.__new__(ConfigurationMixin)
+    plugin._config_lock = __import__("threading").RLock()
+    plugin.config_path = str(path)
+    plugin.key_config = {"web": {"enable": False, "token": "token"}}
+    plugin.raw_config, plugin.config = plugin._load_initial_config_state()
+
+    assert plugin._config_storage_blocked is True
+    assert path.read_bytes() == original
+    with pytest.raises(RuntimeError, match="停止覆盖原文件"):
+        plugin.update_config_from_web({"image": {"width": 512}})
+    assert path.read_bytes() == original
 
 
 def test_config_controller_unwraps_patch_and_forwards_top_level_revision() -> None:

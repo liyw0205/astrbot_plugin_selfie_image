@@ -130,6 +130,112 @@ def test_invalid_config_does_not_create_data_root_parents(tmp_path: Path) -> Non
     assert not parent.exists()
 
 
+def test_rehearsal_round_trips_unicode_deep_data_root(tmp_path: Path) -> None:
+    # This stays below the per-component limit while exercising a path longer
+    # than the legacy Windows MAX_PATH boundary and preserving UTF-8 names.
+    data_root = tmp_path
+    for index in range(18):
+        data_root /= f"中文数据目录-{index:02d}-" + ("x" * 12)
+    data_root /= "隔离宿主数据-" + ("y" * 48)
+    raw = _config(tmp_path, _free_port())
+    raw["data_root"] = str(data_root)
+    config = validate_config(raw, config_path=tmp_path / "config.json")
+
+    report = run_rehearsal(config)
+
+    assert report["status"] == "passed"
+    assert report["data_cleanup"] == "removed"
+    assert report["data_cleanup_attempts"] == 1
+    assert not data_root.exists()
+
+
+def test_prepare_rejects_unwritable_data_root_before_starting_host(tmp_path: Path, monkeypatch) -> None:
+    raw = _config(tmp_path, _free_port())
+    config = validate_config(raw, config_path=tmp_path / "config.json")
+    launched: list[bool] = []
+    monkeypatch.setattr(
+        host_rehearsal.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: launched.append(True),
+    )
+
+    def reject_probe(*_args, **_kwargs):
+        raise PermissionError("simulated read-only data root")
+
+    monkeypatch.setattr(host_rehearsal.tempfile, "mkstemp", reject_probe)
+    with pytest.raises(RehearsalError, match="data_root: directory is not writable"):
+        run_rehearsal(config)
+
+    assert launched == []
+    assert not Path(raw["data_root"]).exists()
+
+
+def test_prepare_rechecks_root_after_write_probe(tmp_path: Path, monkeypatch) -> None:
+    raw = _config(tmp_path, _free_port())
+    config = validate_config(raw, config_path=tmp_path / "config.json")
+    launched: list[bool] = []
+    monkeypatch.setattr(
+        host_rehearsal.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: launched.append(True),
+    )
+
+    def replace_after_probe(path: Path) -> None:
+        original = path.with_name("runner-created-original")
+        path.rename(original)
+        path.mkdir()
+
+    monkeypatch.setattr(host_rehearsal, "_probe_data_root_writable", replace_after_probe)
+    with pytest.raises(RehearsalError, match="data_root: changed after validation"):
+        run_rehearsal(config)
+
+    assert launched == []
+    assert Path(raw["data_root"]).is_dir()
+    assert (Path(raw["data_root"]).parent / "runner-created-original").is_dir()
+
+
+def test_cleanup_retries_transient_windows_file_lock(tmp_path: Path, monkeypatch) -> None:
+    config = validate_config(_config(tmp_path, _free_port()), config_path=tmp_path / "config.json")
+    remove = host_rehearsal.shutil.rmtree
+    attempts = 0
+
+    def locked_once(path, *args, **kwargs):
+        nonlocal attempts
+        if Path(path) == Path(config["data_root"]) and attempts < 2:
+            attempts += 1
+            raise PermissionError("simulated Windows sharing violation")
+        return remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(host_rehearsal.shutil, "rmtree", locked_once)
+    report = run_rehearsal(config)
+
+    assert report["status"] == "passed"
+    assert report["data_cleanup"] == "removed"
+    assert report["data_cleanup_attempts"] == 3
+    assert report["data_cleanup_error"] == "PermissionError"
+    assert not Path(config["data_root"]).exists()
+
+
+def test_cleanup_preserves_data_on_permanent_windows_file_lock(tmp_path: Path, monkeypatch) -> None:
+    config = validate_config(_config(tmp_path, _free_port()), config_path=tmp_path / "config.json")
+    remove = host_rehearsal.shutil.rmtree
+
+    def permanently_locked(path, *args, **kwargs):
+        if Path(path) == Path(config["data_root"]):
+            raise PermissionError("simulated Windows sharing violation")
+        return remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(host_rehearsal.shutil, "rmtree", permanently_locked)
+    report = run_rehearsal(config)
+
+    assert report["status"] == "failed"
+    assert report["data_cleanup"] == "failed"
+    assert report["data_cleanup_attempts"] == host_rehearsal.DATA_CLEANUP_RETRIES
+    assert report["data_cleanup_error"] == "PermissionError"
+    assert Path(config["data_root"]).is_dir()
+    remove(config["data_root"])
+
+
 @pytest.mark.parametrize("preexisting", [False, True])
 def test_rehearsal_rechecks_data_root_before_starting_host(
     tmp_path: Path, monkeypatch, preexisting: bool,

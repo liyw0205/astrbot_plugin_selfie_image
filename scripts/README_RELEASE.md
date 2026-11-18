@@ -74,13 +74,39 @@ the runner rechecks that `data_root` is still the same empty directory (or is
 still absent) observed during preflight. It removes a newly created root only
 if the path still identifies that same directory after the run; changed paths
 are preserved and reported as failure. A pre-existing empty directory is
-preserved, and `--keep-data` retains a newly created root.
+preserved, and `--keep-data` retains a newly created root. Just before launch,
+the runner performs a real create/delete probe in the data root. This catches
+Windows ACL/read-only failures before a host process starts; a runner-created
+empty root is removed again if that probe fails. Cleanup retries transient
+`PermissionError`/sharing violations five times, rechecking directory identity
+before each attempt, and reports the attempt count and error type without
+recording a path or command output.
 
 The report contains phase status, health status, durations, exit codes, error
 categories, version metadata, proxy mode, and an account fingerprint. It never
 stores command output, media, credentials, or full upstream responses. This
 runner is a prerequisite for real-host acceptance; local unit tests do not
 count as a host rehearsal.
+
+The offline contract tests also exercise UTF-8 names and a deep path beyond
+the legacy 260-character Windows boundary, plus injected read-only and
+transient/permanent file-lock failures. These tests validate runner behavior
+only; they do not prove long-path policy, ACLs, network drives, SQLite WAL
+locking, AstrBot startup, or the embedded Dashboard iframe on Windows. A real
+acceptance run must still record the Windows build, long-path policy, AstrBot
+version, isolated data root, and browser/iframe checks separately.
+
+The repository's local browser fixture can exercise the embedded-page contract
+without an AstrBot process:
+
+```sh
+node scripts/dashboard_content_smoke.js
+```
+
+It checks the iframe bridge path, hidden token login, bridge failure state and
+desktop/mobile layout. Because its bridge and API are fixtures, a passing run
+is only a browser regression signal; it is not evidence that an AstrBot host
+or Windows WebView accepted the page.
 
 ## Input Contracts
 

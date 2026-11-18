@@ -4,12 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import secrets
 import shutil
+from contextlib import contextmanager
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Dict, List, Optional
+
+try:  # Windows and POSIX expose different advisory file-lock APIs.
+    import fcntl  # type: ignore
+except ImportError:  # pragma: no cover - exercised on Windows hosts
+    fcntl = None
+
+try:  # pragma: no cover - exercised on Windows hosts
+    import msvcrt  # type: ignore
+except ImportError:
+    msvcrt = None
 
 try:
     from astrbot.api import logger
@@ -57,6 +69,51 @@ class ConfigRevisionConflictError(RuntimeError):
         super().__init__(
             f"配置已被其他页面更新（当前版本 {self.current}，提交版本 {self.expected}），请重新读取后再保存"
         )
+
+
+@contextmanager
+def _cross_process_file_lock(path: str):
+    """Hold a portable advisory lock shared by plugin instances.
+
+    ``threading.RLock`` protects one plugin object only.  The sidecar lock is
+    deliberately separate from the config file because config writes use an
+    atomic replace, which would otherwise detach a lock held on the old inode.
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    handle = open(path, "a+b")
+    locked = False
+    try:
+        if os.name == "nt" and msvcrt is not None:
+            # msvcrt.locking requires a byte to exist and the file pointer at
+            # the beginning of the locked range.
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            locked = True
+        elif fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            locked = True
+        # A platform without either module has no native advisory-lock API.
+        # Keep the context usable there; supported Windows/POSIX hosts always
+        # take one of the branches above.
+        yield
+    finally:
+        if locked:
+            try:
+                if os.name == "nt" and msvcrt is not None:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                elif fcntl is not None:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
+        else:
+            handle.close()
+
 
 # Credentials are never sent to the browser.  The dashboard still submits the
 # complete channel list when saving, so these markers must round-trip without
@@ -369,12 +426,24 @@ class ConfigurationMixin:
         if os.path.exists(self.config_path) or not os.path.exists(legacy_path):
             return
         try:
-            shutil.copy2(legacy_path, self.config_path)
+            with _cross_process_file_lock(f"{self.config_path}.lock"):
+                # Re-check after taking the shared lock: another instance may
+                # have completed the migration while this one was waiting.
+                if os.path.exists(self.config_path):
+                    return
+                shutil.copy2(legacy_path, self.config_path)
             logger.info(f"[SelfieImage] 已迁移旧配置文件: {legacy_path} -> {self.config_path}")
         except Exception as exc:
             logger.warning(f"[SelfieImage] 迁移旧配置文件失败: {exc}", exc_info=True)
 
     def _migrate_config_file_schema(self) -> Dict[str, Any]:
+        path = str(getattr(self, "config_path", "") or "")
+        if not path or not os.path.exists(path):
+            return {"migrated": False, "reason": "absent"}
+        with _cross_process_file_lock(f"{path}.lock"):
+            return self._migrate_config_file_schema_unlocked()
+
+    def _migrate_config_file_schema_unlocked(self) -> Dict[str, Any]:
         """Upgrade a persisted config without risking the only good copy.
 
         ``AICatConfig.from_dict`` already performs the in-memory legacy-key
@@ -570,6 +639,147 @@ class ConfigurationMixin:
             cleaned.pop(key, None)
         return cleaned
 
+    def _config_revision_path(self) -> str:
+        return f"{str(getattr(self, 'config_path', '') or '')}.revision.json"
+
+    def _config_lock_path(self) -> str:
+        return f"{str(getattr(self, 'config_path', '') or '')}.lock"
+
+    def _config_file_fingerprint(self) -> str:
+        """Return the content fingerprint used to detect external writers."""
+        path = str(getattr(self, "config_path", "") or "")
+        if not path or not os.path.exists(path):
+            return ""
+        digest = hashlib.sha256()
+        try:
+            with open(path, "rb") as file:
+                for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except FileNotFoundError:
+            # An atomic writer can remove/replace the path between exists() and
+            # open(); treat that as the same state as a missing config.
+            return ""
+        except OSError as exc:
+            raise RuntimeError("配置文件读取失败，已停止覆盖原文件") from exc
+        return digest.hexdigest()
+
+    def _read_config_revision_state(self) -> tuple[int, str, bool]:
+        """Read sidecar revision and reconcile it with the live file.
+
+        The boolean reports whether the sidecar was missing/invalid or carried
+        a fingerprint that no longer matches the config.  Callers holding the
+        cross-process lock may persist the returned state to publish the
+        detected external change.
+        """
+        fingerprint = self._config_file_fingerprint()
+        result = load_json_file_result(self._config_revision_path())
+        metadata = result.data if result.ok and isinstance(result.data, dict) else {}
+        try:
+            revision = max(1, int(metadata.get("revision") or 1))
+        except (TypeError, ValueError):
+            revision = 1
+        previous_fingerprint = str(metadata.get("fingerprint") or "")
+        valid = bool(result.ok and previous_fingerprint == fingerprint)
+        if valid:
+            return revision, fingerprint, False
+
+        # A fingerprint mismatch means a writer that did not share our sidecar
+        # (an older plugin build, manual edit, or restored backup) changed the
+        # config.  Advance the shared revision before accepting any write.
+        if previous_fingerprint != fingerprint and (
+            result.ok or getattr(self, "_config_fingerprint", None) is not None
+        ):
+            revision = max(revision + 1, int(getattr(self, "_config_revision", 1) or 1) + 1)
+        return revision, fingerprint, True
+
+    def _write_config_revision_state(self, revision: int, fingerprint: str) -> None:
+        """Publish revision/fingerprint after the config replace succeeds."""
+        save_json_file(
+            self._config_revision_path(),
+            {
+                "version": 1,
+                "revision": max(1, int(revision)),
+                "fingerprint": str(fingerprint or ""),
+            },
+        )
+
+    def _initialize_config_revision_state(self) -> None:
+        """Load the shared state without rewriting a healthy config on startup."""
+        if not str(getattr(self, "config_path", "") or ""):
+            self._config_revision = max(1, int(getattr(self, "_config_revision", 1) or 1))
+            self._config_fingerprint = ""
+            return
+        try:
+            with _cross_process_file_lock(self._config_lock_path()):
+                revision, fingerprint, changed = self._read_config_revision_state()
+                if changed:
+                    try:
+                        self._write_config_revision_state(revision, fingerprint)
+                    except Exception:
+                        # The live config remains readable even when its optional
+                        # metadata sidecar cannot be written (read-only installs).
+                        logger.warning(
+                            "[SelfieImage] 配置 revision 元数据写入失败，继续使用内存保护",
+                            exc_info=True,
+                        )
+                self._config_revision = revision
+                self._config_fingerprint = fingerprint
+        except (OSError, RuntimeError):
+            # Let the structured JSON loader below classify the source as
+            # unreadable/corrupt. Do not turn a protected read failure into a
+            # constructor crash or an empty-config overwrite opportunity.
+            self._config_revision = max(1, int(getattr(self, "_config_revision", 1) or 1))
+            self._config_fingerprint = None
+            logger.warning("[SelfieImage] 配置 revision 指纹读取失败，已停用该文件的写回保护", exc_info=True)
+
+    def _peek_config_revision(self) -> int:
+        """Read the shared revision for GET responses without mutating memory."""
+        if not str(getattr(self, "config_path", "") or ""):
+            return max(1, int(getattr(self, "_config_revision", 1) or 1))
+        try:
+            with _cross_process_file_lock(self._config_lock_path()):
+                revision, _fingerprint, changed = self._read_config_revision_state()
+                if changed:
+                    # Publishing here lets another stale instance observe the
+                    # same external edit, while failure remains non-fatal for
+                    # read-only dashboard requests.
+                    try:
+                        self._write_config_revision_state(revision, _fingerprint)
+                    except Exception:
+                        pass
+                return revision
+        except Exception:
+            return max(1, int(getattr(self, "_config_revision", 1) or 1))
+
+    def _refresh_config_from_disk_if_needed(self) -> bool:
+        """Adopt a healthy external config before serving a dashboard GET."""
+        baseline = getattr(self, "_config_fingerprint", None)
+        if baseline is None or not str(getattr(self, "config_path", "") or ""):
+            return False
+        try:
+            with _cross_process_file_lock(self._config_lock_path()):
+                current = self._config_file_fingerprint()
+                if current == baseline:
+                    return False
+                result = load_json_file_result(self.config_path)
+                # Never replace a healthy in-memory config with a corrupt or
+                # unreadable external file.  The existing storage guard will
+                # prevent a subsequent write from destroying that file.
+                if not result.ok and result.status != "missing":
+                    return False
+            source, normalized = self._load_initial_config_state()
+            if getattr(self, "_config_storage_blocked", False):
+                return False
+            self.raw_config = source
+            self.config = normalized
+            scheduler = getattr(self, "_image_scheduler", None)
+            if scheduler is not None:
+                scheduler.set_limit(self.config.image_max_concurrent_tasks)
+            return True
+        except Exception:
+            logger.warning("[SelfieImage] 读取外部配置更新失败，继续使用当前内存配置", exc_info=True)
+            return False
+
     def _load_initial_config(self) -> Dict[str, Any]:
         source, _ = self._load_initial_config_state()
         return source
@@ -577,9 +787,9 @@ class ConfigurationMixin:
     def _load_initial_config_state(self) -> tuple[Dict[str, Any], AICatConfig]:
         """Load raw/runtime config together, reusing normalization when safe."""
         # Revision is deliberately kept out of the persisted JSON.  It is a
-        # process-local guard for browser snapshots and is reset on restart.
-        if not hasattr(self, "_config_revision"):
-            self._config_revision = 1
+        # transport guard for browser snapshots.  The sidecar extends that
+        # guard across plugin instances without exposing metadata in config.
+        self._initialize_config_revision_state()
         result = load_json_file_result(self.config_path)
         self._config_storage_status = {
             "ok": result.ok,
@@ -623,19 +833,50 @@ class ConfigurationMixin:
         with self._config_lock:
             if getattr(self, "_config_storage_blocked", False):
                 raise RuntimeError("配置文件读取失败，已停止覆盖原文件")
-            web_config = self._strip_web_startup_config(self.raw_config)
-            save_json_file(self.config_path, web_config)
-            self._config_storage_status = {
-                "ok": True,
-                "status": "ok",
-                "error": "",
-                "source": self.config_path,
-            }
-            self._config_revision = max(1, int(getattr(self, "_config_revision", 0) or 0) + 1)
+            with _cross_process_file_lock(self._config_lock_path()):
+                disk_revision, disk_fingerprint, changed = self._read_config_revision_state()
+                local_fingerprint = getattr(self, "_config_fingerprint", None)
+                local_revision = max(1, int(getattr(self, "_config_revision", 1) or 1))
+
+                # The caller has already applied the candidate to memory.  Do
+                # this check before replacing the file so a stale instance can
+                # safely roll its runtime state back in _apply_raw_config.
+                if local_fingerprint is not None and local_fingerprint != disk_fingerprint:
+                    if changed:
+                        try:
+                            self._write_config_revision_state(disk_revision, disk_fingerprint)
+                        except Exception:
+                            pass
+                    raise ConfigRevisionConflictError(local_revision, disk_revision)
+                if local_fingerprint is not None and local_revision != disk_revision:
+                    raise ConfigRevisionConflictError(local_revision, disk_revision)
+
+                web_config = self._strip_web_startup_config(self.raw_config)
+                save_json_file(self.config_path, web_config)
+                new_fingerprint = self._config_file_fingerprint()
+                new_revision = max(local_revision, disk_revision, 1) + 1
+                try:
+                    self._write_config_revision_state(new_revision, new_fingerprint)
+                except Exception:
+                    # The config replace succeeded.  Keep the in-memory state
+                    # current; a later writer will reconcile the sidecar from
+                    # the fingerprint if the optional metadata write failed.
+                    logger.warning(
+                        "[SelfieImage] 配置 revision 元数据写入失败，已保留配置文件",
+                        exc_info=True,
+                    )
+                self._config_storage_status = {
+                    "ok": True,
+                    "status": "ok",
+                    "error": "",
+                    "source": self.config_path,
+                }
+                self._config_revision = new_revision
+                self._config_fingerprint = new_fingerprint
 
     def get_config_revision(self) -> int:
-        """Return the current process-local revision for conditional web writes."""
-        return max(1, int(getattr(self, "_config_revision", 1) or 1))
+        """Return the shared revision used for conditional web writes."""
+        return self._peek_config_revision()
 
     def _apply_raw_config(self, raw: Dict[str, Any]) -> None:
         raw = self._strip_web_startup_config(raw)
@@ -683,12 +924,14 @@ class ConfigurationMixin:
             logger.error(f"[SelfieImage] Flask Web 启动失败: {exc}", exc_info=True)
 
     def get_config_for_web(self) -> Dict[str, Any]:
+        self._refresh_config_from_disk_if_needed()
         # The browser only needs to know that a credential exists.  Returning
         # the actual key here made a read-only dashboard session a credential
         # exfiltration vector; save requests restore masked values below.
         return _mask_web_channel_credentials(self._strip_web_startup_config(self.raw_config))
 
     def export_config_for_web(self, *, raw: bool = False) -> Dict[str, Any]:
+        self._refresh_config_from_disk_if_needed()
         if raw:
             # Raw export is explicit and operator-triggered. Never expose it
             # through the normal config GET response or browser state.
@@ -702,6 +945,7 @@ class ConfigurationMixin:
         return exported
 
     def preview_config_import(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._refresh_config_from_disk_if_needed()
         candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
         if not isinstance(candidate, dict):
             raise ValueError("配置必须是 JSON 对象")

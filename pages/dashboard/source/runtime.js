@@ -72,7 +72,11 @@
       return (hash >>> 0).toString(36);
     }
     function dashboardPersistScope() {
-      const token = String(safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '').trim();
+      // During standalone login AUTH_TOKEN is available before the successful
+      // config response writes it to localStorage. Use that value first so the
+      // first cache write and the next reload use the same scope.
+      const activeToken = typeof AUTH_TOKEN !== 'undefined' ? AUTH_TOKEN : '';
+      const token = String(activeToken || safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '').trim();
       return token ? `token:${dashboardPersistHash(token)}` : (isDashboardPage() ? 'dashboard' : 'anonymous');
     }
     function dashboardPersistKey(namespace, key, scope = dashboardPersistScope()) {
