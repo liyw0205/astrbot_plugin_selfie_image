@@ -309,7 +309,11 @@ def extra_overrides_outfit(extra: str) -> bool:
     compact = normalize_intent_text(extra)
     if includes_any(compact, ["今日穿搭", "今天穿搭", "今天这身", "按今天的穿搭"]):
         return False
-    return includes_any(
+    return bool(re.search(
+        r"(?:穿|换)(?:成|为|上|着)?(?!过|越|梭)[^，,。；;]{0,16}"
+        r"(?:衣|裙|裤|袍|衫|袜|靴|鞋|服|泳装)",
+        re.sub(r"\s+", "", str(extra or "")),
+    )) or includes_any(
         compact,
         [
             "穿这",
@@ -398,6 +402,24 @@ def extra_overrides_period(extra: str) -> bool:
     )
 
 
+def has_explicit_activity_request(text: str) -> bool:
+    """Recognize activities that need their own environment and free hands."""
+    value = re.sub(r"\s+", "", str(text or ""))
+    pattern = (
+        r"(?:骑(?:自行车|单车|山地车|公路车|摩托车|电动车|车|行|马)|"
+        r"游泳|跑步|慢跑|滑雪|滑冰|滑板|冲浪|攀岩|跳舞|跳绳|打网球|打羽毛球|"
+        r"打篮球|踢足球|练瑜伽|做瑜伽|健身|举铁|开车|驾驶)"
+        r"(?!服|衣|裤|装|鞋|图案)"
+    )
+    for match in re.finditer(pattern, value):
+        prefix = value[max(0, match.start() - 16):match.start()]
+        if not re.search(
+            r"(?:不要|不需要|不想|别|不|避免|禁止)(?:再|去|在|要|进行|继续)*$", prefix,
+        ):
+            return True
+    return False
+
+
 def extra_overrides_context(extra: str) -> bool:
     """Detect an explicit scene or lighting context that replaces daily status."""
     compact = normalize_intent_text(extra)
@@ -442,7 +464,7 @@ def extra_overrides_context(extra: str) -> bool:
             "摄影棚",
             "室内",
         ],
-    ) or extra_overrides_period(extra)
+    ) or extra_overrides_period(extra) or has_explicit_activity_request(extra)
 
 
 def extra_overrides_mood(extra: str) -> bool:
@@ -2599,7 +2621,7 @@ class PersonaManager(IdentityPoolMixin):
                 if timeline_event
                 else (daily.schedule_by_period.get(period) if daily.schedule_by_period else {})
             )
-            if daily.day_theme:
+            if daily.day_theme and not skip_status:
                 today_lines.append(f"今日日程基调：{daily.day_theme}")
             if current_event and intent.is_legs_only and not skip_status:
                 if current_event.get("scene"):
@@ -2638,7 +2660,7 @@ class PersonaManager(IdentityPoolMixin):
             if intent.use_today_outfit and not intent.is_legs_only and selected_outfit and not skip_outfit:
                 outfit_label = f"今日穿搭（{label}）" if daily.outfit_by_period else "今日穿搭"
                 today_lines.append(f"{outfit_label}：{selected_outfit}")
-            if daily.occasion:
+            if daily.occasion and not skip_status:
                 today_lines.append(f"今日时令 / 节日氛围：{daily.occasion}")
             if not skip_status:
                 status = ""

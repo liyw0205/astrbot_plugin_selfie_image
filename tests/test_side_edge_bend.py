@@ -1,3 +1,5 @@
+import pytest
+
 from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_RANDOM_POSE_CLASSES,
     build_cos_look_action,
@@ -8,6 +10,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks_loader import (
     COS_JSON_POSES,
     validate_json_catalog,
 )
+from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
 
 def test_side_edge_bend_requires_two_hands_on_one_edge_and_sideward_gaze():
@@ -81,3 +84,23 @@ def test_explicit_selfie_keeps_side_edge_support_hands_and_sideward_gaze():
     assert "采用固定或定时自拍，拍摄设备完全在画面外" in action
     assert "双手必须同时扶住同一条窄侧边" in action
     assert "头部靠近并转向侧边，视线看向支撑边" in action
+
+
+@pytest.mark.parametrize("camera", ["first", "third"])
+def test_side_edge_hip_shift_corrects_body_direction_without_swapping_hands(tmp_path, camera):
+    action = build_cos_look_action(
+        "侧身扶边展示腰线", force_id="naruto_sakura_private_sage_bandeau", camera=camera,
+    )
+    final = PersonaManager(str(tmp_path)).build_selfie_prompt(
+        action, bot_name="", personality="", has_reference_image=True,
+        has_external_reference=False,
+    )
+    assert "【cos_pose:side_edge_hip_shift】" in final
+    assert "一只手在较高处轻扶侧边，另一只手自然停在腰侧或轻拎衣摆" in final
+    assert "肩胸、骨盆与脚尖整体朝向支撑边" in final
+    assert "胸口迎向支撑边，背部朝向外侧机位" in final
+    assert "扶边侧肩部位于接触手的后下方" in final
+    assert "不靠交换左右手修正身体朝向" in final
+    assert "髋部向远离支撑边的一侧自然外推" in final
+    assert "头部顺着胸口方向" in final
+    assert "双手必须同时扶住" not in final

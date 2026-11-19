@@ -185,6 +185,11 @@
       "cos_type": "孤独摇滚",
       "file": "孤独摇滚.json",
       "count": 4
+    },
+    {
+      "cos_type": "火影忍者",
+      "file": "火影忍者.json",
+      "count": 12
     }
   ],
   "order": [
@@ -1002,6 +1007,18 @@
     "bocchi_hitori_pink_jacket_skirt",
     "bocchi_nijika_school_uniform",
     "bocchi_ryo_school_uniform",
-    "bocchi_kita_school_uniform"
+    "bocchi_kita_school_uniform",
+    "naruto_sakura_private_sage_bandeau",
+    "naruto_sakura_private_red_zip_set",
+    "naruto_hinata_private_lilac_halter",
+    "naruto_ino_private_purple_cross_strap",
+    "naruto_tsunade_private_green_haori",
+    "naruto_temari_private_fan_obi",
+    "naruto_tenten_private_qipao_short",
+    "naruto_mei_private_blue_slit_gown",
+    "naruto_konan_private_paper_blue_dress",
+    "naruto_kurenai_private_wrap_dress",
+    "naruto_anko_private_mesh_bodysuit",
+    "naruto_samui_private_gray_vest_set"
   ]
 }

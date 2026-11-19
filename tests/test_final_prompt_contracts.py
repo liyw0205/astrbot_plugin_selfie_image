@@ -69,6 +69,117 @@ def plugin_for_prompts(tmp_path, english=False):
     return plugin
 
 
+@pytest.mark.parametrize("english", [False, True])
+def test_cycling_selfie_command_reaches_final_prompt_without_schedule_or_pose_conflicts(tmp_path, english):
+    from astrbot_plugin_selfie_image.features.daily_schedule import DailySchedule, ScheduleEvent
+    from astrbot_plugin_selfie_image.features.persona import daily_schedule_date_key
+    from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin.config = AICatConfig.from_dict({})
+    plugin.presets = ImagePresetManager(tmp_path)
+    plugin.persona.set_appearance_type("anime")
+    schedule = DailySchedule(
+        date=daily_schedule_date_key(), route_id="regression", theme="室内读书休息",
+        mood="放松", seed="regression",
+        events=[ScheduleEvent(
+            id="all-day", start="00:00", end="23:59", title="卧室阅读", scene="卧室沙发",
+            action="捧书低头坐着", status="刚换好睡衣准备休息", outfit_ref="main",
+        )],
+        outfits={"main": "宽松条纹睡衣"},
+    )
+    plugin.persona._persist_daily_selfie_profile(plugin.persona._profile_from_timeline(schedule))
+    plugin.persona.current_wardrobe_item = lambda: SimpleNamespace(id="old", name="条纹睡衣")
+    plugin.persona.current_wardrobe_reference = lambda: ImageReference(data=b"old-wardrobe", mime_type="image/png")
+    plugin._period_scene_light_pools = lambda _kind: (["卧室沙发"], ["暖黄台灯"])
+    plugin._quota_error_message = lambda *_a: ""
+    plugin._rate_limit_error_message = lambda *_a: ""
+    plugin._event_reference_images = AsyncMock(return_value=[])
+    plugin._build_contextual_progress_text = AsyncMock(return_value="progress")
+    plugin._record_bot_text_context = lambda *_a: None
+    plugin._image_batch_queue_expected = lambda *_a: False
+    captured = {}
+    plugin.start_command_image_task = lambda *_a, **kw: captured.update(kw["summary"]) or "task"
+    query = "穿贴身运动衣背对镜头骑车，略微回头，竖屏实拍"
+    event = SimpleNamespace(message_str=f"/自拍 {query}", plain_result=lambda text: text)
+
+    async def invoke():
+        return [item async for item in plugin.cmd_selfie(event)]
+
+    asyncio.run(invoke())
+    action = captured["original_prompt"]
+    prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert captured["aspect_ratio"] == "9:16"
+    assert selected_contract_id(action, "shot") == "back_lookback"
+    assert query in prompt
+    assert refs
+    assert [ref.data for ref in refs] == [b"identity"]
+    assert [ref.data for ref in plugin._selfie_reference_images(action, [])] == [b"identity"]
+    assert "用户指定穿搭" in prompt
+    assert "写实真人照片" in prompt
+    assert plugin.persona.analyze_selfie_intent(action).change_clothes
+    for conflict in (
+        "宽松条纹睡衣", "室内读书休息", "卧室阅读", "卧室沙发", "捧书低头坐着",
+        "刚换好睡衣准备休息", "暖黄台灯", "不回头", "不回眸", "纯背面", "头部顺着",
+        "整理发丝", "整理袖口", "搭在腿上", "今日穿搭", "2D 柔光京阿尼", "动漫自拍画面",
+    ):
+        assert conflict not in prompt
+
+
+def selected_contract_id(prompt, key):
+    return re.search(rf"【{key}:([a-z_]+)】", prompt).group(1)
+
+
+@pytest.mark.parametrize("builder", [build_selfie_look_action, build_third_person_look_action])
+@pytest.mark.parametrize("activity", ["骑车", "骑自行车", "骑单车", "跑步", "游泳", "滑雪", "练瑜伽"])
+def test_explicit_activities_do_not_receive_indoor_staging(builder, activity):
+    action = builder(
+        f"{activity}，竖屏实拍",
+        scene_light_provider=lambda _kind: (["卧室沙发"], ["暖黄台灯"]),
+    )
+    assert "【shot:activity】" in action
+    assert activity in action
+    assert "卧室沙发" not in action
+    assert "暖黄台灯" not in action
+    assert "小动作：" not in action
+    assert "动作瞬间：" not in action
+    assert "手臂自然伸向镜头" not in action
+
+
+@pytest.mark.parametrize("query,shot", [
+    ("背对镜头，不要回头", "back_view"),
+    ("背对镜头，不要略微回头", "back_view"),
+    ("背面侧身，不回头", "back_three_quarter"),
+    ("背对镜头，略微回头", "back_lookback"),
+    ("背后三分之四，轻轻回望", "back_lookback"),
+])
+def test_user_head_turn_is_independent_of_body_orientation(query, shot):
+    action = build_selfie_look_action(query)
+    assert selected_contract_id(action, "shot") == shot
+    if shot == "back_lookback":
+        assert "不回头" not in action
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("骑车", True), ("骑行服", False), ("穿贴身运动衣", False),
+    ("不要骑车", False), ("不要再去骑车", False), ("不骑车，改为跑步", True),
+])
+def test_activity_detection_distinguishes_actions_from_clothing_and_negations(text, expected):
+    from astrbot_plugin_selfie_image.features.persona import has_explicit_activity_request
+
+    assert has_explicit_activity_request(text) is expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("穿贴身运动衣", True), ("换成修身连体服", True), ("穿蓝色瑜伽服", True),
+    ("穿过马路", False), ("背对镜头骑车", False), ("按今天的穿搭骑车", False),
+])
+def test_clothing_instructions_are_distinct_from_activity_and_daily_outfit_requests(text, expected):
+    from astrbot_plugin_selfie_image.features.persona import extra_overrides_outfit
+
+    assert extra_overrides_outfit(text) is expected
+
+
 def realism_action(mode, medium, request=""):
     if mode == "legs":
         return build_leg_focus_action(request, force_pose="kneeling_sit_back")

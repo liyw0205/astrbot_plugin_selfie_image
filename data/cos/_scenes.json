@@ -4,7 +4,7 @@
     "夜景", "夜晚", "雨夜", "霓虹", "白天", "黄昏", "夕照", "室内", "室外", "房间", "地毯",
     "街道", "街边", "海边", "沙滩", "公园", "树林", "树下", "校园", "教室", "走廊", "车站",
     "咖啡馆", "餐厅", "雨中", "雪地", "樱花", "河边", "屋顶", "楼梯", "浴室", "温泉", "舞台",
-    "草地", "花丛"
+    "草地", "花丛", "泳池", "池边", "洗手台", "卫浴", "车内", "后排", "网约车"
   ],
   "request_syntax_terms": {
     "labels": ["场景", "背景"],
@@ -1088,6 +1088,60 @@
         "natural_clean",
         "soft_feminine"
       ]
+    },
+    "blue_violet_poolside": {
+      "title": "蓝紫水纹泳池边",
+      "aliases": ["蓝紫水纹泳池边", "蓝紫泳池", "水纹池边", "泳池边", "泳池"],
+      "prompt": "深灰色大块瓷砖围起的室内泳池边，深色石材池沿有宽阔、干燥且稳固的座面，一侧放着折叠白毛巾；前景是带细密波纹的蓝紫池水，池沿与水面形成清楚层次。人物停留在干燥池沿，不自动下水、打湿头发或使衣料透明，服装沿用本次COS。",
+      "style_prompt": "深灰瓷砖、深色池沿与蓝紫池水形成紧凑背景，水面亮点克制，人物与服装保持自身材质和配色。",
+      "lighting_ids": ["pool_blue_caustics"],
+      "style_weights": {"natural_snapshot": 5, "water_digital_portrait": 7},
+      "style_family": "night_simple",
+      "style_ids": ["natural_snapshot", "water_digital_portrait"],
+      "pose_ids": ["poolside_seated_support"],
+      "face_risk_tags": ["low_light", "reflective_costume"],
+      "tags": ["indoor", "pool", "water", "seated"],
+      "makeup_ids": ["natural_clean", "cool_matte"]
+    },
+    "cool_washbasin": {
+      "title": "冷白洗手台",
+      "aliases": ["冷白洗手台", "灰白洗手间", "洗手台", "洗手间"],
+      "prompt": "灰白色现代洗手间的洗手台区域，浅灰白色宽台面嵌入白色面盆，台上有简洁金属水龙头；后方为灰色隔断与窄金属边框，台面整洁且有可轻撑的连续台沿。镜面位于取景范围外，画内不出现人物镜像或拍摄设备。",
+      "style_prompt": "灰白台面、瓷盆与稍暗隔断构成干净室内层次，金属与布料反光有区分，保留服装本色。",
+      "lighting_ids": ["washroom_cool_overhead"],
+      "style_weights": {"natural_snapshot": 5, "cool_indoor_digital": 7},
+      "style_family": "minimal_room",
+      "style_ids": ["natural_snapshot", "cool_indoor_digital"],
+      "pose_ids": ["washbasin_back_support", "washbasin_front_support"],
+      "tags": ["indoor", "washroom", "counter"],
+      "makeup_ids": ["natural_clean", "cool_matte"]
+    },
+    "stone_bathroom": {
+      "title": "灰石卫浴",
+      "aliases": ["灰石卫浴", "石材卫浴", "灰石浴室", "石材浴室", "卫浴"],
+      "prompt": "现代卫浴的灰米色石材墙面与同色地面形成统一背景，近处为带浅色纹理、可供轻撑的宽石材台沿；一侧保留玻璃淋浴隔断的窄金属框，另一侧是深色门板。镜面与反射人物的玻璃区域留在取景范围外，衣物与人物保持干燥，不出现手机或镜像人物。",
+      "style_prompt": "中性暖灰石材与深色门板形成安静背景，浅色石纹、皮肤和服装各有自然材质层次，不统一染成暖棕色。",
+      "lighting_ids": ["stone_bathroom_soft"],
+      "style_weights": {"natural_snapshot": 5, "warm_gray_snapshot": 7},
+      "style_family": "minimal_room",
+      "style_ids": ["natural_snapshot", "warm_gray_snapshot"],
+      "pose_ids": ["washbasin_front_support", "washbasin_back_support"],
+      "tags": ["indoor", "bathroom", "stone", "counter"],
+      "makeup_ids": ["natural_clean", "soft_feminine"]
+    },
+    "daylight_car_backseat": {
+      "title": "车内后排逆光",
+      "aliases": ["车内后排逆光", "车内后排", "后排靠窗", "网约车内", "车内", "后排"],
+      "prompt": "白天乘用车后排靠窗座位，深灰色椅背、头枕、车门内饰与浅灰顶棚围成紧凑空间；侧窗外是较亮且虚化的街景，座椅、侧窗与车门位置清楚。画面仅保留这一名坐在后排的主体，后视镜与可读贴纸位于画外，不出现其他乘客、手机或镜像人物。",
+      "style_prompt": "深灰车厢与较亮车窗保留自然亮度差，背景只呈现少量椅背、侧窗与顶棚，服装保持本来的颜色与层次。",
+      "lighting_ids": ["car_window_backlight"],
+      "style_weights": {"natural_snapshot": 5, "soft_gray_backlit": 7},
+      "style_family": "seated_lifestyle",
+      "style_ids": ["natural_snapshot", "soft_gray_backlit"],
+      "pose_ids": ["car_seated_relaxed", "car_seated_hair_touch"],
+      "face_risk_tags": ["backlight"],
+      "tags": ["indoor", "vehicle", "seated", "daylight"],
+      "makeup_ids": ["natural_clean", "soft_feminine"]
     },
     "theater_dressing_room": {
       "title": "剧院后台换装间",

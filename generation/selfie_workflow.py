@@ -67,7 +67,7 @@ class SelfieWorkflowService:
         if not look_cos and not intent.is_legs_only and not intent.is_group_photo:
             if intent.is_cos_look:
                 return plugin._select_cos_references(action, message_refs)
-            if message_refs:
+            if message_refs or intent.change_clothes:
                 return None
             wardrobe_item = plugin.persona.current_wardrobe_item()
             wardrobe_ref = plugin.persona.current_wardrobe_reference()
@@ -100,7 +100,12 @@ class SelfieWorkflowService:
         identity = plugin._persona_identity_reference(allow_logo=not plugin._is_cos_action(action))
         refs = ([identity] if identity else []) + list(message_refs)
         persona = getattr(plugin, "persona", None)
-        if not message_refs and not plugin._is_cos_action(action) and persona is not None:
+        intent = persona.analyze_selfie_intent(action) if persona is not None else None
+        if (
+            not message_refs and persona is not None and intent is not None
+            and not intent.is_cos_look and not intent.is_legs_only and not intent.is_group_photo
+            and not intent.change_clothes
+        ):
             wardrobe_ref = persona.current_wardrobe_reference()
             if wardrobe_ref is not None:
                 refs.append(wardrobe_ref)

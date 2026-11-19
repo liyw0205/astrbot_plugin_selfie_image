@@ -44,6 +44,11 @@
     "wall_raised_elbow_lean": ["抬臂靠墙侧背前倾", "抬肘靠墙前倾", "抬臂贴墙前倾", "靠墙举臂前倾"],
     "kneeling_back_support": ["跪坐后撑仰身", "跪坐双手后撑", "双膝跪坐后撑", "跪坐轻仰身"],
     "sleeping_on_bed": ["床上熟睡", "熟睡姿势", "睡在床上", "躺床熟睡"],
+    "poolside_seated_support": ["池沿侧坐后撑", "池沿侧坐", "池边撑坐"],
+    "washbasin_back_support": ["背侧撑台回望", "洗手台背侧回望", "背侧撑台"],
+    "washbasin_front_support": ["正面轻撑台沿", "正面撑台", "台沿轻撑"],
+    "car_seated_relaxed": ["后排自然靠坐", "车内自然靠坐"],
+    "car_seated_hair_touch": ["后排扶发坐姿", "车内扶发", "后排扶发"],
     "photo_frame_break_bottom_left": ["破框而出", "照片边框破框", "从照片里探出来", "手扶照片边框"],
     "photo_frame_break_top_bottom": ["照片上下沿探身", "上沿抬臂下沿搭手", "从照片上下沿探出", "照片上沿抬臂、下沿探手"]
   },
@@ -67,6 +72,67 @@
     "assignments": ["是", "为", "改成", "采用", "保持", "设为", "设置为", "：", ":"]
   },
   "items": {
+    "poolside_seated_support": {
+      "title": "池沿侧坐后撑",
+      "scene_ids": ["blue_violet_poolside"],
+      "prompt": "坐在当前泳池已有的干燥宽池沿上，臀部与座面稳定贴合，双腿靠近后自然偏向一侧；一只手在身侧后方撑住池沿，另一只手轻放大腿或同侧座面，肩线略倾，上身舒展，头部轻偏向画外。双腿可自然垂在池沿外侧，不要求脚接触水面、不自动下水，服装保持原有结构与覆盖。",
+      "orientation": "front",
+      "pose_family": "seated",
+      "contact_shadow_id": "seated",
+      "random_weight": 3,
+      "framing_ids": ["poolside_medium", "bust_close_portrait"],
+      "expression_ids": ["calm", "gentle", "confident"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "washbasin_back_support": {
+      "title": "背侧撑台回望",
+      "scene_ids": ["cool_washbasin", "stone_bathroom"],
+      "prompt": "站在已有洗手台前，身体背侧朝向镜头，双脚稳定落地，上身从髋部小幅前倾，双手分开放在宽台沿上轻撑；肩颈向同一侧自然转回，头部仅小幅跟随肩线，近侧面部从肩外自然可见，不过度扭颈或后仰。双手保持撑台，不另加持物手，服装随动作自然垂落。",
+      "orientation": "side",
+      "pose_family": "edge_support",
+      "face_visibility": "optional",
+      "contact_shadow_id": "counter_hands",
+      "random_weight": 3,
+      "framing_ids": ["washbasin_rear_medium"],
+      "expression_ids": ["calm", "confident", "gentle"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "washbasin_front_support": {
+      "title": "正面轻撑台沿",
+      "scene_ids": ["cool_washbasin", "stone_bathroom"],
+      "prompt": "人物正面或侧前三分之四站在已有洗手台沿旁，一只手自然轻撑台沿，另一只手放松停在身侧，双脚稳定承重；肩胯轻微错开，头部随躯干自然轻偏。手指与台沿接触清楚，不抓扯衣物、不持手机或改变当前COS服装。",
+      "orientation": "front",
+      "pose_family": "edge_support",
+      "contact_shadow_id": "counter_hands",
+      "random_weight": 3,
+      "framing_ids": ["washbasin_front_medium", "bust_close_portrait"],
+      "expression_ids": ["calm", "confident", "gentle"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "car_seated_relaxed": {
+      "title": "后排自然靠坐",
+      "scene_ids": ["daylight_car_backseat"],
+      "prompt": "自然坐靠在当前车内后排座椅上，肩背由椅背承托，肩线轻微倾斜，头部随肩颈自然轻偏；双手放松落在腿上或同侧座面，腿脚在近景取景之外保持普通坐姿。保持原有服装、头饰与发型，不站起、不跪坐、不在狭窄车厢中伸展四肢。",
+      "orientation": "front",
+      "pose_family": "seated",
+      "contact_shadow_id": "recline",
+      "random_weight": 3,
+      "framing_ids": ["car_window_close", "face_close_portrait", "bust_close_portrait"],
+      "expression_ids": ["calm", "gentle", "confident"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "car_seated_hair_touch": {
+      "title": "后排扶发坐姿",
+      "scene_ids": ["daylight_car_backseat"],
+      "prompt": "自然坐靠在当前车内后排椅背上，肩线略斜，一只手轻停在同侧太阳穴外侧自然扶发，不压眼或遮住五官；另一只手放松落在腿上，头部轻偏。保持当前COS发型与头饰，不重新梳发或添加配饰；腿脚保持正常坐姿，不抬到镜头前。",
+      "orientation": "front",
+      "pose_family": "seated",
+      "contact_shadow_id": "recline",
+      "random_weight": 3,
+      "framing_ids": ["car_window_close", "bust_close_portrait"],
+      "expression_ids": ["calm", "gentle", "confident"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
     "standing_detail": {
       "title": "自然站姿",
       "prompt": "一侧腿自然承重，另一腿轻轻错后或脚尖向外，肩线放松；手部可轻触衣摆、腰线或套装配饰，展示服装剪裁和层次，不摆证件照式双脚并拢正面站姿。",
@@ -776,7 +842,7 @@
     "side_edge_hip_shift": {
       "title": "侧身扶边外推腰胯",
       "contact_shadow_id": "edge_hands",
-      "prompt": "人物以侧身或侧后三分之四站在已有的门框侧边、墙角、廊柱侧面或栏杆立柱旁；一只手在较高处轻扶侧边，另一只手自然停在腰侧或轻拎衣摆，手臂和手指与支撑物连接真实。承重腿保持稳定，另一腿向后错开或膝盖放松，髋部向远离支撑边的一侧自然外推，肩胯错开形成柔和S曲线，展示侧腰、臀胯和服装侧面层次。头部顺着身体方向，可保留自然侧脸或半边脸，不回头、不扭颈；画面采用贴近近中景，不用远景、俯拍或平直证件照站姿，不把侧边写成正面墙面。",
+      "prompt": "人物站在已有的门框侧边、墙角、廊柱侧面或栏杆立柱旁；一只手在较高处轻扶侧边，另一只手自然停在腰侧或轻拎衣摆。以扶边手和支撑边的位置确定身体左右：支撑边位于身体前侧，肩胸、骨盆与脚尖整体朝向支撑边，胸口迎向支撑边，背部朝向外侧机位；镜头从侧面或侧后方观察身体，而不是让人物背朝支撑物。扶边侧肩部位于接触手的后下方，上臂经自然弯曲的肘部向前上方连到前臂与手掌，掌面自然贴住侧边；躯干不反向背离扶边手，不把扶边手臂拧到背后，也不靠交换左右手修正身体朝向。承重腿保持稳定，另一腿向后错开或膝盖放松，髋部向远离支撑边的一侧自然外推，肩胯轻微错开形成柔和S曲线，展示侧腰、臀胯和服装侧面层次。头部顺着胸口方向，可保留自然侧脸或半边脸，不回头、不扭颈；画面采用贴近近中景，不用远景、俯拍或平直证件照站姿，不把侧边写成正面墙面。",
       "orientation": "side",
       "pose_family": "side_edge_curve_static",
       "random_weight": 2,

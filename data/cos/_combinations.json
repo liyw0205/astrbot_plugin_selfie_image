@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "items": {
+    "poolside_seated_support": {"title": "蓝紫池沿侧坐", "scene_id": "blue_violet_poolside", "pose_id": "poolside_seated_support", "family": "night_simple", "weight": 3},
+    "washbasin_back_support": {"title": "冷白洗手台背侧回望", "scene_id": "cool_washbasin", "pose_id": "washbasin_back_support", "family": "minimal_room", "weight": 3},
+    "stone_front_support": {"title": "灰石卫浴轻撑台沿", "scene_id": "stone_bathroom", "pose_id": "washbasin_front_support", "family": "minimal_room", "weight": 3},
+    "car_window_hair_touch": {"title": "车内后排扶发", "scene_id": "daylight_car_backseat", "pose_id": "car_seated_hair_touch", "family": "seated_lifestyle", "weight": 3},
     "window_front_seated": {"title": "窗边正面坐姿轻前倾", "scene_id": "bedroom_window", "pose_id": "front_seated_lean", "family": "domestic_lifestyle", "weight": 5},
     "studio_front_raised_arm": {"title": "影棚正面抬臂", "scene_id": "photo_studio", "pose_id": "front_raised_arm", "family": "editorial_portrait", "weight": 5},
     "garden_front_waist": {"title": "庭院正面错胯", "scene_id": "garden_walkway", "pose_id": "front_waist_shift", "family": "nature_lifestyle", "weight": 5},

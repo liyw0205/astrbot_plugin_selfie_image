@@ -40,6 +40,30 @@
     ]
   },
   "items": {
+    "poolside_medium": {
+      "title": "池边竖幅近中景",
+      "prompt": "近距离竖幅池边近中景，机位接近平视略俯，从头顶取到膝部附近，清楚保留撑池沿的手部与座面接触位置；前景只带少量池水，瓷砖墙位于后景，人物占主要画幅，拍摄设备在画外",
+      "scene_ids": ["blue_violet_poolside"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "washbasin_rear_medium": {
+      "title": "洗手台侧后近中景",
+      "prompt": "从人物侧后方接近平视拍摄近中景，取景从头顶至大腿上段，保留双手撑台的位置；台沿沿画面侧下方进入，肩颈与躯干方向自然，镜面和拍摄设备位于画外，不使用低角度局部特写或镜中构图",
+      "scene_ids": ["cool_washbasin", "stone_bathroom"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "washbasin_front_medium": {
+      "title": "洗手台侧前近中景",
+      "prompt": "正面略偏侧的近中景，从头顶取到大腿上段，完整保留自然入画的轻撑台沿手部，画面底边或侧边留出少量台沿，背景仅保留墙面与隔断线条；人物占据主要画幅，镜面和拍摄设备位于画外",
+      "scene_ids": ["cool_washbasin", "stone_bathroom"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "car_window_close": {
+      "title": "车内靠窗胸像近景",
+      "prompt": "竖幅头肩至胸像近景，机位略高于眼睛，人物占主要画幅，头顶与扶发手部保留自然空间；一侧带到少量车窗，另一侧保留后排椅背，腿脚位于画外，不采用全身、远景或对镜构图，拍摄设备位于画外",
+      "scene_ids": ["daylight_car_backseat"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
     "front_half": {
       "title": "正面半身",
       "prompt": "正面半身机位，画面从头部拍到腰线，面部和服装主体清晰",

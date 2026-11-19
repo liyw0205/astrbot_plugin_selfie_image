@@ -8,7 +8,7 @@
 | `_poses.json` | 身体与手脚动作、必要支撑关系 | `title`、`prompt`、`framing_ids`、`expression_ids`、`random_camera_ids` |
 | `_framings.json` | 镜头方向、角度与裁切范围，不另选身体动作 | `title`、`prompt`、`random_camera_ids` |
 
-姿势条目还可使用 `orientation`（身体展示方向）、`pose_family`、`random_weight`、`camera_ids`、`incompatible_expression_ids`、`traits`、`explicit_only`。请求别名集中在 `_poses.json` 顶层的 `request_aliases`。`framing_ids` 是该动作可用的摄影选项；正面动作可以使用侧前方、轻俯拍等兼容选项，不等于锁定正面机位。
+姿势条目还可使用 `orientation`（身体展示方向）、`pose_family`、`random_weight`、`camera_ids`、`scene_ids`、`incompatible_expression_ids`、`traits`、`explicit_only`。`scene_ids` 限定自动组合可依赖的场景，未命中的自定义场景不会自动抽到这些专用动作；用户明确指定动作时仍尊重原有优先级。请求别名集中在 `_poses.json` 顶层的 `request_aliases`。`framing_ids` 是该动作可用的摄影选项；正面动作可以使用侧前方、轻俯拍等兼容选项，不等于锁定正面机位。
 
 构图的 `camera_ids` 是可选硬限制，未填写时不追加限制；`scene_ids` 是可选场景白名单，未填写时不限制场景。`random_camera_ids` 规定可自动抽取的拍摄方式：`third` 为他拍，`first` 为观察者主观视角，`selfie` 为自摄；空列表表示不进入随机池。`explicit_only: true` 表示仅显式选择。可选字段无需补空值，不同条目的字段数量可以不同。
 
@@ -17,3 +17,7 @@
 普通套装正文只保存服饰和必要的专属排除项，不重复保存“禁止动漫插画、赛璐璐、游戏立绘、3D渲染、塑料皮肤和超现实发光”这类公共媒介约束。聊天指令在 `build_cos_look_action` 中拼接；快速试画和两个画布在解析参考图后通过 `finalize_cos_prompt_for_request` 调用同一个 `normalize_cos_prompt_negatives`：真人模式使用摄影排除项，动漫模式使用动漫排除项，自动且有参考图时沿用参考图媒介。独立完整提示词仍按特殊套装路径执行。
 
 `research/` 保存服饰核查缓存与来源，不参与套装索引或生图提示词加载；服饰细节核实后再写回 `looks/`。
+
+火影忍者的12套成年女性性感私设已接入 `looks/火影忍者.json`，支持“火影忍者 / 火影 / Naruto”及角色名选择；截图款春野樱保留审核通过的短裙与凉鞋补全设计。套装只描述服装与假发，继续共用场景和摄影词库。
+
+蓝紫水纹泳池边、冷白洗手台、灰石卫浴、车内后排逆光已按同一词库规则接入。风格仅改变成像质感，主光由各场景的 `lighting_ids` 决定；池边使用干燥池沿坐姿，卫浴使用有台沿支撑的动作，车内限定后排坐姿与近景。专用构图通过 `scene_ids` 限定环境，不自动加入手机、镜中人物、湿衣或服装替换。普通自拍按设备在画外的固定或定时拍摄处理，明确要求对镜时才使用对镜规则。

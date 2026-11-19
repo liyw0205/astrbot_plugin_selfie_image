@@ -762,15 +762,14 @@ def pick_cos_framing(
         }
     orientation = str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") or "")
     # Pose and orientation words describe the subject, not a fixed crop. Keep
-    # actual framing requests such as "低机位" while removing parsed pose
-    # aliases so "扶墙侧身展示腰线" can still choose a compatible close view.
-    framing_detection_text = extra_request
-    if pose_id != "user":
-        framing_detection_text = _strip_parsed_cos_request_terms(
-            extra_request,
-            requested_pose=pose_id,
-            requested_orientation=orientation,
-        )
+    # actual framing requests such as "低机位" while removing parsed scene
+    # and pose aliases, including lighting words in "车内后排逆光".
+    framing_detection_text = _strip_parsed_cos_request_terms(
+        extra_request,
+        requested_scene=scene_id,
+        requested_pose=pose_id,
+        requested_orientation=orientation if pose_id != "user" else "",
+    )
     rear_hair_requested = (
         pose_id == "over_shoulder"
         and camera == "third"
@@ -1853,7 +1852,10 @@ def pick_cos_variation(
     elif requested_scene:
         scene_id = requested_scene
         scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
-        compatible_poses = _scene_pose_ids(scene) if scene else list(profile["recommended_pose_ids"])
+        compatible_poses = _scene_pose_ids(scene) if scene else [
+            item for item in profile["recommended_pose_ids"]
+            if not COS_RANDOM_POSE_CLASSES.get(item, {}).get("scene_ids")
+        ]
         if scene_id in allowed_scenes:
             compatible_poses = [item for item in compatible_poses if item in allowed_poses]
         else:
@@ -2054,6 +2056,18 @@ _COS_LOOK_NAME_ALIASES = {
     "bocchi_nijika_school_uniform": ("虹夏",),
     "bocchi_ryo_school_uniform": ("山田涼", "凉", "涼"),
     "bocchi_kita_school_uniform": ("喜多", "郁代"),
+    "naruto_sakura_private_sage_bandeau": ("小樱", "Sakura", "春野櫻"),
+    "naruto_sakura_private_red_zip_set": ("小樱", "Sakura", "春野櫻"),
+    "naruto_hinata_private_lilac_halter": ("雏田", "雛田", "日向雛田", "Hinata"),
+    "naruto_ino_private_purple_cross_strap": ("井野", "Ino"),
+    "naruto_tsunade_private_green_haori": ("Tsunade",),
+    "naruto_temari_private_fan_obi": ("Temari",),
+    "naruto_tenten_private_qipao_short": ("Tenten",),
+    "naruto_mei_private_blue_slit_gown": ("Mei", "Terumi"),
+    "naruto_konan_private_paper_blue_dress": ("Konan",),
+    "naruto_kurenai_private_wrap_dress": ("Kurenai",),
+    "naruto_anko_private_mesh_bodysuit": ("红豆", "Anko"),
+    "naruto_samui_private_gray_vest_set": ("萨姆伊", "Samui"),
     "sports_tennis_polo_pleated": ("运动服", "网球运动服"),
     "sports_track_cropped_zip": ("运动服", "田径运动服"),
     "sports_volleyball_jersey_shorts": ("运动服", "排球运动服"),
@@ -2095,6 +2109,7 @@ COS_LOOK_TYPE_ALIASES: Dict[str, tuple[str, ...]] = {
     "绝区零": ("绝区零", "zenless", "zenlesszonezero", "zzz"),
     "鸣潮": ("鸣潮", "wuthering", "wutheringwaves", "wuwa"),
     "孤独摇滚": ("孤独摇滚", "Bocchi the Rock", "bocchi", "ぼっち・ざ・ろっく！"),
+    "火影忍者": ("火影忍者", "火影", "火影忍者疾风传", "Naruto", "Naruto Shippuden"),
 }
 COS_LOOK_SERIES_ALIASES = COS_LOOK_TYPE_ALIASES
 COS_LOOK_SERIES_MARKERS = ("系列", "作品", "游戏")
@@ -3013,13 +3028,21 @@ def build_cos_look_action(
     requested_pose = _requested_cos_pose(extra_request)
     requested_scene = _requested_cos_scene(extra_request)
     requested_orientation = _requested_cos_orientation(extra_request)
+    framing_detection_text = _strip_parsed_cos_request_terms(
+        extra_request,
+        requested_pose=requested_pose,
+        requested_scene=requested_scene,
+        requested_orientation=requested_orientation,
+    )
+    has_explicit_framing = cos_prompt_has_framing(framing_detection_text)
     pose_avoidance = _as_id_set(avoid_poses)
     if phone_face_cover and not requested_pose:
         pose_avoidance.update(set(COS_RANDOM_POSE_CLASSES) - COS_RANDOM_SELFIE_POSE_IDS)
-    if requested_camera == "selfie" and any(
+    mirror_selfie_requested = any(
         _has_positive_request(extra_request, term)
         for term in COS_JSON_CAMERA_REQUEST_TERMS["mirror_selfie"]
-    ):
+    )
+    if requested_camera == "selfie" and mirror_selfie_requested:
         pose_avoidance.add("back_to_camera")
     camera_kind = pick_cos_camera(
         extra_request=extra_request,
@@ -3037,9 +3060,7 @@ def build_cos_look_action(
         explicit_collage
         or force_multi_view_collage
         or not requested_camera_in_text
-    ) and not (
-        requested_pose or cos_prompt_has_framing(extra_request) or collage_negated
-    )
+    ) and not (requested_pose or has_explicit_framing or collage_negated)
     collage_active = collage_eligible and (
         explicit_collage or force_multi_view_collage or random.choice([False] * 23 + [True])
     )
@@ -3058,7 +3079,7 @@ def build_cos_look_action(
     collage_active = bool(variation.get("panel_prompt"))
     collage_fallback_reason = ""
     if explicit_collage and not collage_active:
-        if requested_pose or cos_prompt_has_framing(extra_request):
+        if requested_pose or has_explicit_framing:
             collage_fallback_reason = "因本次同时指定了单一姿势或景别，按明确要求生成单张照片；"
         elif camera_kind != "third":
             collage_fallback_reason = "当前相机视角不适合多格构图，按当前视角生成单张照片；"
@@ -3096,7 +3117,7 @@ def build_cos_look_action(
         and framing_choice.get("view_id") in avoided_framing_ids
         and not requested_pose
         and not requested_scene
-        and not cos_prompt_has_framing(extra_request)
+        and not has_explicit_framing
     ):
         for _ in range(8):
             retry_variation = pick_cos_variation(
@@ -3186,7 +3207,10 @@ def build_cos_look_action(
             if phone_face_cover
             else "采用固定或定时自拍，拍摄设备完全在画面外；双手严格保持已选姿势和道具，不添加手持手机，也不强行遮脸。"
             if not handheld_allowed
-            else "可对镜取景，但拍摄设备完全在画面外；主角双手保持已选动作，未明确要求遮脸时不要用物件遮脸挡衣服。"
+            else (
+                ("按明确要求对镜取景，但" if mirror_selfie_requested else "采用固定或定时自拍，")
+                + "拍摄设备完全在画面外；主角双手保持已选动作，未明确要求遮脸时不要用物件遮脸挡衣服。"
+            )
         )
         framing = (
             "【自拍 / 看看COS模式】"
@@ -3230,6 +3254,7 @@ def build_cos_look_action(
         re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。"),
         requested_camera=requested_camera,
         requested_pose=requested_pose,
+        requested_scene=str(variation.get("scene_id") or ""),
         requested_orientation=requested_orientation,
     )
     consumed_terms = {title}

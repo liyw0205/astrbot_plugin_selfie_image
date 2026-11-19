@@ -355,6 +355,13 @@ def validate_json_catalog() -> List[str]:
         missing = [value for value in scene.get("pose_ids") or [] if value not in pose_ids]
         if missing:
             issues.append(f"scene {scene_id}: poses missing {','.join(missing[:8])}")
+        incompatible_poses = [
+            value for value in scene.get("pose_ids") or []
+            if isinstance(COS_JSON_POSES.get(value, {}).get("scene_ids"), list)
+            and scene_id not in COS_JSON_POSES[value]["scene_ids"]
+        ]
+        if incompatible_poses:
+            issues.append(f"scene {scene_id}: poses incompatible {','.join(incompatible_poses[:8])}")
         style_ids = scene.get("style_ids") or []
         missing_styles = [value for value in style_ids if value not in COS_JSON_STYLES]
         if missing_styles:
@@ -377,6 +384,12 @@ def validate_json_catalog() -> List[str]:
         ):
             issues.append(f"scene {scene_id}: invalid style_weights")
     for pose_id, pose in COS_JSON_POSES.items():
+        if "scene_ids" in pose:
+            pose_scenes = pose["scene_ids"]
+            if not isinstance(pose_scenes, list) or not pose_scenes or any(
+                not isinstance(value, str) or value not in scene_ids for value in pose_scenes
+            ):
+                issues.append(f"pose {pose_id}: invalid scene_ids")
         shadow_id = pose.get("contact_shadow_id", "default")
         if not isinstance(shadow_id, str) or shadow_id not in COS_JSON_CONTACT_SHADOW_PROMPTS:
             issues.append(f"pose {pose_id}: unknown contact_shadow_id")

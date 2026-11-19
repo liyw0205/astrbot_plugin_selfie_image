@@ -1164,7 +1164,8 @@ def test_explicit_cos_scene_and_pose_are_not_overridden():
     assert "【cos_scene:bedroom_carpet】" in action
     assert "【cos_pose:kneeling_carpet】" in action
     assert "按用户指定的镜头构图执行" not in action
-    assert "用户补充要求优先：卧室地毯上" in action
+    assert COS_RANDOM_SCENE_CLASSES["bedroom_carpet"]["prompt"] in action
+    assert "用户补充要求优先：卧室地毯上" not in action
     assert "用户补充要求优先：卧室地毯上跪坐" not in action
 
 

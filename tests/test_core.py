@@ -7804,7 +7804,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertFalse(selfie_intent.is_third_person_photo, selfie_action)
             selfie_prompt = manager.build_selfie_prompt(selfie_action, "小助", "温柔", True, 0)
             self.assertIn("COS换装自拍模式", selfie_prompt)
-            self.assertIn("对镜", selfie_prompt)
+            self.assertIn("采用固定或定时自拍", selfie_prompt)
+            self.assertIn("拍摄设备完全在画面外", selfie_prompt)
+            self.assertNotIn("可对镜取景", selfie_prompt)
             third_action = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "他拍", False, camera="third")
             third_intent = manager.analyze_selfie_intent(third_action)
             self.assertTrue(third_intent.is_cos_look)
@@ -8214,6 +8216,7 @@ class LegFocusTests(unittest.TestCase):
                 "xishi_fan_qipao", "yinzi_white_qipao", "xishi_cyan_qipao",
                 "xishi_crop_qipao", "shuilaner_horned_brocade_qipao",
                 "ancient_lotus_short_qipao",
+                "naruto_tenten_private_qipao_short",
                 "qipao_emerald_satin_side_slit", "qipao_black_lace_detached_sleeves",
                 "qipao_ivory_blue_peony", "qipao_red_brocade_long_slit",
                 "qipao_cyan_wrap_top_skirt",
