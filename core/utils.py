@@ -1877,10 +1877,11 @@ def extract_image_sources_from_event(event: Any, include_at_avatar: bool = False
             images.extend(extract_image_urls(text))
             return
 
-        if include_at_avatar and obj_type in {"At", "AtSomeone"}:
-            qq = str(getattr(obj, "qq", getattr(obj, "id", "")) or "").strip()
-            if qq and qq != "all":
-                images.append(f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640")
+        if obj_type in {"At", "AtSomeone"}:
+            if include_at_avatar:
+                qq = str(getattr(obj, "qq", getattr(obj, "id", "")) or "").strip()
+                if qq and qq != "all":
+                    images.append(f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640")
             return
 
         if isinstance(obj, str):

@@ -3479,6 +3479,7 @@ class SelfieImagePlugin(
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
+        filter_at_avatars: bool = True,
     ) -> AsyncGenerator[Any, None]:
         async for item in self._get_selfie_workflow_service().handle_command(
             event=event,
@@ -3491,6 +3492,7 @@ class SelfieImagePlugin(
             fail_label=fail_label,
             message_override=message_override,
             include_at_avatar=include_at_avatar,
+            filter_at_avatars=filter_at_avatars,
             allow_context_fallback=allow_context_fallback,
             requested_count_override=requested_count_override,
             preset_aspect=preset_aspect,

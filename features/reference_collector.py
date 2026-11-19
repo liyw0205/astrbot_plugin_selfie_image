@@ -499,10 +499,11 @@ def extract_structured_image_sources(
                 add(role, url)
             return
 
-        if include_at_avatar and obj_type in {"At", "AtSomeone"}:
-            qq = str(getattr(obj, "qq", getattr(obj, "id", "")) or "").strip()
-            if qq and qq != "all":
-                add("at_avatar", f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640")
+        if obj_type in {"At", "AtSomeone"}:
+            if include_at_avatar:
+                qq = str(getattr(obj, "qq", getattr(obj, "id", "")) or "").strip()
+                if qq and qq != "all":
+                    add("at_avatar", f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640")
             return
 
         if isinstance(obj, str):
@@ -584,9 +585,6 @@ def filter_bot_avatar_sources(sources: Sequence[str], bot_ids: Sequence[str]) ->
             if hit:
                 break
         if hit:
-            continue
-        target = f"{parsed.path}?{parsed.query}"
-        if any(re.search(rf"(?<!\d){re.escape(bot_id)}(?!\d)", target) for bot_id in ids):
             continue
         filtered.append(text)
     return filtered
@@ -697,6 +695,8 @@ class ReferenceCollector:
         *,
         max_bytes: int,
         bot_ids: Optional[Sequence[str]] = None,
+        at_avatar_filter_ids: Optional[Sequence[str]] = None,
+        filter_at_avatars: bool = True,
         persona_path: str = "",
         context_sources: Optional[Sequence[str]] = None,
         extra_sources: Optional[Sequence[str]] = None,
@@ -712,6 +712,8 @@ class ReferenceCollector:
     ) -> None:
         self.max_bytes = max(1024, int(max_bytes or 10 * 1024 * 1024))
         self.bot_ids = list(bot_ids or [])
+        self.at_avatar_filter_ids = list(at_avatar_filter_ids or [])
+        self.filter_at_avatars = bool(filter_at_avatars)
         self.persona_path = str(persona_path or "").strip()
         self.context_sources = list(context_sources or [])
         self.extra_sources = list(extra_sources or [])
@@ -732,7 +734,13 @@ class ReferenceCollector:
             include_image_alternates=self.include_image_alternates,
         )
         for key, values in list(buckets.items()):
-            buckets[key] = filter_bot_avatar_sources(values, self.bot_ids)
+            if key == "at_avatar":
+                if self.filter_at_avatars:
+                    buckets[key] = filter_bot_avatar_sources(
+                        values, [*self.bot_ids, *self.at_avatar_filter_ids]
+                    )
+                continue
+            buckets[key] = list(values)
 
         total = sum(len(values) for values in buckets.values())
         if (
@@ -741,11 +749,11 @@ class ReferenceCollector:
             and callable(self.looks_like_context_ref)
             and self.looks_like_context_ref(self.context_hint)
         ):
-            buckets["context"] = filter_bot_avatar_sources(self.context_sources, self.bot_ids)
+            buckets["context"] = list(self.context_sources)
         else:
             buckets.setdefault("context", [])
 
-        buckets["extra"] = filter_bot_avatar_sources(normalize_source_items(self.extra_sources), self.bot_ids)
+        buckets["extra"] = normalize_source_items(self.extra_sources)
         if self.include_persona and self.persona_path:
             buckets["persona"] = [self.persona_path]
         else:

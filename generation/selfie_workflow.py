@@ -162,6 +162,7 @@ class SelfieWorkflowService:
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
+        filter_at_avatars: bool = True,
     ) -> AsyncGenerator[Any, None]:
         plugin = self.plugin
         plugin._claim_media_command_event(event)
@@ -194,6 +195,7 @@ class SelfieWorkflowService:
         extra_refs = await plugin._event_reference_images(
             event,
             include_at_avatar=include_at_avatar,
+            filter_at_avatars=filter_at_avatars,
             context_hint=action,
             allow_context_fallback=allow_context_fallback,
         )
@@ -456,6 +458,7 @@ class SelfieWorkflowService:
             fail_label=plugin._natural_fail_fallback("group"),
             message_override=action,
             include_at_avatar=True,
+            filter_at_avatars=False,
             requested_count_override=requested_count,
             preset_aspect=preset_aspect,
             preset_resolution=preset_resolution,

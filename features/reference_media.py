@@ -26,6 +26,7 @@ from .reference_collector import ReferenceCollector
 from ..core.utils import (
     detect_mime_by_bytes,
     extract_event_text,
+    event_user_id,
     image_validation_limits,
     redact_sensitive_text,
 )
@@ -226,6 +227,7 @@ class ReferenceMediaMixin:
         event: AstrMessageEvent,
         *,
         include_at_avatar: bool,
+        filter_at_avatars: bool,
         context_hint: str,
         allow_context_fallback: bool,
         include_persona: bool,
@@ -248,9 +250,13 @@ class ReferenceMediaMixin:
         clothes = self._looks_like_clothes_followup(hint)
         user_only = clothes and not edit_bot
         bot_only = edit_bot and not clothes
+        bot_ids = self._bot_account_ids(event)
+        sender_id = event_user_id(event)
         return ReferenceCollector(
             max_bytes=max_bytes,
-            bot_ids=self._bot_account_ids(event),
+            bot_ids=bot_ids,
+            at_avatar_filter_ids=[sender_id] if sender_id else [],
+            filter_at_avatars=filter_at_avatars,
             persona_path=persona_path,
             context_sources=await self._recent_context_image_sources_async(
                 event,
@@ -279,11 +285,13 @@ class ReferenceMediaMixin:
         include_persona: bool = False,
         extra_sources: Optional[List[str]] = None,
         include_image_alternates: bool = False,
+        filter_at_avatars: bool = True,
     ) -> Tuple[List[ImageReference], int, int]:
         """Collect event references and preserve historical result semantics."""
         collector = await self._reference_collector(
             event,
             include_at_avatar=include_at_avatar,
+            filter_at_avatars=filter_at_avatars,
             context_hint=context_hint,
             allow_context_fallback=allow_context_fallback,
             include_persona=include_persona,
@@ -312,10 +320,12 @@ class ReferenceMediaMixin:
         include_persona: bool = False,
         extra_sources: Optional[List[str]] = None,
         include_image_alternates: bool = False,
+        filter_at_avatars: bool = True,
     ):
         collector = await self._reference_collector(
             event,
             include_at_avatar=include_at_avatar,
+            filter_at_avatars=filter_at_avatars,
             context_hint=context_hint,
             allow_context_fallback=allow_context_fallback,
             include_persona=include_persona,
@@ -336,10 +346,12 @@ class ReferenceMediaMixin:
         include_persona: bool = False,
         extra_sources: Optional[List[str]] = None,
         include_image_alternates: bool = False,
+        filter_at_avatars: bool = True,
     ) -> List[ImageReference]:
         refs, _, _ = await self._event_reference_images_with_stats(
             event,
             include_at_avatar=include_at_avatar,
+            filter_at_avatars=filter_at_avatars,
             context_hint=context_hint,
             allow_context_fallback=allow_context_fallback,
             include_persona=include_persona,
