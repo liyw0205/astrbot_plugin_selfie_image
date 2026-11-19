@@ -715,6 +715,11 @@ class FlaskWebServer:
                 lambda: selfie_profile_controller.identity_mutation(payload)
             )
 
+        def selfie_identity_thumbnails() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return selfie_profile_result(selfie_profile_controller.identity_thumbnails)
+
         def selfie_appearance_type() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
@@ -773,6 +778,7 @@ class FlaskWebServer:
 
         selfie_profile_handlers = {
             "selfie_identity": selfie_identity,
+            "selfie_identity_thumbnails": selfie_identity_thumbnails,
             "selfie_reference_get": selfie_reference_get,
             "selfie_reference_post": selfie_reference_post,
             "selfie_reference_clear": selfie_reference_clear,

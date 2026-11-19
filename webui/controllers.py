@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import inspect
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1117,6 +1118,28 @@ class SelfieProfileController:
     def identity_mutation(self, payload: Any) -> SelfieProfileControllerResult:
         data = self._call("update_selfie_identity_from_web", payload, error_status=400)
         return self._result(data, "形象池已更新")
+
+    def identity_thumbnails(self) -> SelfieProfileControllerResult:
+        persona = getattr(self.plugin, "persona", None)
+        list_images = getattr(persona, "list_image_pool", None)
+        is_managed = getattr(persona, "_managed_image_path", None)
+        if not callable(list_images) or not callable(is_managed):
+            raise WebContractError("当前版本不支持形象图缩略图", 501)
+        items = []
+        for item in list_images():
+            try:
+                slot = int(item.get("slot"))
+                path = str(item.get("path") or "")
+                if not path or not is_managed(path) or not os.path.isfile(path):
+                    continue
+                raw = render_image_thumbnail(path, max_dimension=128)
+            except (OSError, TypeError, ValueError):
+                continue
+            items.append({
+                "slot": slot,
+                "data_url": f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}",
+            })
+        return self._result({"items": items})
 
     async def ensure_daily_schedule(self) -> SelfieProfileControllerResult:
         hook = getattr(self.plugin, "ensure_selfie_daily_schedule_from_web", None)

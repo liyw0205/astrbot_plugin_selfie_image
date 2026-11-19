@@ -60,6 +60,11 @@ async function main() {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
     calls.push({path:url.pathname, method:request.method, body}); let error = '';
+    if (request.method === 'GET' && url.pathname === '/api/selfie-identity-thumbnails') {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({success:true,data:{items:state.image_pool.map(item => ({slot:item.slot,data_url:png}))}}));
+      return;
+    }
     if (request.method === 'POST' && url.pathname === '/api/selfie-reference') {
       const slot = nextSlot(state.image_pool);
       state.image_pool.push({slot,available:true,mime_type:'image/png'}); state.active_image_slot = slot;
@@ -107,15 +112,18 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 250)); await until("typeof navigateToTab === 'function'");
       await evaluate("navigateToTab('selfie')"); await until("$('selfieImagePoolCount').textContent === '3/10'");
       assert.equal(await evaluate("document.querySelectorAll('[data-selfie-image-slot]').length"), 10);
+      await until("document.querySelector('[data-selfie-identity-thumb=\"1\"] img')?.getAttribute('src') === " + JSON.stringify(png));
+      assert.equal(await evaluate("document.querySelector('[data-selfie-image-slot=\"3\"] .selfie-identity-copy').textContent.includes('空位')"), true);
+      assert.equal(await evaluate("Array.from(document.querySelectorAll('#selfieImagePoolList .selfie-identity-copy')).every(node => !node.textContent.includes('image/png') && !node.textContent.includes('当前使用') && !node.textContent.includes('可用'))"), true);
       await click('[data-selfie-image-slot="2"] .selfie-image-select'); await until('SELFIE_IDENTITY_DATA.active_image_slot === 2');
       await click('[data-selfie-image-slot="2"] .selfie-image-remove'); await until("$('confirmModal').classList.contains('show')");
       assert(state.image_pool.some(item => item.slot === 2), 'removal occurred before confirmation');
       await click('#confirmProceedBtn'); await until("$('selfieImagePoolCount').textContent === '2/10'");
-      const reads = calls.filter(call => call.method === 'GET').length;
+      const reads = calls.filter(call => call.method === 'GET' && call.path === '/api/selfie-identity').length;
       await evaluate(`{const transfer = new DataTransfer();transfer.items.add(new File([new Uint8Array([1])], 'new.png', {type:'image/png'}));$('selfieFile').files = transfer.files;}`);
       await click('#uploadSelfie'); await until("$('selfieImagePoolCount').textContent === '3/10'");
       assert.deepEqual(state.image_pool.map(item => item.slot).sort((a,b)=>a-b), [1,2,4]);
-      assert.equal(calls.filter(call => call.method === 'GET').length, reads, 'upload triggered a duplicate state read');
+      assert.equal(calls.filter(call => call.method === 'GET' && call.path === '/api/selfie-identity').length, reads, 'upload triggered a duplicate state read');
       await click('#selfiePersonaEnabled'); await until("!$('selfiePersonaPoolPanel').hidden");
       assert.equal(await evaluate("$('selfieImagePoolPanel').hidden && $('selfiePreview').style.display === 'none' && $('useLogoWhenNoPersona').disabled"), true);
       await evaluate("$('selfiePersonaName').value='第二人设';$('selfiePersonaPrompt').value='银色短发，成年女性';");
@@ -130,10 +138,10 @@ async function main() {
       assert(state.persona_pool.some(item => item.slot === 1 && item.name === '补位')); assert.equal(state.active_persona_slot, 2);
       await evaluate("$('toastWrap').innerHTML='';$('selfiePersonaEnabled').scrollIntoView({block:'start'});");
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), true);
-      const shot = await cdp.send('Page.captureScreenshot', {format:'png'});
-      fs.writeFileSync(path.join(output, `${embedded ? 'embedded' : 'standalone'}-${width}.png`), Buffer.from(shot.data, 'base64'));
       await click('#selfiePersonaEnabled'); await until("!$('selfieImagePoolPanel').hidden");
       assert.equal(await evaluate("$('selfieDailySchedule').hidden"), false);
+      const shot = await cdp.send('Page.captureScreenshot', {format:'png'});
+      fs.writeFileSync(path.join(output, `${embedded ? 'embedded' : 'standalone'}-${width}.png`), Buffer.from(shot.data, 'base64'));
       console.log(`[identity-pool-browser] ${embedded ? 'embedded' : 'standalone'} ${width}: pool operations, confirmation, modes, failure recovery, request count and layout passed`);
     }
     assert.deepEqual(exceptions, []); console.log(`[identity-pool-browser] screenshots: ${output}`);

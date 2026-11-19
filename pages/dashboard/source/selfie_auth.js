@@ -126,6 +126,16 @@
     }
 
     let SELFIE_IDENTITY_DATA = null;
+    let SELFIE_IDENTITY_THUMBNAILS = new Map();
+    let SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
+    let SELFIE_IDENTITY_THUMBNAIL_VERSION = 0;
+    let SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
+    function invalidateSelfieIdentityThumbnails() {
+      SELFIE_IDENTITY_THUMBNAIL_VERSION += 1;
+      SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
+      SELFIE_IDENTITY_THUMBNAILS.clear();
+      SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
+    }
     function identityPoolLimit(data) {
       const value = Number(data?.pool_limit);
       return Number.isFinite(value) && value > 0 ? Math.min(10, Math.max(1, Math.floor(value))) : 10;
@@ -164,10 +174,12 @@
         const occupied = Boolean(item && (item.mime_type || item.available !== undefined || item.active));
         const available = occupied && item.available !== false;
         const active = slot === activeImageSlot || item?.active === true;
-        const status = !occupied ? '空位' : available ? (active ? '当前使用' : '可用') : '文件缺失';
+        const status = !occupied ? '空位' : available ? '' : '文件缺失';
+        const thumbnail = SELFIE_IDENTITY_THUMBNAILS.get(slot);
         imageRows.push(`<div class="selfie-identity-row${active ? ' active' : ''}" data-selfie-image-slot="${slot}">
           <span class="selfie-identity-slot">${slot}</span>
-          <div class="selfie-identity-copy"><strong>形象图 ${slot}</strong><span>${status}${occupied && item.mime_type ? ` · ${escapeHtml(item.mime_type)}` : ''}</span></div>
+          <div class="selfie-identity-thumb" data-selfie-identity-thumb="${slot}">${thumbnail ? `<img src="${thumbnail}" alt="形象图 ${slot} 缩略图">` : ''}</div>
+          <div class="selfie-identity-copy"><strong>形象图 ${slot}</strong>${status ? `<span>${status}</span>` : ''}</div>
           <div class="actions">${occupied && available && !active ? '<button type="button" class="secondary selfie-image-select">选择</button>' : ''}${occupied ? '<button type="button" class="danger selfie-image-remove">移除</button>' : ''}</div>
         </div>`);
       }
@@ -184,6 +196,7 @@
       $('selfieImagePoolList')?.querySelectorAll('.selfie-image-remove').forEach(button => {
         button.onclick = () => removeSelfieImage(Number(button.closest('[data-selfie-image-slot]').dataset.selfieImageSlot));
       });
+      void loadSelfieIdentityThumbnails(imagePool);
 
       const personaRows = [];
       for (let slot = 1; slot <= limit; slot += 1) {
@@ -223,7 +236,36 @@
       const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
       if ($('selfieStatus')) $('selfieStatus').textContent = `${mode === 'persona' ? '使用形象人设池' : (data.has_image ? '形象参考图已设置' : '尚未设置形象参考图')} · 类型：${appearanceLabel}`;
     }
+    function loadSelfieIdentityThumbnails(imagePool) {
+      const slots = imagePool.filter(item => item && item.available !== false).map(item => Number(item.slot)).filter(Number.isInteger);
+      if (!slots.length || SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION === SELFIE_IDENTITY_THUMBNAIL_VERSION
+          || SELFIE_IDENTITY_THUMBNAIL_REQUEST?.version === SELFIE_IDENTITY_THUMBNAIL_VERSION) return;
+      const version = SELFIE_IDENTITY_THUMBNAIL_VERSION;
+      const request = {version, promise: null};
+      request.promise = api('/api/selfie-identity-thumbnails').then(res => {
+        if (version !== SELFIE_IDENTITY_THUMBNAIL_VERSION) return;
+        const items = Array.isArray(res.data?.items) ? res.data.items : [];
+        SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = version;
+        SELFIE_IDENTITY_THUMBNAILS = new Map(items
+          .filter(item => Number.isInteger(Number(item.slot)) && String(item.data_url || '').startsWith('data:image/'))
+          .map(item => [Number(item.slot), String(item.data_url)]));
+        for (const slot of slots) {
+          const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
+          const dataUrl = SELFIE_IDENTITY_THUMBNAILS.get(slot);
+          if (!frame || !dataUrl) continue;
+          const image = document.createElement('img');
+          image.alt = `形象图 ${slot} 缩略图`;
+          image.src = dataUrl;
+          image.onerror = () => image.remove();
+          frame.replaceChildren(image);
+        }
+      }).catch(() => {}).finally(() => {
+        if (SELFIE_IDENTITY_THUMBNAIL_REQUEST === request) SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
+      });
+      SELFIE_IDENTITY_THUMBNAIL_REQUEST = request;
+    }
     async function selfieIdentityAction(payload, successMessage = '') {
+      if (payload?.action === 'image_remove') invalidateSelfieIdentityThumbnails();
       const mutationSeq = beginSelfieMutation();
       try {
         const res = await api('/api/selfie-identity', {method:'POST', body: JSON.stringify(payload)});
@@ -295,6 +337,7 @@
     }
 
     async function refreshSelfie(notify = false) {
+      if (notify) invalidateSelfieIdentityThumbnails();
       const mutationSeq = SELFIE_MUTATION_SEQ;
       const dailyLoadSeq = SELFIE_DAILY_LOAD_SEQ;
       try {
@@ -480,6 +523,7 @@
     async function uploadSelfie() {
       const file = $('selfieFile').files[0];
       if (!file) { showToast('请选择图片', 'bad'); return; }
+      invalidateSelfieIdentityThumbnails();
       const mutationSeq = beginSelfieMutation();
       const uploadButton = $('uploadSelfie');
       if (uploadButton) uploadButton.disabled = true;

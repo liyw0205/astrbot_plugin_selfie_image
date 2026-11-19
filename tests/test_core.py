@@ -8210,6 +8210,9 @@ class LegFocusTests(unittest.TestCase):
                 "xishi_fan_qipao", "yinzi_white_qipao", "xishi_cyan_qipao",
                 "xishi_crop_qipao", "shuilaner_horned_brocade_qipao",
                 "ancient_lotus_short_qipao",
+                "qipao_emerald_satin_side_slit", "qipao_black_lace_detached_sleeves",
+                "qipao_ivory_blue_peony", "qipao_red_brocade_long_slit",
+                "qipao_cyan_wrap_top_skirt",
             },
         )
         xishi_qipao_ids = {item["id"] for item in plugin_main.match_cos_look_sets("西施旗袍")}

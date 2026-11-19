@@ -263,9 +263,11 @@
     .selfie-image-preview-wrap { min-height: 84px; }
     .selfie-image-preview-wrap .preview { max-width: min(260px, 100%); max-height: 260px; margin-top: 0; object-fit: contain; }
     .selfie-identity-list { display: grid; gap: 6px; margin-top: 10px; min-width: 0; }
-    .selfie-identity-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-soft); }
+    .selfie-identity-row { display: grid; grid-template-columns: 42px 48px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-soft); }
     .selfie-identity-row.active { border-color: color-mix(in srgb, var(--primary) 46%, var(--line)); background: var(--primary-weak); }
     .selfie-identity-slot { color: var(--primary-strong); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .selfie-identity-thumb { width: 48px; height: 48px; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+    .selfie-identity-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .selfie-identity-copy { display: grid; gap: 2px; min-width: 0; }
     .selfie-identity-copy strong, .selfie-identity-copy span { min-width: 0; overflow-wrap: anywhere; }
     .selfie-identity-copy strong { font-size: 12px; }
@@ -274,7 +276,8 @@
     .selfie-identity-row .actions button { white-space: nowrap; }
     .selfie-persona-form textarea { min-height: 76px; }
     @media (max-width: 520px) {
-      .selfie-identity-row { grid-template-columns: 34px minmax(0, 1fr); }
+      .selfie-identity-row { grid-template-columns: 34px 44px minmax(0, 1fr); }
+      .selfie-identity-thumb { width: 44px; height: 44px; }
       .selfie-identity-row .actions { grid-column: 1 / -1; justify-content: flex-start; }
       .selfie-identity-row .actions button { flex: 1 1 auto; }
     }

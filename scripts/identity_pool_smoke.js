@@ -23,6 +23,10 @@ for (const action of ['image_select', 'image_remove', 'persona_select', 'persona
   assert.match(auth, new RegExp(`action:'${action}'`), `missing identity action ${action}`);
 }
 assert.match(auth, /api\('\/api\/selfie-identity'/, 'identity endpoint is not used');
+assert.match(auth, /api\('\/api\/selfie-identity-thumbnails'/, 'identity thumbnails are not loaded');
+assert.match(auth, /const status = !occupied \? '空位' : available \? '' : '文件缺失'/, 'image pool status copy is not simplified');
+assert.doesNotMatch(auth, /available \? \(active \? '当前使用' : '可用'\)/, 'image availability text is still rendered');
+assert.doesNotMatch(auth, /occupied && item\.mime_type/, 'image MIME text is still rendered');
 assert.match(auth, /for \(let slot = 1; slot <= limit; slot \+= 1\)/, 'stable pool slots are not rendered');
 assert.match(bootstrap, /selfiePersonaEnabled.*saveSelfieIdentityMode/s, 'mode switch is not wired');
 assert.match(styles, /@media \(max-width: 520px\)[\s\S]*selfie-identity-row/, 'mobile pool layout is missing');

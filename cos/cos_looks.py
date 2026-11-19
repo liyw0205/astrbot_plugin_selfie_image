@@ -2033,7 +2033,7 @@ def keep_cos_outfit_requested(text: str) -> bool:
 
 COS_LOOK_CATEGORY_TERMS = (
     "旗袍", "汉服", "女仆", "睡衣", "长裙", "短裙", "短装", "运动服", "体操服", "礼服", "泳装", "古装", "古风", "巫女", "肚兜", "挂脖",
-    "洛丽塔", "花嫁", "围裙", "白熊", "和风", "荷叶裙", "兜兜", "袴裙",
+    "洛丽塔", "花嫁", "围裙", "白熊", "和风", "荷叶裙", "兜兜", "袴裙", "修女", "运动装",
 )
 
 # Common short names keep command matching practical without adding fields to
@@ -2050,6 +2050,15 @@ _COS_LOOK_NAME_ALIASES = {
     "blue_archive_fuuka": ("风香",),
     "blue_archive_toki": ("纺希",),
     "zzz_sunna_private_sportswear": ("千夏", "Sunna", "妄想天使千夏", "绝区零千夏"),
+    "bocchi_hitori_pink_jacket_skirt": ("波奇", "波奇酱", "一里"),
+    "bocchi_nijika_school_uniform": ("虹夏",),
+    "bocchi_ryo_school_uniform": ("山田涼", "凉", "涼"),
+    "bocchi_kita_school_uniform": ("喜多", "郁代"),
+    "sports_tennis_polo_pleated": ("运动服", "网球运动服"),
+    "sports_track_cropped_zip": ("运动服", "田径运动服"),
+    "sports_volleyball_jersey_shorts": ("运动服", "排球运动服"),
+    "sports_racerback_cycling_shorts": ("运动服", "骑行运动服"),
+    "sports_dance_leotard_jacket": ("运动服", "舞蹈运动服"),
     # Preserve the historical shorthand used by the command and dashboard.
     "anime_girl_orange_mint": ("二次元少女",),
 }
@@ -2085,6 +2094,7 @@ COS_LOOK_TYPE_ALIASES: Dict[str, tuple[str, ...]] = {
     "永雏塔菲": ("永雏塔菲", "塔菲"),
     "绝区零": ("绝区零", "zenless", "zenlesszonezero", "zzz"),
     "鸣潮": ("鸣潮", "wuthering", "wutheringwaves", "wuwa"),
+    "孤独摇滚": ("孤独摇滚", "Bocchi the Rock", "bocchi", "ぼっち・ざ・ろっく！"),
 }
 COS_LOOK_SERIES_ALIASES = COS_LOOK_TYPE_ALIASES
 COS_LOOK_SERIES_MARKERS = ("系列", "作品", "游戏")
@@ -2178,14 +2188,14 @@ _COS_LOOK_SERIES_ORDER = (
     "世界计划 缤纷舞台", "明日方舟", "崩坏3",
     "原神", "绝区零", "鸣潮", "王者荣耀", "永劫无间",
     "斗罗大陆", "斗破苍穹", "缘之空", "叛逆的鲁鲁修", "崩坏：星穹铁道", "埃罗芒阿老师",
-    "Fate", "三国杀", "Hololive", "永雏塔菲",
-    "古风", "和风", "巫女", "围裙", "礼服", "通用COS", "原创COS",
+    "Fate", "三国杀", "Hololive", "永雏塔菲", "孤独摇滚",
+    "古风", "和风", "巫女", "围裙", "礼服", "修女", "旗袍", "运动装", "通用COS", "原创COS",
 )
 _COS_LOOK_SERIES_RANK = {
     series: rank for rank, series in enumerate(_COS_LOOK_SERIES_ORDER)
 }
 _COS_LOOK_FALLBACK_TYPES = frozenset(
-    {"古风", "和风", "巫女", "围裙", "礼服", "通用COS", "原创COS"}
+    {"古风", "和风", "巫女", "围裙", "礼服", "修女", "旗袍", "运动装", "通用COS", "原创COS"}
 )
 
 
@@ -2420,7 +2430,11 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
             if compact(segment)
         )
     ]
-    if exact_title_segment_matches and len(compact_query) >= 3:
+    if (
+        exact_title_segment_matches
+        and len(compact_query) >= 3
+        and compact_query not in category_term_set
+    ):
         return exact_title_segment_matches
 
     title_fragment_matches = [
@@ -2429,7 +2443,11 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
         if compact_query
         and compact_query in compact(str(item.get("title") or ""))
     ]
-    if title_fragment_matches and len(compact_query) >= 3:
+    if (
+        title_fragment_matches
+        and len(compact_query) >= 3
+        and compact_query not in category_term_set
+    ):
         return title_fragment_matches
 
     selected_name_terms: List[str] = []
@@ -2457,7 +2475,15 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
     for alias, series in sorted(series_alias_to_key.items(), key=lambda pair: -len(pair[0])):
         if alias and alias in compact_query:
             selected_series_terms.append(series)
-    for token in re.split(separators, raw_query):
+    # Consume multiword series aliases before matching words such as "Rock"
+    # against names of unrelated outfits.
+    token_query = raw_query
+    for series in dict.fromkeys(selected_series_terms):
+        for alias in COS_LOOK_SERIES_ALIASES.get(series, ()):
+            normalized_alias = re.sub(r"\s+", " ", alias.strip().lower())
+            if " " in normalized_alias:
+                token_query = token_query.replace(normalized_alias, " ")
+    for token in re.split(separators, token_query):
         segments = segment_token(token)
         if not segments:
             continue

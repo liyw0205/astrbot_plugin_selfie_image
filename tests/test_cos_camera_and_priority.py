@@ -1827,6 +1827,52 @@ def test_original_blue_stage_cos_outfit_is_registered():
     ]
 
 
+def test_bocchi_aliases_keep_character_and_series_constraints():
+    aliases_by_id = {
+        "bocchi_hitori_pink_jacket_skirt": ("后藤一里", "波奇", "波奇酱"),
+        "bocchi_nijika_school_uniform": ("伊地知虹夏", "虹夏"),
+        "bocchi_ryo_school_uniform": ("山田凉", "山田涼", "凉", "涼"),
+        "bocchi_kita_school_uniform": ("喜多郁代", "喜多", "郁代"),
+    }
+    for series in ("孤独摇滚", "Bocchi the Rock", "ぼっち・ざ・ろっく！"):
+        assert {item["id"] for item in match_cos_look_sets(series)} == set(aliases_by_id)
+        for look_id, aliases in aliases_by_id.items():
+            for alias in aliases:
+                assert [item["id"] for item in match_cos_look_sets(alias)] == [look_id]
+                assert [
+                    item["id"] for item in match_cos_look_sets(f"{series} {alias}")
+                ] == [look_id]
+
+    assert match_cos_look_sets("孤独摇滚 原神") == []
+    assert pick_cos_look_set(query="孤独摇滚 西施") == {}
+    assert build_cos_look_action(match_query="孤独摇滚 西施") == ""
+
+
+def test_bocchi_character_selection_keeps_outfit_once_in_final_action():
+    for query, look_id in (
+        ("孤独摇滚 波奇", "bocchi_hitori_pink_jacket_skirt"),
+        ("孤独摇滚 虹夏", "bocchi_nijika_school_uniform"),
+        ("孤独摇滚 凉", "bocchi_ryo_school_uniform"),
+        ("孤独摇滚 喜多", "bocchi_kita_school_uniform"),
+    ):
+        action = build_cos_look_action(match_query=query, camera="third")
+        assert f"【cos:{look_id}】" in action
+        assert action.count(get_cos_look_by_id(look_id)["prompt"]) == 1
+        assert action.count("不要额外人物") == 1
+
+
+def test_sports_category_aliases_include_outfits_with_a_different_display_name():
+    sports_ids = {
+        item["id"] for item in COS_LOOK_SETS if item["cos_type"] == "运动装"
+    }
+    assert sports_ids
+    for category in ("运动装", "运动服"):
+        assert sports_ids <= {item["id"] for item in match_cos_look_sets(category)}
+    assert [item["id"] for item in match_cos_look_sets("骑行运动服")] == [
+        "sports_racerback_cycling_shorts"
+    ]
+
+
 def test_priority_picker_filters_already_selected_models():
     page = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(
         encoding="utf-8"

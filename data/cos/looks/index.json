@@ -59,7 +59,7 @@
     {
       "cos_type": "围裙",
       "file": "围裙.json",
-      "count": 2
+      "count": 7
     },
     {
       "cos_type": "埃罗芒阿老师",
@@ -79,7 +79,7 @@
     {
       "cos_type": "巫女",
       "file": "巫女.json",
-      "count": 1
+      "count": 6
     },
     {
       "cos_type": "斗破苍穹",
@@ -134,7 +134,7 @@
     {
       "cos_type": "礼服",
       "file": "礼服.json",
-      "count": 1
+      "count": 6
     },
     {
       "cos_type": "绝区零",
@@ -165,6 +165,26 @@
       "cos_type": "鸣潮",
       "file": "鸣潮.json",
       "count": 29
+    },
+    {
+      "cos_type": "修女",
+      "file": "修女.json",
+      "count": 5
+    },
+    {
+      "cos_type": "旗袍",
+      "file": "旗袍.json",
+      "count": 5
+    },
+    {
+      "cos_type": "运动装",
+      "file": "运动装.json",
+      "count": 5
+    },
+    {
+      "cos_type": "孤独摇滚",
+      "file": "孤独摇滚.json",
+      "count": 4
     }
   ],
   "order": [
@@ -948,6 +968,40 @@
     "dongxie_sanguosha",
     "wufan_sanguosha",
     "zhangchangpu_sanguosha",
-    "renwan_sanguosha"
+    "renwan_sanguosha",
+    "nun_black_laceup_mini",
+    "nun_offshoulder_detached_sleeves",
+    "nun_gothic_red_lining_coat",
+    "nun_white_corset_habit",
+    "nun_halter_veil_bodice",
+    "miko_short_hakama_classic",
+    "miko_bell_sleeve_crop",
+    "miko_black_red_asymmetric",
+    "miko_white_red_haori",
+    "miko_modern_shrine_bodysuit",
+    "qipao_emerald_satin_side_slit",
+    "qipao_black_lace_detached_sleeves",
+    "qipao_ivory_blue_peony",
+    "qipao_red_brocade_long_slit",
+    "qipao_cyan_wrap_top_skirt",
+    "gown_black_velvet_offshoulder",
+    "gown_red_bustier_detachable_train",
+    "gown_emerald_one_shoulder_drape",
+    "gown_cream_highneck_lace",
+    "gown_navy_halter_openback",
+    "apron_white_halter_openback",
+    "apron_red_gingham_cafe",
+    "apron_denim_halter_workwear",
+    "apron_lace_pinafore_layered",
+    "apron_satin_waist_apron",
+    "sports_tennis_polo_pleated",
+    "sports_track_cropped_zip",
+    "sports_volleyball_jersey_shorts",
+    "sports_racerback_cycling_shorts",
+    "sports_dance_leotard_jacket",
+    "bocchi_hitori_pink_jacket_skirt",
+    "bocchi_nijika_school_uniform",
+    "bocchi_ryo_school_uniform",
+    "bocchi_kita_school_uniform"
   ]
 }

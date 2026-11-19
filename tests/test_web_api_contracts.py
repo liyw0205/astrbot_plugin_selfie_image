@@ -1600,12 +1600,18 @@ def test_identity_pool_routes_reach_real_store_on_both_hosts(http, tmp_path):
     plugin = object.__new__(SelfieImagePlugin)
     plugin.persona = PersonaManager(tmp_path)
     plugin.config = http.plugin.config
+    http.plugin.persona = plugin.persona
     for hook in ("get_selfie_reference_payload", "update_selfie_identity_from_web"):
         setattr(http.plugin, hook, getattr(plugin, hook))
     plugin.persona.save_reference_image(PNG_1X1)
     initial = assert_success(http.call("/api/selfie-identity"))
     assert initial["active_image_slot"] == 1
     assert initial["persona_pool"][0]["name"] == "小玉"
+    thumbnails = assert_success(http.call("/api/selfie-identity-thumbnails"))
+    assert len(thumbnails["items"]) == 1
+    assert thumbnails["items"][0]["slot"] == 1
+    assert thumbnails["items"][0]["data_url"].startswith("data:image/jpeg;base64,")
+    assert "path" not in thumbnails["items"][0]
 
     def mutate(**body):
         return assert_success(http.call("/api/selfie-identity", method="POST", body=body))

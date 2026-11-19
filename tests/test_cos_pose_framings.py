@@ -219,8 +219,14 @@ def test_shared_staging_metadata_and_curated_pairs_are_json_owned():
         for scene in COS_JSON_SCENES.values()
         for pose_id in scene["pose_ids"]
     }
-    assert set(COS_JSON_POSES) - used_poses == {"veranda_side_profile"}
+    assert set(COS_JSON_POSES) - used_poses == {
+        "veranda_side_profile",
+        "photo_frame_break_bottom_left",
+        "photo_frame_break_top_bottom",
+    }
     assert COS_JSON_POSES["veranda_side_profile"]["explicit_only"] is True
+    assert COS_JSON_POSES["photo_frame_break_bottom_left"]["explicit_only"] is True
+    assert COS_JSON_POSES["photo_frame_break_top_bottom"]["explicit_only"] is True
     assert set(COS_JSON_MAKEUPS) == {
         makeup_id for scene in COS_JSON_SCENES.values() for makeup_id in scene["makeup_ids"]
     }
@@ -293,6 +299,31 @@ def test_camera_and_request_vocabulary_is_json_owned():
     assert requests_cos_multi_view_collage("多视角拼贴") is True
     assert cos_looks._requested_cos_pose("用户要求交叉双臂") == "user"
     assert cos_looks._requested_cos_pose("不要交叉双臂") == ""
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "pose_id"),
+    [
+        ("采用破框而出的立体视觉效果", "photo_frame_break_bottom_left"),
+        ("照片上沿抬臂、下沿探手", "photo_frame_break_top_bottom"),
+    ],
+)
+def test_photo_frame_break_poses_are_explicit_only_and_selectable(prompt_text, pose_id):
+    pose = COS_JSON_POSES[pose_id]
+    profile = cos_looks.cos_look_compatibility("roxy_cream")
+
+    assert cos_looks._requested_cos_pose(prompt_text) == pose_id
+    assert pose["explicit_only"] is True
+    assert pose_id not in cos_looks.COS_DEFAULT_RANDOM_POSE_IDS
+    assert pose_id not in profile["recommended_pose_ids"]
+
+    action = build_cos_look_action(
+        prompt_text,
+        force_id="roxy_cream",
+        camera="third",
+    )
+    assert f"【cos_pose:{pose_id}】" in action
+    assert pose["prompt"] in action
 
 
 def test_generic_cos_prompt_uses_shared_json_staging_vocabularies():

@@ -556,6 +556,9 @@ class SelfieImageDashboardAPI:
             lambda: self._selfie_profile_controller.identity_mutation(payload)
         )
 
+    async def page_selfie_identity_thumbnails(self) -> Any:
+        return await self._threaded_result(self._selfie_profile_controller.identity_thumbnails)
+
     async def page_selfie_appearance_type(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:

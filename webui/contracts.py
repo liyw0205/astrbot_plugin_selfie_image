@@ -229,6 +229,10 @@ SELFIE_PROFILE_ROUTE_CONTRACTS = (
         "selfie_identity", "page_selfie_identity", "Selfie Image identity pool mutation",
     ),
     SelfieProfileRouteContract(
+        "selfie_identity_thumbnails", "/api/selfie-identity-thumbnails", "selfie-identity-thumbnails", ("GET",),
+        "selfie_identity_thumbnails", "page_selfie_identity_thumbnails", "Selfie Image identity pool thumbnails",
+    ),
+    SelfieProfileRouteContract(
         "selfie_reference_get", "/api/selfie-reference", "selfie-reference", ("GET",),
         "selfie_reference_get", "page_selfie_reference_get", "Selfie Image get reference",
     ),

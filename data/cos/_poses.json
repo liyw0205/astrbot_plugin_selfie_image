@@ -43,7 +43,9 @@
     "front_arms_raised_arch": ["正面双臂抬起轻仰", "抬臂轻仰站姿", "抬手舒腰仰身", "双臂抬起站姿"],
     "wall_raised_elbow_lean": ["抬臂靠墙侧背前倾", "抬肘靠墙前倾", "抬臂贴墙前倾", "靠墙举臂前倾"],
     "kneeling_back_support": ["跪坐后撑仰身", "跪坐双手后撑", "双膝跪坐后撑", "跪坐轻仰身"],
-    "sleeping_on_bed": ["床上熟睡", "熟睡姿势", "睡在床上", "躺床熟睡"]
+    "sleeping_on_bed": ["床上熟睡", "熟睡姿势", "睡在床上", "躺床熟睡"],
+    "photo_frame_break_bottom_left": ["破框而出", "照片边框破框", "从照片里探出来", "手扶照片边框"],
+    "photo_frame_break_top_bottom": ["照片上下沿探身", "上沿抬臂下沿搭手", "从照片上下沿探出", "照片上沿抬臂、下沿探手"]
   },
   "classification_terms": {
     "edge": ["侧边", "边缘", "门框边", "门框侧", "墙角", "墙边", "柱子侧面", "柱边", "侧板"],
@@ -1054,6 +1056,30 @@
       "random_camera_ids": [
         "third"
       ]
+    },
+    "photo_frame_break_bottom_left": {
+      "title": "白边照片前倾破框",
+      "prompt": "画面中有一张边缘清楚的白边矩形照片。人物原本位于照片画面内，上身从照片平面向镜头前倾探出，头部和肩部越过边框，腰部以下仍留在照片内部，形成明确的前后层次。一只手搭压在照片底部白边靠中间的位置，另一只手搭住左侧白边；两只手分别接触不同边缘并共同支撑前倾的上身，手腕、手指和手臂连接自然。人物面向镜头，身体保持稳定的静态支撑，不穿过边框，不把照片边框变成窗框，不增加额外肢体或摄影者的手。",
+      "orientation": "front",
+      "pose_family": "frame_interaction",
+      "random_weight": 1,
+      "explicit_only": true,
+      "framing_ids": ["front_half", "two_thirds"],
+      "expression_ids": ["calm", "playful", "confident", "lively"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "photo_frame_break_top_bottom": {
+      "title": "照片上下沿探身破框",
+      "prompt": "人物位于一张有清晰上下边缘的照片画面内，上身越过照片平面向镜头探出，腰部以下仍留在照片内部。一只手臂从肩旁抬起，手掌搭扶照片上沿；另一只手臂朝镜头前方伸出，手掌张开并搭在照片下沿，近处手掌略大但手腕和五指结构完整自然。上、下两处支撑点高低分明，共同承托前倾的肩胸，人物面向镜头并保持稳定静态姿势；不穿过边框，不把两只手放到同一边，不增加额外手臂或摄影者肢体。",
+      "orientation": "front",
+      "pose_family": "frame_interaction",
+      "random_weight": 1,
+      "explicit_only": true,
+      "framing_ids": ["front_half", "two_thirds"],
+      "expression_ids": ["calm", "playful", "confident", "lively"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
     }
   }
 }

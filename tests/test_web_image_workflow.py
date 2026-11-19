@@ -239,7 +239,8 @@ def test_empty_text_pool_stops_before_generation(plugin, tmp_path, enhance):
     from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
     plugin.persona = PersonaManager(tmp_path)
-    plugin.persona.remove_persona(1)
+    for persona in plugin.persona.identity_pool_payload()["persona_pool"]:
+        plugin.persona.remove_persona(persona["slot"])
     plugin.persona.set_identity_mode("persona")
     with pytest.raises(RuntimeError, match="当前未选择形象人设"):
         asyncio.run(plugin.web_test_image({
