@@ -1074,6 +1074,7 @@ class PersonaManager(IdentityPoolMixin):
             "updated_at": "",
             "daily_selfie_profile": None,
         }
+        self._builtin_persona_catalog_version = 0
         self.daily_schedule_store = DailyScheduleStore(
             os.path.join(data_dir, "daily_schedule.json")
         )
@@ -1112,13 +1113,15 @@ class PersonaManager(IdentityPoolMixin):
             }
         )
         self.data.update(self._normalize_identity_pools(raw))
+        catalog_changed = self._migrate_builtin_personas(raw)
         self._sync_legacy_image_fields()
-        # Persist the one-time default persona and legacy image migration.
+        # Persist default personas, catalog upgrades, and legacy image migration.
         if (
             result.status == "missing"
             or "persona_pool" not in raw
             or "image_pool" not in raw
             or "auxiliary_identity_refs" in raw
+            or catalog_changed
         ):
             try:
                 self.save()
@@ -1149,7 +1152,9 @@ class PersonaManager(IdentityPoolMixin):
     def save(self) -> None:
         if self._storage_blocked:
             raise RuntimeError("形象资料存储读取失败，已停止覆盖原文件")
-        save_json_file(self.file_path, self.data)
+        payload = copy.deepcopy(self.data)
+        payload["builtin_persona_catalog_version"] = self._builtin_persona_catalog_version
+        save_json_file(self.file_path, payload)
         self._storage_status = {"ok": True, "status": "ok", "error": "", "source": self.file_path}
 
     def storage_status(self) -> Dict[str, Any]:

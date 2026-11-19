@@ -18,6 +18,9 @@ PNG = b"\x89PNG\r\n\x1a\nidentity"
 def test_persona_pool_defaults_and_image_slots(tmp_path):
     manager = PersonaManager(tmp_path)
     assert manager.get_active_persona()["name"] == "小玉"
+    assert [item["name"] for item in manager.get()["persona_pool"]] == [
+        "小玉", "祈枝枝o.o", "奶包菜", "燕子回来了", "蛋姐",
+    ]
     assert manager.get_identity_mode() == "image"
 
     manager.save_reference_image(PNG, "image/png")
@@ -31,6 +34,47 @@ def test_persona_pool_defaults_and_image_slots(tmp_path):
     payload = manager.identity_pool_payload()
     assert all("path" not in item for item in payload["image_pool"])
     assert all("path" not in item for item in payload["persona_pool"])
+
+
+def test_existing_persona_pool_receives_new_builtins_once(tmp_path):
+    old_state = {
+        "identity_mode": "persona",
+        "persona_pool": [{
+            "slot": 1,
+            "name": "小玉",
+            "prompt": "用户已自定义的小玉描述",
+            "created_at": "2026-01-01T00:00:00",
+        }],
+        "active_persona_slot": 1,
+        "image_pool": [],
+    }
+    (tmp_path / "image_persona.json").write_text(json.dumps(old_state), encoding="utf-8")
+
+    manager = PersonaManager(tmp_path)
+    assert [item["name"] for item in manager.get()["persona_pool"]] == [
+        "小玉", "祈枝枝o.o", "奶包菜", "燕子回来了", "蛋姐",
+    ]
+    assert manager.get()["persona_pool"][0]["prompt"] == "用户已自定义的小玉描述"
+    assert manager.get_active_persona()["slot"] == 1
+    assert json.loads((tmp_path / "image_persona.json").read_text(encoding="utf-8"))[
+        "builtin_persona_catalog_version"
+    ] == 2
+
+    manager.remove_persona(2)
+    reloaded = PersonaManager(tmp_path)
+    assert "祈枝枝o.o" not in {item["name"] for item in reloaded.get()["persona_pool"]}
+    assert len(reloaded.get()["persona_pool"]) == 4
+
+
+def test_explicitly_empty_legacy_persona_pool_stays_empty(tmp_path):
+    (tmp_path / "image_persona.json").write_text(
+        json.dumps({"persona_pool": [], "image_pool": []}), encoding="utf-8",
+    )
+    manager = PersonaManager(tmp_path)
+    assert manager.get()["persona_pool"] == []
+    assert json.loads((tmp_path / "image_persona.json").read_text(encoding="utf-8"))[
+        "builtin_persona_catalog_version"
+    ] == 2
 
 
 def test_persona_mode_hides_image_without_deleting_it(tmp_path):
@@ -97,8 +141,9 @@ def test_full_image_pool_retains_numbers_and_reuses_three_after_reload(tmp_path)
 
 def test_persona_capacity_reuses_holes_and_empty_pool_stays_empty(tmp_path):
     manager = PersonaManager(tmp_path)
-    for slot in range(2, 11):
-        manager.add_persona(f"person-{slot}", f"description-{slot}")
+    while len(manager.get()["persona_pool"]) < 10:
+        count = len(manager.get()["persona_pool"])
+        manager.add_persona(f"person-{count}", f"description-{count}")
     with pytest.raises(ValueError, match="最多 10"):
         manager.add_persona("overflow", "description")
     manager.select_persona(8)
@@ -188,15 +233,20 @@ def test_image_commands_switch_remove_and_refill_same_slot(tmp_path, monkeypatch
 
 def test_text_persona_commands_select_remove_and_refill_hole(tmp_path):
     plugin = _plugin(tmp_path)
+    first_custom_slot = next(
+        slot for slot in range(1, 11)
+        if slot not in {item["slot"] for item in plugin.persona.get()["persona_pool"]}
+    )
     reply = _command(plugin, "cmd_persona_pool_add", "/形象人设添加 测试形象 成年女性，黑色长直发")[0]
-    assert "编号 2" in reply
+    assert f"编号 {first_custom_slot}" in reply
     _command(plugin, "cmd_persona_pool_add", "/形象人设添加 名称=第三形象 描述=成年女性，浅棕卷发")
-    _command(plugin, "cmd_persona_pool_select", "/形象人设设置 3")
+    second_custom_slot = first_custom_slot + 1
+    _command(plugin, "cmd_persona_pool_select", f"/形象人设设置 {second_custom_slot}")
     assert plugin.persona.get_active_persona()["name"] == "第三形象"
-    _command(plugin, "cmd_persona_pool_remove", "/形象人设移除 2")
+    _command(plugin, "cmd_persona_pool_remove", f"/形象人设移除 {first_custom_slot}")
     reply = _command(plugin, "cmd_persona_pool_add", "/形象人设添加 替补形象 成年女性，齐肩短发")[0]
-    assert "编号 2" in reply
-    assert plugin.persona.get_active_persona()["slot"] == 3
+    assert f"编号 {first_custom_slot}" in reply
+    assert plugin.persona.get_active_persona()["slot"] == second_custom_slot
     before = plugin.persona.get()
     assert "用法" in _command(plugin, "cmd_persona_pool_remove", "/形象人设移除 11")[0]
     assert plugin.persona.get() == before

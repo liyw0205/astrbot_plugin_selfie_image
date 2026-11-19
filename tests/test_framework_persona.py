@@ -205,7 +205,8 @@ def test_selected_text_persona_replaces_framework_identity_and_survives_english(
     assert english.count(selected["prompt"]) == 1
     resolver.assert_not_awaited()
 
-    persona.remove_persona(1)
+    for item in persona.get()["persona_pool"]:
+        persona.remove_persona(item["slot"])
     empty_prompt, _ = asyncio.run(SelfieImagePlugin._build_selfie_prompt_and_refs(plugin, "自拍", [], _event()))
     assert selected["prompt"] not in empty_prompt
     assert "角色设定：" not in empty_prompt

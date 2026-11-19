@@ -17,6 +17,8 @@ _IDENTITY_MODES = {"image", "persona"}
 _BUILTIN_PERSONAS_PATH = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "data", "persona", "builtin_personas.json"
 )
+_BUILTIN_PERSONA_CATALOG_VERSION = 2
+_PREVIOUS_BUILTIN_PERSONA_NAMES = {"小玉"}
 
 
 def _now() -> str:
@@ -197,6 +199,44 @@ class IdentityPoolMixin:
             "persona_pool": persona_pool,
             "active_persona_slot": active_persona,
         }
+
+    def _migrate_builtin_personas(self, raw: Dict[str, Any]) -> bool:
+        stored_version = raw.get("builtin_persona_catalog_version")
+        if type(stored_version) is not int or stored_version < 0:
+            stored_version = 0 if "persona_pool" not in raw else 1
+        if stored_version >= _BUILTIN_PERSONA_CATALOG_VERSION:
+            self._builtin_persona_catalog_version = stored_version
+            return False
+
+        pool = self.data.get("persona_pool", [])
+        if "persona_pool" in raw and not pool:
+            candidates = []
+        elif "persona_pool" in raw:
+            candidates = [
+                item for item in _load_builtin_personas()
+                if item["name"] not in _PREVIOUS_BUILTIN_PERSONA_NAMES
+            ]
+        else:
+            candidates = _load_builtin_personas()
+
+        names = {item["name"] for item in pool}
+        changed = False
+        for item in candidates:
+            if item["name"] in names or len(pool) >= POOL_LIMIT:
+                continue
+            pool.append({
+                "slot": self._allocate_slot(pool),
+                "name": item["name"],
+                "prompt": item["prompt"],
+                "created_at": "",
+            })
+            names.add(item["name"])
+            changed = True
+        pool.sort(key=lambda item: item["slot"])
+
+        next_version = _BUILTIN_PERSONA_CATALOG_VERSION
+        self._builtin_persona_catalog_version = next_version
+        return changed or next_version != stored_version
 
     def identity_pool_payload(self) -> Dict[str, Any]:
         with self._identity_pool_lock():
