@@ -1100,8 +1100,25 @@ class SelfieProfileController:
         extra = {"message": message} if message else {}
         return SelfieProfileControllerResult(redact_sensitive_data(data), extra)
 
-    def get_reference(self) -> SelfieProfileControllerResult:
+    def get_reference(self, query: Any = None) -> SelfieProfileControllerResult:
+        if (query or {}).get("view") == "preview":
+            persona = getattr(self.plugin, "persona", None)
+            path_reader = getattr(persona, "get_reference_path", None)
+            if callable(path_reader):
+                path = path_reader()
+                if not path:
+                    return SelfieProfileControllerResult({"has_image": False})
+                raw = render_image_thumbnail(path, max_dimension=768)
+                return SelfieProfileControllerResult({
+                    "has_image": True,
+                    "image": "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii"),
+                })
         return self._result(self._call("get_selfie_reference_payload"))
+
+    def get_identity(self, query: Any = None) -> SelfieProfileControllerResult:
+        if (query or {}).get("view") == "summary" and callable(getattr(self.plugin, "get_selfie_identity_payload", None)):
+            return self._result(self._call("get_selfie_identity_payload"))
+        return self.get_reference()
 
     def save_reference(self, payload: Any) -> SelfieProfileControllerResult:
         data = self._call("save_selfie_reference_from_web", payload, error_status=400)

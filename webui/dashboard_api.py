@@ -531,7 +531,7 @@ class SelfieImageDashboardAPI:
         return await self._threaded_result(lambda: self._qq_group_controller.update(payload))
 
     async def page_selfie_reference_get(self) -> Any:
-        return await self._threaded_result(self._selfie_profile_controller.get_reference)
+        return await self._threaded_result(lambda: self._selfie_profile_controller.get_reference(request.query))
 
     async def page_selfie_reference_post(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -550,7 +550,7 @@ class SelfieImageDashboardAPI:
 
     async def page_selfie_identity(self) -> Any:
         if getattr(request, "method", "POST").upper() == "GET":
-            return await self._threaded_result(self._selfie_profile_controller.get_reference)
+            return await self._threaded_result(lambda: self._selfie_profile_controller.get_identity(request.query))
         payload, error = await self._json_object_payload()
         if error:
             return error

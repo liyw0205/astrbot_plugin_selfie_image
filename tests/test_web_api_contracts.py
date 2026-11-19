@@ -1692,6 +1692,51 @@ def test_identity_pool_routes_reach_real_store_on_both_hosts(http, tmp_path):
     assert PersonaManager(tmp_path).get() == before
 
 
+def test_identity_summary_and_bounded_preview_do_not_load_full_profile(http, tmp_path, monkeypatch):
+    from io import BytesIO
+    import base64
+
+    from PIL import Image
+
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(tmp_path)
+    plugin.config = http.plugin.config
+    http.plugin.persona = plugin.persona
+    for hook in ("get_selfie_identity_payload", "update_selfie_identity_from_web"):
+        setattr(http.plugin, hook, getattr(plugin, hook))
+    output = BytesIO()
+    Image.new("RGB", (1600, 1200), "red").save(output, "PNG")
+    original = output.getvalue()
+    plugin.persona.save_reference_image(original)
+
+    def no_full_profile(*_args):
+        pytest.fail("lightweight requests must not read original bytes, wardrobe, or daily profile")
+
+    monkeypatch.setattr(plugin.persona, "get_reference_image", no_full_profile)
+    monkeypatch.setattr(plugin, "get_wardrobe_payload", no_full_profile)
+    monkeypatch.setattr(plugin.persona, "daily_schedule_payload", no_full_profile)
+    initial = assert_success(http.call("/api/selfie-identity?view=summary"))
+    assert initial["identity_mode"] == "image"
+    assert initial["active_image_slot"] == 1
+    assert initial["has_image"] is True
+    assert {"image", "wardrobe", "daily_schedule"}.isdisjoint(initial)
+    preview = assert_success(http.call("/api/selfie-reference?view=preview"))
+    with Image.open(BytesIO(base64.b64decode(preview["image"].split(",", 1)[1], validate=True))) as image:
+        assert image.size == (768, 576)
+    assert plugin.persona.get_reference_path()
+    assert Path(plugin.persona.get_reference_path()).read_bytes() == original
+    selected = assert_success(http.call("/api/selfie-identity", method="POST", body={
+        "action": "mode", "identity_mode": "persona", "view": "summary",
+    }))
+    assert selected["identity_mode"] == "persona"
+    assert not selected["has_image"]
+    assert {"image", "wardrobe", "daily_schedule"}.isdisjoint(selected)
+    assert assert_success(http.call("/api/selfie-reference?view=preview")) == {"has_image": False}
+
+
 def test_wardrobe_rotation_and_today_selection_reach_real_persona(http, tmp_path):
     from astrbot_plugin_selfie_image.features.persona import PersonaManager
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin

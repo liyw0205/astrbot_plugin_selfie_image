@@ -40,10 +40,11 @@ const host = `<!doctype html><meta name="viewport" content="width=device-width, 
 addEventListener('message', async event => {
   if (event.source !== document.querySelector('iframe').contentWindow || !event.data.op) return;
   const {id, op, endpoint, body} = event.data;
-  const response = await fetch('/api/' + endpoint, op === 'POST' ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {});
+  const query = op === 'GET' ? new URLSearchParams(body || {}).toString() : '';
+  const response = await fetch('/api/' + endpoint + (query ? '?' + query : ''), op === 'POST' ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {});
   event.source.postMessage({id,result:await response.json()}, '*');
 });</script>`;
-let state, calls, failAdd, thumbnailFailure;
+let state, calls, failAdd, thumbnailFailure, holdIdentity, holdDaily, releaseIdentity, releaseDaily;
 const nextSlot = pool => Array.from({length:10}, (_, i) => i + 1).find(slot => !pool.some(item => item.slot === slot));
 const payload = () => ({...state, pool_limit:10, appearance_type:'auto',
   has_image:state.identity_mode === 'image' && state.image_pool.length > 0,
@@ -61,7 +62,7 @@ async function main() {
     if (!url.pathname.startsWith('/api/')) { response.end(); return; }
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
-    calls.push({path:url.pathname, method:request.method, body}); let error = '';
+    calls.push({path:url.pathname, method:request.method, body, view:url.searchParams.get('view')}); let error = '';
     if (request.method === 'GET' && url.pathname === '/api/selfie-identity-thumbnails') {
       response.setHeader('Content-Type', 'application/json');
       if (thumbnailFailure === 'request') {
@@ -88,8 +89,22 @@ async function main() {
       if (body.action === 'persona_select') state.active_persona_slot = body.slot;
       if (body.action === 'persona_remove') state.persona_pool = state.persona_pool.filter(item => item.slot !== body.slot);
     }
+    let data = payload();
+    if (url.pathname === '/api/selfie-identity' && (url.searchParams.get('view') === 'summary' || body.view === 'summary')) {
+      data = {...state, pool_limit:10, appearance_type:'auto', has_image:state.identity_mode === 'image' && state.image_pool.length > 0};
+    } else if (url.pathname === '/api/selfie-profile/ensure-today') {
+      data = {daily_schedule:data.daily_schedule, wardrobe:data.wardrobe};
+    } else if (url.pathname === '/api/selfie-reference' && url.searchParams.get('view') === 'preview') {
+      data = {has_image:data.has_image, image:data.image};
+    }
+    if (request.method === 'GET' && url.pathname === '/api/selfie-identity' && holdIdentity) {
+      await new Promise(resolve => { releaseIdentity = resolve; });
+    }
+    if (url.pathname === '/api/selfie-profile/ensure-today' && holdDaily) {
+      await new Promise(resolve => { releaseDaily = resolve; });
+    }
     response.statusCode = error ? 400 : 200; response.setHeader('Content-Type', 'application/json');
-    response.end(JSON.stringify(error ? {success:false,error} : {success:true,data:payload()}));
+    response.end(JSON.stringify(error ? {success:false,error} : {success:true,data}));
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); let browser, cdp;
   try {
@@ -112,14 +127,32 @@ async function main() {
     };
     const click = selector => evaluate(`document.querySelector(${JSON.stringify(selector)}).click(); true`);
     for (const embedded of [false, true]) for (const width of [1280, 390, 320]) {
-      state = {identity_mode:'image',active_image_slot:1,active_persona_slot:1,
+      state = {identity_mode:'persona',active_image_slot:1,active_persona_slot:1,
         image_pool:[1,2,4].map(slot => ({slot,available:true,mime_type:'image/png'})),
         persona_pool:[{slot:1,name:'小玉',prompt:'成年女性，柔和的椭圆脸、细长眉、大杏眼、小巧鼻尖。\n'.repeat(100)}]};
-      calls = []; failAdd = false; thumbnailFailure = ''; contextId = undefined; const height = width === 1280 ? 900 : 844;
+      calls = []; failAdd = false; thumbnailFailure = ''; holdIdentity = true; holdDaily = true;
+      releaseIdentity = null; releaseDaily = null; contextId = undefined; const height = width === 1280 ? 900 : 844;
       await cdp.send('Emulation.setDeviceMetricsOverride', {width,height,deviceScaleFactor:1,mobile:width < 500});
       await cdp.send('Page.navigate', {url:`http://127.0.0.1:${server.address().port}/${embedded ? 'host' : 'fixture'}`});
       await new Promise(resolve => setTimeout(resolve, 250)); await until("typeof navigateToTab === 'function'");
-      await evaluate("navigateToTab('selfie')"); await until("$('selfieImagePoolCount').textContent === '3/10'");
+      await evaluate("navigateToTab('selfie')");
+      await until("$('selfiePersonaEnabled').disabled && $('selfiePersonaEnabled').indeterminate");
+      for (let attempt = 0; attempt < 120 && (!releaseIdentity || !releaseDaily); attempt++) await new Promise(resolve => setTimeout(resolve, 25));
+      assert(releaseIdentity && releaseDaily, 'identity and schedule were not requested independently');
+      assert.equal(calls.length, 2, 'initial loading should request only summary and schedule');
+      assert.equal(calls.find(call => call.path === '/api/selfie-identity').view, 'summary');
+      assert.equal(await evaluate("$('selfieImagePoolPanel').hidden && $('selfiePersonaPoolPanel').hidden"), true);
+      holdIdentity = false; releaseIdentity(); releaseIdentity = null;
+      await until("$('selfiePersonaEnabled').checked && !$('selfiePersonaEnabled').disabled && !$('selfiePersonaPoolPanel').hidden");
+      assert.equal(calls.length, 2, 'persona mode fetched image data');
+      await click('#selfiePersonaEnabled');
+      await until("!$('selfieImagePoolPanel').hidden && !$('selfiePersonaEnabled').disabled");
+      holdDaily = false; releaseDaily(); releaseDaily = null;
+      await until("$('selfieDailySchedule').textContent.includes('今日安排')");
+      await until("$('selfieImagePoolCount').textContent === '3/10'");
+      const readsAfterLoad = calls.length;
+      await evaluate("navigateToTab('base'); navigateToTab('selfie');");
+      assert.equal(calls.length, readsAfterLoad, 'quick tab switches refetched fresh state');
       assert.equal(await evaluate("document.querySelectorAll('[data-selfie-image-slot]').length"), 10);
       await until("document.querySelector('[data-selfie-identity-thumb=\"1\"] img')?.getAttribute('src') === " + JSON.stringify(jpeg));
       await until("document.querySelector('[data-selfie-identity-thumb=\"1\"] img')?.naturalWidth > 0");
@@ -178,10 +211,12 @@ async function main() {
       assert.equal(await evaluate("$('selfieDailySchedule').hidden"), false);
       const shot = await cdp.send('Page.captureScreenshot', {format:'png'});
       fs.writeFileSync(path.join(output, `${embedded ? 'embedded' : 'standalone'}-${width}.png`), Buffer.from(shot.data, 'base64'));
-      console.log(`[identity-pool-browser] ${embedded ? 'embedded' : 'standalone'} ${width}: pool operations, JPEG decode, thumbnail retry, bounded descriptions and request count passed`);
+      console.log(`[identity-pool-browser] ${embedded ? 'embedded' : 'standalone'} ${width}: independent loading, mode state, cache reuse, pool operations, thumbnail retry and layout passed`);
     }
     assert.deepEqual(exceptions, []); console.log(`[identity-pool-browser] screenshots: ${output}`);
   } finally {
+    if (releaseIdentity) releaseIdentity();
+    if (releaseDaily) releaseDaily();
     if (cdp) cdp.close(); await stopProcess(browser); await new Promise(resolve => server.close(resolve));
     fs.rmSync(profile, {recursive:true,force:true,maxRetries:3,retryDelay:100});
   }

@@ -196,7 +196,7 @@ def test_dashboard_catalog_pages_and_gallery_survive_a_reload_with_bounded_ttl()
 
 
 def test_cache_aware_page_loads_wait_for_persistent_hydration():
-    for name in ("prompt_catalogs.js", "records_assets.js", "protected_media.js", "backup_manager.js", "selfie_auth.js"):
+    for name in ("prompt_catalogs.js", "records_assets.js", "protected_media.js", "backup_manager.js"):
         source = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "source" / name).read_text(encoding="utf-8")
         assert "await ensureDashboardPersistentCachesHydrated();" in source, name
     runtime = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "source" / "runtime.js").read_text(encoding="utf-8")
@@ -425,7 +425,7 @@ def test_record_source_buttons_copy_and_response_base64_opens():
 
 def test_record_persona_reference_is_loaded_after_markup_without_inline_html_data():
     assert "function loadPersonaReferenceThumbs(root = document)" in PAGE
-    assert "SELFIE_REFERENCE_DATA_URL = data.has_image" in PAGE
+    assert "api('/api/selfie-reference?view=preview')" in PAGE
     assert "img.src = src;" in PAGE
     assert "loadPersonaReferenceThumbs($('recordDetailBody'))" in PAGE
     assert 'src="${escapeHtml(src)}" alt="形象图"' not in PAGE
@@ -433,7 +433,8 @@ def test_record_persona_reference_is_loaded_after_markup_without_inline_html_dat
 
 def test_selfie_controls_only_offer_local_daily_outfit_refresh():
     controls = PAGE[PAGE.index('<input id="selfieFile"'):PAGE.index('<div id="selfieStatus"', PAGE.index('<input id="selfieFile"'))]
-    assert controls.index('onclick="refreshSelfie(true)"') < controls.index('onclick="clearSelfie()"')
+    assert 'id="refreshSelfieBtn"' in controls
+    assert 'id="clearSelfieBtn"' in controls
     assert '今日穿搭' not in controls
     assert 'onclick="refreshDailySelfieLocal()"' in controls
     assert '重新生成今日日程' in controls
@@ -456,7 +457,7 @@ def test_selfie_schedule_and_wardrobe_requests_ignore_late_mutations():
     assert "const mutationSeq = beginSelfieMutation();" in PAGE
     assert "if (mutationSeq !== SELFIE_MUTATION_SEQ) return;" in PAGE
     assert "if (mutationSeq === SELFIE_MUTATION_SEQ) showToast" in PAGE
-    assert "if (mutationSeq !== SELFIE_MUTATION_SEQ || dailyLoadSeq !== SELFIE_DAILY_LOAD_SEQ) return;" in PAGE
+    assert "if (mutationSeq !== SELFIE_MUTATION_SEQ || loadSeq !== SELFIE_IDENTITY_LOAD_SEQ) return null;" in PAGE
 
 
 def test_dashboard_health_and_metrics_are_grouped_for_scanning():

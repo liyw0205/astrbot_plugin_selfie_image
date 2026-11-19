@@ -2052,6 +2052,9 @@ class SelfieImagePlugin(
     def get_selfie_reference_payload(self) -> Dict[str, Any]:
         return _selfie_profile_web_service_for(self).reference()
 
+    def get_selfie_identity_payload(self) -> Dict[str, Any]:
+        return _selfie_profile_web_service_for(self).identity()
+
     def get_wardrobe_payload(self) -> Dict[str, Any]:
         return _selfie_profile_web_service_for(self).wardrobe()
 

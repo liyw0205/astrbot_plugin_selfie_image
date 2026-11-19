@@ -683,7 +683,7 @@ class FlaskWebServer:
         def selfie_reference_get() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            return selfie_profile_result(selfie_profile_controller.get_reference)
+            return selfie_profile_result(lambda: selfie_profile_controller.get_reference(request.args))
 
         def selfie_reference_post() -> Any:
             if not check_auth():
@@ -707,7 +707,7 @@ class FlaskWebServer:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             if request.method.upper() == "GET":
-                return selfie_profile_result(selfie_profile_controller.get_reference)
+                return selfie_profile_result(lambda: selfie_profile_controller.get_identity(request.args))
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response

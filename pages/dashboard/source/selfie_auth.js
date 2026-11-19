@@ -46,23 +46,37 @@
 
     let SELFIE_DAILY_ENSURE_REQUEST = null;
     let SELFIE_DAILY_LOAD_SEQ = 0;
+    let SELFIE_DAILY_DATA = null;
+    let SELFIE_DAILY_LOADED_AT = 0;
+    const SELFIE_READ_CACHE_TTL_MS = 15000;
     let SELFIE_MUTATION_SEQ = 0;
     function invalidateSelfieDailySchedule() {
       SELFIE_DAILY_LOAD_SEQ += 1;
+      SELFIE_DAILY_LOADED_AT = 0;
       // A mutation must not reuse an ensure request that started against the
       // previous wardrobe/schedule snapshot. The old promise may still settle;
       // its identity check keeps it from clearing a newer request.
       SELFIE_DAILY_ENSURE_REQUEST = null;
     }
-    function beginSelfieMutation() {
+    function beginSelfieMutation({daily = true} = {}) {
       SELFIE_MUTATION_SEQ += 1;
+      SELFIE_IDENTITY_LOADED_AT = 0;
       SELFIE_REFERENCE_VERSION += 1;
       SELFIE_REFERENCE_DATA_URL = '';
       SELFIE_REFERENCE_REQUEST = null;
-      invalidateSelfieDailySchedule();
+      if (daily) invalidateSelfieDailySchedule();
       return SELFIE_MUTATION_SEQ;
     }
-    async function loadSelfieDailySchedule() {
+    function applySelfieDailyData(schedule, wardrobe, error = '') {
+      SELFIE_DAILY_DATA = {schedule, wardrobe, error};
+      SELFIE_DAILY_LOADED_AT = schedule?.schedule?.events?.length ? Date.now() : 0;
+      if (wardrobe) renderWardrobe(wardrobe);
+      renderSelfieDailySchedule(schedule, error);
+    }
+    async function loadSelfieDailySchedule(force = false) {
+      if (!force && SELFIE_DAILY_LOADED_AT && Date.now() - SELFIE_DAILY_LOADED_AT < SELFIE_READ_CACHE_TTL_MS) {
+        return {...SELFIE_DAILY_DATA, loadSeq: SELFIE_DAILY_LOAD_SEQ};
+      }
       let request = SELFIE_DAILY_ENSURE_REQUEST;
       if (!request) {
         const loadSeq = ++SELFIE_DAILY_LOAD_SEQ;
@@ -84,14 +98,25 @@
       return {...result, loadSeq: request.loadSeq};
     }
 
+    async function refreshSelfieDailySchedule(force = false) {
+      if (!force && SELFIE_DAILY_LOADED_AT && Date.now() - SELFIE_DAILY_LOADED_AT < SELFIE_READ_CACHE_TTL_MS) return SELFIE_DAILY_DATA;
+      const root = $('selfieDailySchedule');
+      if (root && !SELFIE_DAILY_DATA?.schedule?.schedule?.events?.length) {
+        root.hidden = false;
+        root.textContent = '正在读取今日日程…';
+      }
+      const result = await loadSelfieDailySchedule(force);
+      if (result.loadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
+      applySelfieDailyData(result.schedule, result.wardrobe, result.error || (
+        result.schedule?.schedule?.events?.length ? '' : '服务暂未返回今日日程，请重试。'
+      ));
+      return result;
+    }
     async function retrySelfieDailySchedule() {
       const button = $('ensureSelfieDailySchedule');
       if (button) { button.disabled = true; button.textContent = '正在恢复…'; }
-      const result = await loadSelfieDailySchedule();
-      if (result.loadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
-      if (result.wardrobe) renderWardrobe(result.wardrobe);
-      renderSelfieDailySchedule(result.schedule, result.error || '服务暂未返回今日日程，请重试。');
-      if (result.schedule?.schedule) showToast('今日日程已恢复', 'ok');
+      const result = await refreshSelfieDailySchedule(true);
+      if (result?.schedule?.schedule) showToast('今日日程已恢复', 'ok');
     }
 
     let WARDROBE_BATCH_BUSY = false;
@@ -126,10 +151,31 @@
     }
 
     let SELFIE_IDENTITY_DATA = null;
+    let SELFIE_IDENTITY_LOAD_REQUEST = null;
+    let SELFIE_IDENTITY_LOAD_SEQ = 0;
+    let SELFIE_IDENTITY_LOADED_AT = 0;
+    let SELFIE_STATE_SCOPE = '';
     let SELFIE_IDENTITY_THUMBNAILS = new Map();
     let SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
     let SELFIE_IDENTITY_THUMBNAIL_VERSION = 0;
     let SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
+    function ensureSelfieStateScope() {
+      const scope = protectedMediaScope();
+      if (SELFIE_STATE_SCOPE && SELFIE_STATE_SCOPE !== scope) {
+        beginSelfieMutation();
+        SELFIE_IDENTITY_LOAD_SEQ += 1;
+        SELFIE_IDENTITY_LOAD_REQUEST = null;
+        SELFIE_IDENTITY_DATA = null;
+        SELFIE_DAILY_DATA = null;
+        invalidateSelfieIdentityThumbnails();
+        for (const id of ['selfieImagePoolPanel', 'selfiePersonaPoolPanel', 'selfieDailySchedule']) {
+          if ($(id)) $(id).hidden = true;
+        }
+        const checkbox = $('selfiePersonaEnabled');
+        if (checkbox) { checkbox.disabled = true; checkbox.indeterminate = true; }
+      }
+      SELFIE_STATE_SCOPE = scope;
+    }
     function invalidateSelfieIdentityThumbnails() {
       SELFIE_IDENTITY_THUMBNAIL_VERSION += 1;
       SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
@@ -150,7 +196,15 @@
     }
     function renderSelfieIdentity(data) {
       data = data || {};
+      const previous = SELFIE_IDENTITY_DATA;
+      if (previous && (previous.active_image_slot !== data.active_image_slot
+          || previous.updated_at !== data.updated_at || identityMode(previous) !== identityMode(data))) {
+        SELFIE_REFERENCE_VERSION += 1;
+        SELFIE_REFERENCE_DATA_URL = '';
+        SELFIE_REFERENCE_REQUEST = null;
+      }
       SELFIE_IDENTITY_DATA = data;
+      SELFIE_IDENTITY_LOADED_AT = Date.now();
       const mode = identityMode(data);
       const limit = identityPoolLimit(data);
       const imagePool = Array.isArray(data.image_pool) ? data.image_pool : [];
@@ -159,7 +213,13 @@
       const personaBySlot = new Map(personaPool.map(item => [Number(item.slot), item]));
       const imagePanel = $('selfieImagePoolPanel');
       const personaPanel = $('selfiePersonaPoolPanel');
-      if ($('selfiePersonaEnabled')) $('selfiePersonaEnabled').checked = mode === 'persona';
+      if ($('selfiePersonaEnabled')) {
+        $('selfiePersonaEnabled').checked = mode === 'persona';
+        $('selfiePersonaEnabled').indeterminate = false;
+        $('selfiePersonaEnabled').disabled = false;
+        $('selfiePersonaEnabled').removeAttribute('aria-busy');
+      }
+      if ($('selfieAppearanceType')) $('selfieAppearanceType').value = data.appearance_type || 'auto';
       if ($('useLogoWhenNoPersona')) $('useLogoWhenNoPersona').disabled = mode === 'persona';
       if (imagePanel) imagePanel.hidden = mode !== 'image';
       if (personaPanel) personaPanel.hidden = mode !== 'persona';
@@ -196,7 +256,7 @@
         button.onclick = () => removeSelfieImage(Number(button.closest('[data-selfie-image-slot]').dataset.selfieImageSlot));
       });
       renderSelfieIdentityThumbnails(imagePool.map(item => Number(item.slot)));
-      void loadSelfieIdentityThumbnails(imagePool);
+      if (mode === 'image') void loadSelfieIdentityThumbnails(imagePool);
 
       const personaRows = [];
       for (let slot = 1; slot <= limit; slot += 1) {
@@ -223,8 +283,8 @@
       $('selfiePersonaPoolList')?.querySelectorAll('.selfie-persona-remove').forEach(button => {
         button.onclick = () => removeSelfiePersona(Number(button.closest('[data-selfie-persona-slot]').dataset.selfiePersonaSlot));
       });
-      const image = data.has_image && String(data.image || '').startsWith('data:image/') ? String(data.image) : '';
-      SELFIE_REFERENCE_DATA_URL = image;
+      if (String(data.image || '').startsWith('data:image/')) SELFIE_REFERENCE_DATA_URL = String(data.image);
+      const image = data.has_image && mode === 'image' ? SELFIE_REFERENCE_DATA_URL : '';
       const preview = $('selfiePreview');
       if (preview && image && mode === 'image') {
         preview.src = image;
@@ -235,6 +295,14 @@
       }
       const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
       if ($('selfieStatus')) $('selfieStatus').textContent = `${mode === 'persona' ? '使用形象人设池' : (data.has_image ? '形象参考图已设置' : '尚未设置形象参考图')} · 类型：${appearanceLabel}`;
+      if (mode === 'image' && data.has_image && !image) void loadSelfiePreview();
+    }
+    async function loadSelfiePreview() {
+      const version = SELFIE_REFERENCE_VERSION;
+      const image = await loadSelfieReferenceDataUrl();
+      if (version !== SELFIE_REFERENCE_VERSION || identityMode(SELFIE_IDENTITY_DATA) !== 'image') return;
+      const preview = $('selfiePreview');
+      if (preview && image) { preview.src = image; preview.style.display = 'block'; }
     }
     function showSelfieIdentityThumbnailError(slot, message) {
       const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
@@ -298,9 +366,9 @@
     }
     async function selfieIdentityAction(payload, successMessage = '') {
       if (payload?.action === 'image_remove') invalidateSelfieIdentityThumbnails();
-      const mutationSeq = beginSelfieMutation();
+      const mutationSeq = beginSelfieMutation({daily: false});
       try {
-        const res = await api('/api/selfie-identity', {method:'POST', body: JSON.stringify(payload)});
+        const res = await api('/api/selfie-identity', {method:'POST', body: JSON.stringify({...payload, view:'summary'})});
         if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         const data = res.data || {};
         renderSelfieIdentity(data);
@@ -344,10 +412,10 @@
       if (!checkbox) return;
       const requested = checkbox.checked ? 'persona' : 'image';
       const previous = identityMode(SELFIE_IDENTITY_DATA || {});
-      const mutationSeq = beginSelfieMutation();
+      const mutationSeq = beginSelfieMutation({daily: false});
       checkbox.disabled = true;
       try {
-        const res = await api('/api/selfie-identity', {method:'POST', body: JSON.stringify({action:'mode', identity_mode: requested})});
+        const res = await api('/api/selfie-identity', {method:'POST', body: JSON.stringify({action:'mode', identity_mode: requested, view:'summary'})});
         if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
         const data = res.data || {};
         renderSelfieIdentity(data);
@@ -359,68 +427,62 @@
         showToast(e.message || '形象池切换失败', 'bad');
       } finally { checkbox.disabled = false; }
     }
-    async function refreshSelfieIdentity(expectedMutationSeq = null) {
-      const res = await api('/api/selfie-identity');
-      const data = res.data || {};
-      if (!hasIdentityPoolPayload(data)) throw Object.assign(new Error('形象池接口尚未提供完整状态'), {status: 404});
-      if (expectedMutationSeq !== null && expectedMutationSeq !== SELFIE_MUTATION_SEQ) return null;
-      renderSelfieIdentity(data);
-      return data;
+    async function refreshSelfieIdentity(force = false) {
+      if (!force && SELFIE_IDENTITY_DATA && SELFIE_IDENTITY_LOADED_AT
+          && Date.now() - SELFIE_IDENTITY_LOADED_AT < SELFIE_READ_CACHE_TTL_MS) return SELFIE_IDENTITY_DATA;
+      const mutationSeq = SELFIE_MUTATION_SEQ;
+      if (!force && SELFIE_IDENTITY_LOAD_REQUEST?.mutationSeq === mutationSeq) return SELFIE_IDENTITY_LOAD_REQUEST.promise;
+      const loadSeq = ++SELFIE_IDENTITY_LOAD_SEQ;
+      if (!SELFIE_IDENTITY_DATA) {
+        const checkbox = $('selfiePersonaEnabled');
+        if (checkbox) { checkbox.disabled = true; checkbox.indeterminate = true; checkbox.setAttribute('aria-busy', 'true'); }
+        if ($('selfieIdentityModeHint')) $('selfieIdentityModeHint').textContent = '正在读取形象模式…';
+      }
+      const request = {mutationSeq, promise: null};
+      request.promise = (async () => {
+        try {
+          let res;
+          try {
+            res = await api('/api/selfie-identity?view=summary');
+            if (!hasIdentityPoolPayload(res.data)) throw Object.assign(new Error('形象池接口尚未提供完整状态'), {status: 404});
+          } catch (error) {
+            if (error?.status !== 404 && error?.status !== 405) throw error;
+            res = await api('/api/selfie-reference');
+          }
+          if (mutationSeq !== SELFIE_MUTATION_SEQ || loadSeq !== SELFIE_IDENTITY_LOAD_SEQ) return null;
+          const data = res.data || {};
+          renderSelfieIdentity(data);
+          return data;
+        } catch (e) {
+          if (mutationSeq !== SELFIE_MUTATION_SEQ || loadSeq !== SELFIE_IDENTITY_LOAD_SEQ) return null;
+          if (!SELFIE_IDENTITY_DATA) {
+            $('selfiePersonaEnabled')?.removeAttribute('aria-busy');
+            if ($('selfieStatus')) $('selfieStatus').textContent = '形象信息暂不可用';
+            if ($('selfieIdentityModeHint')) $('selfieIdentityModeHint').textContent = e.message || '形象模式读取失败';
+          }
+          showToast(e.message || '形象信息读取失败', 'bad');
+          return null;
+        }
+      })().finally(() => {
+        if (SELFIE_IDENTITY_LOAD_REQUEST === request) SELFIE_IDENTITY_LOAD_REQUEST = null;
+      });
+      SELFIE_IDENTITY_LOAD_REQUEST = request;
+      return request.promise;
     }
 
     async function refreshSelfie(notify = false) {
-      if (notify) invalidateSelfieIdentityThumbnails();
-      const mutationSeq = SELFIE_MUTATION_SEQ;
-      const dailyLoadSeq = SELFIE_DAILY_LOAD_SEQ;
-      try {
-        let res;
-        try {
-          res = await api('/api/selfie-identity');
-          if (!hasIdentityPoolPayload(res.data)) throw Object.assign(new Error('形象池接口尚未提供完整状态'), {status: 404});
-        } catch (error) {
-          if (error?.status !== 404 && error?.status !== 405) throw error;
-          res = await api('/api/selfie-reference');
-        }
-        if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
-        const data = res.data || {};
-        renderSelfieIdentity(data);
-        SELFIE_REFERENCE_DATA_URL = data.has_image && String(data.image || '').startsWith('data:image/')
-          ? String(data.image)
-          : '';
-        if (SELFIE_REFERENCE_DATA_URL && identityMode(data) === 'image') {
-          $('selfiePreview').src = SELFIE_REFERENCE_DATA_URL;
-          $('selfiePreview').style.display = 'block';
-        } else {
-          $('selfiePreview').removeAttribute('src');
-          $('selfiePreview').style.display = 'none';
-        }
-        let dailySchedule = data.daily_schedule;
-        let scheduleError = '';
-        let scheduleLoadSeq = dailyLoadSeq;
-        if (!Array.isArray(dailySchedule?.schedule?.events) || !dailySchedule.schedule.events.length) {
-          const ensured = await loadSelfieDailySchedule();
-          if (mutationSeq !== SELFIE_MUTATION_SEQ || ensured.loadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
-          scheduleLoadSeq = ensured.loadSeq;
-          dailySchedule = ensured.schedule || dailySchedule;
-          scheduleError = ensured.error || (
-            Array.isArray(ensured.schedule?.schedule?.events) && ensured.schedule.schedule.events.length
-              ? '' : '服务暂未返回今日日程，请点击重试。'
-          );
-          if (ensured.wardrobe) data.wardrobe = ensured.wardrobe;
-        }
-        if (mutationSeq !== SELFIE_MUTATION_SEQ || scheduleLoadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
-        renderSelfieDailySchedule(dailySchedule, scheduleError);
-        renderWardrobe(data.wardrobe);
-        if ($('selfieAppearanceType')) {
-          $('selfieAppearanceType').value = data.appearance_type || 'auto';
-        }
-        if (notify) showToast('形象参考已刷新', 'ok');
-      } catch (e) {
-        if (mutationSeq !== SELFIE_MUTATION_SEQ || dailyLoadSeq !== SELFIE_DAILY_LOAD_SEQ) return;
-        $('selfieStatus').textContent = '形象信息暂不可用';
-        renderSelfieDailySchedule(null, e.message || '形象信息读取失败');
-        showToast(e.message || '形象信息读取失败', 'bad');
+      ensureSelfieStateScope();
+      if (notify) {
+        invalidateSelfieIdentityThumbnails();
+        SELFIE_REFERENCE_VERSION += 1;
+        SELFIE_REFERENCE_DATA_URL = '';
+        SELFIE_REFERENCE_REQUEST = null;
       }
+      // Each section renders as soon as its own small response is ready.
+      const [identity, daily] = await Promise.all([
+        refreshSelfieIdentity(notify), refreshSelfieDailySchedule(notify),
+      ]);
+      if (notify && identity && daily?.schedule?.schedule) showToast('形象参考已刷新', 'ok');
     }
     async function uploadWardrobe() {
       if (WARDROBE_BATCH_BUSY) return;
@@ -545,8 +607,7 @@
       try {
         const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
         if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
-        renderSelfieDailySchedule(res.data && res.data.daily_schedule);
-        renderWardrobe(res.data && res.data.wardrobe);
+        applySelfieDailyData(res.data && res.data.daily_schedule, res.data && res.data.wardrobe);
         showToast('今日日程已重新生成', 'ok');
       } catch (e) {
         if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message, 'bad');
@@ -556,7 +617,7 @@
       const file = $('selfieFile').files[0];
       if (!file) { showToast('请选择图片', 'bad'); return; }
       invalidateSelfieIdentityThumbnails();
-      const mutationSeq = beginSelfieMutation();
+      const mutationSeq = beginSelfieMutation({daily: false});
       const uploadButton = $('uploadSelfie');
       if (uploadButton) uploadButton.disabled = true;
       try {
@@ -590,7 +651,7 @@
       catch (e) { if (mutationSeq === SELFIE_MUTATION_SEQ) showToast(e.message || '参考图清除失败', 'bad'); }
     }
     async function saveAppearanceType() {
-      const mutationSeq = beginSelfieMutation();
+      const mutationSeq = beginSelfieMutation({daily: false});
       try {
         const appearance_type = ($('selfieAppearanceType') && $('selfieAppearanceType').value) || 'auto';
         const res = await api('/api/selfie-appearance-type', {method:'POST', body: JSON.stringify({appearance_type})});
@@ -649,6 +710,10 @@
           // The first login request may have observed the temporary empty
           // state. Refresh only pages the user has actually opened.
           const refreshes = [];
+          if (DASHBOARD_VISITED_TABS.has('selfie')) {
+            invalidateSelfieDailySchedule();
+            refreshes.push(refreshSelfie(true));
+          }
           if (DASHBOARD_VISITED_TABS.has('monitor')) {
             invalidateMetricsRequests();
             TASK_LOAD_SEQ += 1;
@@ -675,9 +740,8 @@
         AUTH_TOKEN = ($('loginToken')?.value || '').trim();
       }
       ensureProtectedMediaScope();
-      // A standalone page may boot before the user enters a token. Hydrate the
-      // token-scoped page/catalog cache after authentication is established.
-      await ensureDashboardPersistentCachesHydrated();
+      ensureSelfieStateScope();
+      // Record and asset caches are restored by their own page loaders.
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};
@@ -698,6 +762,8 @@
           if ($('logoutBtn')) $('logoutBtn').style.display = 'none';
         }
         if ($('loginStatus')) $('loginStatus').textContent = '';
+        const activeTab = document.querySelector('nav.page-nav button.active')?.dataset.tab;
+        if (activeTab && activeTab !== 'base') navigateToTab(activeTab, {force:true});
         const health = await checkHealth();
         // The base tab only needs config and health. Heavy data pages load when
         // their tab is first opened and reuse their own caches thereafter.
@@ -728,6 +794,7 @@
         return;
       }
       AUTH_TOKEN = '';
+      ensureSelfieStateScope();
       clearProtectedMediaCache();
       clearGalleryPickerCache();
       clearRecordPageCache();
@@ -755,6 +822,7 @@
         if (el.closest('#channels') && el.id !== 'priorityList') return;
         const section = el.closest('section');
         if (section && section.id && !allowSections.has(section.id) && section.id !== 'channels') return;
+        if (section?.id === 'selfie' && !['selfieAspect', 'useLogoWhenNoPersona'].includes(el.id)) return;
         const eventName = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';
         el.addEventListener(eventName, () => {
           // A pending autosave is still local state. Invalidate config reads

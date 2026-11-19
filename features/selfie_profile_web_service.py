@@ -21,6 +21,17 @@ class SelfieProfileWebService:
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
 
+    def identity(self) -> dict[str, Any]:
+        """Return first-paint state without reading images or the wardrobe."""
+        persona = self.plugin.persona
+        data = persona.get()
+        return {
+            **persona.identity_pool_payload(),
+            "has_image": persona.has_reference_image(),
+            "appearance_type": persona.get_appearance_type(),
+            "updated_at": data.get("updated_at") or "",
+        }
+
     def reference(self) -> dict[str, Any]:
         plugin = self.plugin
         data = plugin.persona.get()
@@ -105,7 +116,7 @@ class SelfieProfileWebService:
                 name=name.strip() if isinstance(name, str) else None,
                 prompt=prompt.strip() if isinstance(prompt, str) else None,
             )
-        return self.reference()
+        return self.identity() if payload.get("view") == "summary" else self.reference()
 
     async def ensure_daily_schedule(self) -> dict[str, Any]:
         """Create today's schedule only when it is missing or stale."""

@@ -778,7 +778,6 @@
       DASHBOARD_PERSIST_HYDRATION_READY = ready;
       return ready;
     }
-    void ensureDashboardPersistentCachesHydrated();
 
     function isEmbeddedFrame() {
       try {

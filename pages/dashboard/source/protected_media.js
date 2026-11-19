@@ -615,7 +615,7 @@
       if (!SELFIE_REFERENCE_REQUEST) {
         const version = SELFIE_REFERENCE_VERSION;
         let request;
-        request = api('/api/selfie-reference').then(res => {
+        request = api('/api/selfie-reference?view=preview').then(res => {
           const image = String(res?.data?.image || '').trim();
           if (version === SELFIE_REFERENCE_VERSION) {
             SELFIE_REFERENCE_DATA_URL = image.startsWith('data:image/') ? image : '';
