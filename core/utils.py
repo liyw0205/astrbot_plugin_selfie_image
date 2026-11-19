@@ -1839,6 +1839,12 @@ def extract_quote_text(event: Any, limit: int = QUOTE_TEXT_MAX_CHARS) -> str:
     return _clean_quote_text(" ".join(found), limit=limit)
 
 
+IMAGE_SOURCE_METADATA_FIELDS = frozenset({
+    "author", "sender", "user", "users", "member", "members", "group", "guild",
+    "mentions", "avatar", "avatar_url", "group_avatar",
+})
+
+
 def extract_image_sources_from_event(event: Any, include_at_avatar: bool = False) -> List[str]:
     images: List[str] = []
     visited = set()
@@ -1900,6 +1906,8 @@ def extract_image_sources_from_event(event: Any, include_at_avatar: bool = False
             attrs.extend(getattr(obj, "__slots__", []))
         blocked = {"context", "star", "bot", "provider", "session", "config", "plugin_config"}
         for key in set(attrs) - blocked:
+            if str(key).lower() in IMAGE_SOURCE_METADATA_FIELDS:
+                continue
             try:
                 search(getattr(obj, key))
             except Exception:

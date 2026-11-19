@@ -28,6 +28,7 @@ from ..core.utils import (
     DEFAULT_MAX_IMAGE_DIMENSION,
     DEFAULT_MAX_IMAGE_PIXELS,
     normalize_image_mime,
+    IMAGE_SOURCE_METADATA_FIELDS,
     unique,
 )
 
@@ -406,11 +407,26 @@ def _looks_like_forward_or_quote(obj: Any) -> bool:
     return any(token in lowered for token in ("forward", "node", "quote", "reply", "merge"))
 
 
+def _message_field(obj: Any, key: str) -> Any:
+    if isinstance(obj, Mapping):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _mention_ids(obj: Any) -> List[str]:
+    return unique([
+        str(value).strip()
+        for key in ("qq", "id", "user_id", "member_openid", "user_openid")
+        if (value := _message_field(obj, key)) is not None and str(value).strip()
+    ])
+
+
 def extract_structured_image_sources(
     event: Any,
     *,
     include_at_avatar: bool = False,
     include_image_alternates: bool = False,
+    at_avatar_filter_ids: Optional[Sequence[str]] = None,
 ) -> Dict[str, List[str]]:
     """Walk event tree and bucket image sources by role.
 
@@ -426,6 +442,48 @@ def extract_structured_image_sources(
         "at_avatar": [],
     }
     visited: Set[int] = set()
+    avatar_sources: Dict[str, str] = {}
+    filter_avatars = at_avatar_filter_ids is not None
+    blocked_avatar_ids = {str(value).strip() for value in (at_avatar_filter_ids or [])}
+    if filter_avatars:
+        blocked_avatar_ids.update({"qq_official", "unknown_selfid"})
+    message_obj = getattr(event, "message_obj", None)
+    roots = (event, message_obj, getattr(event, "raw_message", None), _message_field(message_obj, "raw_message"))
+    if filter_avatars:
+        # QQ exposes the sender's account id and openid under different fields.
+        # Only current-message authors are aliases; quoted authors are not.
+        for root in roots:
+            for owner in (root, _message_field(root, "raw_data")):
+                for key in ("author", "sender"):
+                    blocked_avatar_ids.update(_mention_ids(_message_field(owner, key)))
+
+    def add_at_avatar(mention: Any) -> None:
+        if not include_at_avatar:
+            return
+        ids = _mention_ids(mention)
+        if not ids or "all" in ids:
+            return
+        if filter_avatars and (
+            _message_field(mention, "is_you") is True
+            or any(value in blocked_avatar_ids for value in ids)
+        ):
+            blocked_avatar_ids.update(ids)
+        avatar = str(_message_field(mention, "avatar") or _message_field(mention, "avatar_url") or "").strip()
+        source = avatar or f"https://q4.qlogo.cn/headimg_dl?dst_uin={ids[0]}&spec=640"
+        for value in ids:
+            if avatar or value not in avatar_sources:
+                avatar_sources[value] = source
+
+    def search_field(key: Any, value: Any, role: str, depth: int) -> None:
+        key_l = str(key).lower()
+        if key_l == "mentions":
+            for mention in value if isinstance(value, (list, tuple)) else []:
+                add_at_avatar(mention)
+            return
+        if key_l in IMAGE_SOURCE_METADATA_FIELDS:
+            return
+        child_role = "quote" if key_l in {"quote", "reply", "source"} else role
+        search(value, child_role, depth)
 
     def add(role: str, value: Any) -> None:
         text = str(value or "").strip()
@@ -456,8 +514,7 @@ def extract_structured_image_sources(
                     add(role, value)
                 return
             for key, value in obj.items():
-                child_role = "quote" if str(key).lower() in {"quote", "reply"} else role
-                search(value, child_role, depth + 1)
+                search_field(key, value, role, depth + 1)
             return
 
         if obj_type == "Image":
@@ -500,10 +557,7 @@ def extract_structured_image_sources(
             return
 
         if obj_type in {"At", "AtSomeone"}:
-            if include_at_avatar:
-                qq = str(getattr(obj, "qq", getattr(obj, "id", "")) or "").strip()
-                if qq and qq != "all":
-                    add("at_avatar", f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640")
+            add_at_avatar(obj)
             return
 
         if isinstance(obj, str):
@@ -532,24 +586,22 @@ def extract_structured_image_sources(
                 child = getattr(obj, key)
             except Exception:
                 continue
-            child_role = next_role
-            key_l = str(key).lower()
-            if key_l in {"quote", "reply", "source"}:
-                child_role = "quote"
-            elif key_l in {"nodes", "forward", "forward_nodes", "content"} and _looks_like_forward_or_quote(obj):
-                child_role = "forward"
-            search(child, child_role, depth + 1)
+            search_field(key, child, next_role, depth + 1)
 
-    message_obj = getattr(event, "message_obj", None)
     search(message_obj, "message")
     quote_obj = getattr(message_obj, "quote", None) if message_obj is not None else None
     if quote_obj:
         search(quote_obj, "quote")
     search(getattr(event, "message", None), "message")
     search(getattr(event, "raw_message", None), "message")
+    buckets["at_avatar"] = unique([
+        source for identity, source in avatar_sources.items()
+        if not filter_avatars or identity not in blocked_avatar_ids
+    ])
 
-    # Also merge legacy flat extractor so we do not regress older event shapes.
-    legacy = extract_image_sources_from_event(event, include_at_avatar=include_at_avatar)
+    # Legacy results have no mention provenance and must not reintroduce a
+    # filtered or replaced avatar as an ordinary message image.
+    legacy = extract_image_sources_from_event(event, include_at_avatar=False)
     known = {item for values in buckets.values() for item in values}
     for item in legacy:
         if item not in known:
@@ -732,6 +784,7 @@ class ReferenceCollector:
             event,
             include_at_avatar=self.include_at_avatar,
             include_image_alternates=self.include_image_alternates,
+            at_avatar_filter_ids=[*self.bot_ids, *self.at_avatar_filter_ids] if self.filter_at_avatars else None,
         )
         for key, values in list(buckets.items()):
             if key == "at_avatar":

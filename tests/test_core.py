@@ -4852,7 +4852,7 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()["data"]
         self.assertEqual(data["status"], "ok")
-        self.assertEqual(data["cache_file_count"], 0)
+        self.assertIsNone(data["cache_file_count"])
         self.assertEqual(data["cache_limit_count"], 1000)
         self.assertEqual(data["cache_cleanup_preview"], {})
         for key in ("auth", "host", "port", "token"):

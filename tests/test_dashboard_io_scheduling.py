@@ -69,3 +69,36 @@ def test_slow_dashboard_io_keeps_event_loop_responsive(
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_health_diagnostics_run_off_event_loop(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_health(*_args):
+        entered.set()
+        assert release.wait(2), "event loop did not release the slow health check"
+        return {"status": "ok"}
+
+    monkeypatch.setattr(dashboard_api, "build_health_payload", slow_health)
+    monkeypatch.setattr(dashboard_api, "dashboard_page_source_status", lambda: {})
+    monkeypatch.setattr(dashboard_api, "json_response", lambda payload, **_: payload)
+    api = SelfieImageDashboardAPI(SimpleNamespace())
+    monkeypatch.setattr(api, "_ok", lambda data, **_extra: data)
+
+    async def scenario():
+        task = asyncio.create_task(api.page_health())
+        try:
+            for _ in range(200):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.005)
+            assert entered.is_set(), "health diagnostics did not start"
+            assert not task.done()
+            release.set()
+            assert await task == {"status": "ok"}
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())

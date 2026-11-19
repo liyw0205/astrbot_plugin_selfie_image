@@ -110,32 +110,47 @@ def test_concurrent_automatic_cleanups_share_one_scan_at_a_time(tmp_path, monkey
     assert peak == 1
 
 
-def test_health_reuses_cleanup_scan_and_exposes_process_cache_counters(tmp_path, monkeypatch):
+def test_health_reuses_cleanup_scan_without_traversing_cache_again(tmp_path, monkeypatch):
     store = cache_store(tmp_path)
     (Path(store.generated_dir) / "orphan.png").write_bytes(b"orphan")
     store._save_or_reuse_reference_image(ImageReference(b"cache image"))
-    calls = []
-    preview = store.get_cache_cleanup_preview
-
-    def counted_preview():
-        calls.append("scan")
-        return preview()
-
-    original_stats = store._cache_stats
-
-    def existing_scan_stats(entries=None):
-        assert entries is not None, "health performed a duplicate cache traversal"
-        return original_stats(entries)
-
-    monkeypatch.setattr(store, "get_cache_cleanup_preview", counted_preview)
-    monkeypatch.setattr(store, "_cache_stats", existing_scan_stats)
+    store.get_cache_cleanup_preview()
+    monkeypatch.setattr(
+        store, "get_cache_cleanup_preview",
+        lambda: (_ for _ in ()).throw(AssertionError("health requested a new cleanup preview")),
+    )
+    monkeypatch.setattr(
+        store, "_cache_file_entries",
+        lambda: (_ for _ in ()).throw(AssertionError("health traversed the cache directory")),
+    )
+    monkeypatch.setattr(
+        store, "_cache_stats",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("health recalculated cache stats")),
+    )
     payload = build_health_payload(store)
-    assert calls == ["scan"]
+    assert payload["cache_cleanup_preview"]["scanned_at"]
     assert payload["cache_file_count"] == payload["cache_cleanup_preview"]["total_count"] == 2
+    assert payload["cache_cleanup_preview"]["would_delete_count"] == 0
+    assert "would_delete" not in payload["cache_cleanup_preview"]
+    assert "plan_token" not in payload["cache_cleanup_preview"]
     assert payload["cache_metrics"]["reference_cache"] == {
         "lookups": 1, "hits": 0, "misses": 1, "hit_rate": 0.0,
     }
     assert payload["cache_metrics"]["cleanup"]["last_scan"]["orphan_count"] == 1
+
+
+def test_health_reports_cache_unknown_until_first_cleanup_scan(tmp_path, monkeypatch):
+    store = cache_store(tmp_path)
+    monkeypatch.setattr(
+        store, "_cache_file_entries",
+        lambda: (_ for _ in ()).throw(AssertionError("health traversed the cache directory")),
+    )
+
+    payload = build_health_payload(store)
+
+    assert payload["cache_file_count"] is None
+    assert payload["cache_size_mb"] is None
+    assert payload["cache_cleanup_preview"] == {}
 
 
 def test_orphan_growth_uses_existing_scans_and_resets_after_deletion():

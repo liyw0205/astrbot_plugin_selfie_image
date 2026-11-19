@@ -411,25 +411,40 @@ def gallery_pagination(limit: Any, offset: Any, *, default_limit: int = 24) -> t
 
 def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """Build the non-transport health payload used by both API adapters."""
-    stats = getattr(plugin, "_cache_stats", None)
-    get_preview = getattr(plugin, "get_cache_cleanup_preview", None)
-    if callable(get_preview):
+    # Health only reads existing samples. Manual cleanup obtains a fresh plan.
+    get_cache_metrics = getattr(plugin, "get_cache_metrics", None)
+    if callable(get_cache_metrics):
         try:
-            cache_preview = get_preview()
+            cache_metrics = redact_sensitive_data(dict(get_cache_metrics() or {}))
         except Exception:
+            cache_metrics = {"status": "error"}
+    else:
+        cache_metrics = {}
+    cleanup_metrics = cache_metrics.get("cleanup")
+    cache_scan = cleanup_metrics.get("last_scan") if isinstance(cleanup_metrics, Mapping) else None
+    cache_preview: dict[str, Any] = {}
+    cache_bytes = cache_count = None
+    if isinstance(cache_scan, Mapping) and "total_bytes" in cache_scan and "total_count" in cache_scan:
+        try:
+            cache_bytes = max(0, int(cache_scan["total_bytes"]))
+            cache_count = max(0, int(cache_scan["total_count"]))
+            cache_preview = {
+                key: cache_scan[key]
+                for key in (
+                    "scanned_at", "total_bytes", "total_count", "referenced_count",
+                    "referenced_bytes", "protected_count", "protected_bytes", "orphan_count",
+                    "orphan_bytes", "candidate_count", "candidate_bytes", "would_delete_count",
+                    "would_delete_bytes",
+                )
+                if key in cache_scan
+            }
+        except (TypeError, ValueError, OverflowError):
+            cache_bytes = cache_count = None
             cache_preview = {}
-    else:
-        cache_preview = {}
-    if isinstance(cache_preview, Mapping) and "total_bytes" in cache_preview:
-        cache_bytes = max(0, int(cache_preview.get("total_bytes") or 0))
-        cache_count = max(0, int(cache_preview.get("total_count") or 0))
-    else:
-        cache_bytes, cache_count = stats() if callable(stats) else (plugin._cache_size_bytes(), 0)
     get_health = getattr(plugin, "get_channel_health", None)
     get_task_snapshot_health = getattr(plugin, "get_task_snapshot_health", None)
     get_record_storage_health = getattr(plugin, "get_record_storage_health", None)
     get_record_commit_health = getattr(plugin, "get_record_commit_health", None)
-    get_cache_metrics = getattr(plugin, "get_cache_metrics", None)
     get_http_session_health = getattr(plugin, "get_http_session_health", None)
     get_startup_readiness = getattr(plugin, "get_startup_readiness", None)
     get_preflight = getattr(plugin, "get_config_preflight_for_web", None)
@@ -477,13 +492,6 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
             record_commit_health = {"status": "error", "last_failure_reason": "记录提交指标读取失败"}
     else:
         record_commit_health = {}
-    if callable(get_cache_metrics):
-        try:
-            cache_metrics = redact_sensitive_data(dict(get_cache_metrics() or {}))
-        except Exception:
-            cache_metrics = {"status": "error"}
-    else:
-        cache_metrics = {}
     if callable(get_http_session_health):
         try:
             http_session_health = redact_sensitive_data(dict(get_http_session_health() or {}))
@@ -537,7 +545,7 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
         "records_db_path": getattr(plugin, "records_db_path", ""),
         "media_sources_dir": getattr(plugin, "media_sources_dir", ""),
         "cache_dir": getattr(plugin, "generated_dir", ""),
-        "cache_size_mb": round(float(cache_bytes) / 1024 / 1024, 2),
+        "cache_size_mb": round(float(cache_bytes) / 1024 / 1024, 2) if cache_bytes is not None else None,
         "cache_file_count": cache_count,
         "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 2048),
         "cache_limit_count": cache_limit_count,

@@ -441,7 +441,10 @@ class SelfieImageDashboardAPI:
         return self._ok({"authorized": True, "source": "dashboard"})
 
     async def page_health(self) -> Any:
-        return self._ok(build_health_payload(self.plugin, dashboard_page_source_status()))
+        payload = await asyncio.to_thread(
+            build_health_payload, self.plugin, dashboard_page_source_status()
+        )
+        return self._ok(payload)
 
     async def page_health_history(self) -> Any:
         try:

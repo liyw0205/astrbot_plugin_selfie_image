@@ -5355,11 +5355,16 @@ Source prompt:
         const referenceCache = cacheMetrics.reference_cache || {};
         const cleanupMetrics = cacheMetrics.cleanup || {};
         const cleanupScan = cleanupMetrics.last_scan || {};
+        const cacheScanned = Boolean(cleanupScan.scanned_at);
         const statusText = d.status === 'ok' ? '运行正常' : d.status === 'starting' ? '正在加载数据' : d.status === 'degraded' ? '运行需要检查' : String(d.status || '状态未知');
         const healthItems = [
           ['插件状态', statusText],
-          ['缓存占用', `${String(d.cache_file_count ?? 0)} / ${String(d.cache_limit_count ?? 1000)} 张 · ${String(d.cache_size_mb ?? 0)} / ${String(d.cache_limit_mb ?? 2048)} MB`],
-          ['可回收预览', `${String(cachePreview.would_delete_count ?? 0)} 张 · ${String(Math.round(Number(cachePreview.would_delete_bytes || 0) / 1024 / 1024))} MB`],
+          ['缓存占用', cacheScanned
+            ? `${String(d.cache_file_count)} / ${String(d.cache_limit_count ?? 1000)} 张 · ${String(d.cache_size_mb)} / ${String(d.cache_limit_mb ?? 2048)} MB`
+            : `暂无扫描数据 · 上限 ${String(d.cache_limit_count ?? 1000)} 张 / ${String(d.cache_limit_mb ?? 2048)} MB`],
+          ['可回收预览', cacheScanned
+            ? `${String(cachePreview.would_delete_count ?? 0)} 张 · ${String(Math.round(Number(cachePreview.would_delete_bytes || 0) / 1024 / 1024))} MB`
+            : '暂无扫描数据'],
           ['缓存目录', d.cache_dir || '-'],
           ['记录文件', d.records_path || '-'],
           ['配置文件', d.config_path || '-'],
