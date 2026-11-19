@@ -1069,6 +1069,7 @@ Source prompt:
       img.batch_skip_max ??= 2;
       img.rate_limit_seconds ??= 0;
       img.enable_daily_limit ??= false;
+      img.enable_preview_hidden ??= false;
       img.daily_limit_count ??= 10;
       img.show_generation_info ??= false;
       img.show_model_info ??= false;
@@ -1149,6 +1150,7 @@ Source prompt:
         $('showModelInfo').checked = !!img.show_model_info;
         if ($('useLogoWhenNoPersona')) $('useLogoWhenNoPersona').checked = img.use_logo_when_no_persona !== false;
         $('enableDailyLimit').checked = !!img.enable_daily_limit;
+        $('enablePreviewHidden').checked = !!img.enable_preview_hidden;
 
         $('selfieAspect').value = img.default_aspect_ratio || '9:16';
 
@@ -1203,6 +1205,7 @@ Source prompt:
       CONFIG.image.show_model_info = $('showModelInfo').checked;
       if ($('useLogoWhenNoPersona')) CONFIG.image.use_logo_when_no_persona = $('useLogoWhenNoPersona').checked;
       CONFIG.image.enable_daily_limit = $('enableDailyLimit').checked;
+      CONFIG.image.enable_preview_hidden = $('enablePreviewHidden').checked;
       CONFIG.image.enable_prompt_audit = $('enablePromptAudit').checked;
       CONFIG.image.enable_output_audit = $('enableOutputAudit').checked;
       const promptAuditThreshold = Number($('promptAuditThreshold').value);

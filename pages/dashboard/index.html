@@ -284,15 +284,20 @@
     .selfie-identity-slot { color: var(--primary-strong); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .selfie-identity-thumb { width: 48px; height: 48px; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
     .selfie-identity-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .selfie-identity-thumb-retry { display: grid; place-items: center; width: 100%; height: 100%; padding: 6px; border: 0; border-radius: 0; }
+    .selfie-identity-thumb-retry svg { width: 20px; height: 20px; }
+    .selfie-persona-row { grid-template-columns: 42px minmax(0, 1fr) auto; align-items: start; }
     .selfie-identity-copy { display: grid; gap: 2px; min-width: 0; }
     .selfie-identity-copy strong, .selfie-identity-copy span { min-width: 0; overflow-wrap: anywhere; }
     .selfie-identity-copy strong { font-size: 12px; }
     .selfie-identity-copy span { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .selfie-identity-copy .selfie-persona-description { display: block; height: 92px; overflow-y: auto; white-space: pre-wrap; line-height: 1.55; overscroll-behavior: contain; }
     .selfie-identity-row .actions { margin: 0; justify-content: flex-end; }
     .selfie-identity-row .actions button { white-space: nowrap; }
     .selfie-persona-form textarea { min-height: 76px; }
     @media (max-width: 520px) {
       .selfie-identity-row { grid-template-columns: 34px 44px minmax(0, 1fr); }
+      .selfie-persona-row { grid-template-columns: 34px minmax(0, 1fr); }
       .selfie-identity-thumb { width: 44px; height: 44px; }
       .selfie-identity-row .actions { grid-column: 1 / -1; justify-content: flex-start; }
       .selfie-identity-row .actions button { flex: 1 1 auto; }
@@ -1739,7 +1744,8 @@
         <label class="checkline"><input id="enableLLMTool" type="checkbox"> 对话里也能叫我出图/自拍</label>
         <label class="checkline"><input id="showGenerationInfo" type="checkbox"> 回复里带上生图编号、耗时和张数</label>
         <label class="checkline"><input id="showModelInfo" type="checkbox"> 回复里带上用了哪个模型</label>
-        <label class="checkline"><input id="enableDailyLimit" type="checkbox"> 开启每日次数上限</label>
+        <label class="checkline" style="grid-column:1 / -1"><input id="enablePreviewHidden" type="checkbox"> 启用预览隐藏</label>
+        <label class="checkline" style="grid-column:1 / -1"><input id="enableDailyLimit" type="checkbox"> 开启每日次数上限</label>
       </div>
       <div id="imageStatus" class="status"></div>
     </section>
@@ -3293,6 +3299,7 @@ Source prompt:
       img.batch_skip_max ??= 2;
       img.rate_limit_seconds ??= 0;
       img.enable_daily_limit ??= false;
+      img.enable_preview_hidden ??= false;
       img.daily_limit_count ??= 10;
       img.show_generation_info ??= false;
       img.show_model_info ??= false;
@@ -3373,6 +3380,7 @@ Source prompt:
         $('showModelInfo').checked = !!img.show_model_info;
         if ($('useLogoWhenNoPersona')) $('useLogoWhenNoPersona').checked = img.use_logo_when_no_persona !== false;
         $('enableDailyLimit').checked = !!img.enable_daily_limit;
+        $('enablePreviewHidden').checked = !!img.enable_preview_hidden;
 
         $('selfieAspect').value = img.default_aspect_ratio || '9:16';
 
@@ -3427,6 +3435,7 @@ Source prompt:
       CONFIG.image.show_model_info = $('showModelInfo').checked;
       if ($('useLogoWhenNoPersona')) CONFIG.image.use_logo_when_no_persona = $('useLogoWhenNoPersona').checked;
       CONFIG.image.enable_daily_limit = $('enableDailyLimit').checked;
+      CONFIG.image.enable_preview_hidden = $('enablePreviewHidden').checked;
       CONFIG.image.enable_prompt_audit = $('enablePromptAudit').checked;
       CONFIG.image.enable_output_audit = $('enableOutputAudit').checked;
       const promptAuditThreshold = Number($('promptAuditThreshold').value);
@@ -8062,32 +8071,47 @@ Source prompt:
       if (modal) modal.classList.remove('show');
     }
     let MEDIA_LIGHTBOX_PATH = '';
+    let MEDIA_LIGHTBOX_REQUEST_ID = 0;
     function openMediaLightbox(path, title = '图片预览') {
       const modal = $('mediaLightboxModal');
       const image = $('mediaLightboxImage');
       const status = $('mediaLightboxStatus');
       if (!modal || !image || !path) return false;
       MEDIA_LIGHTBOX_PATH = String(path || '').trim();
+      const requestId = ++MEDIA_LIGHTBOX_REQUEST_ID;
+      const mediaPath = MEDIA_LIGHTBOX_PATH;
       if ($('mediaLightboxTitle')) $('mediaLightboxTitle').textContent = title || '图片预览';
       if ($('mediaLightboxDownload')) $('mediaLightboxDownload').disabled = false;
+      image.onload = null;
+      image.onerror = null;
       image.removeAttribute('src');
       image.alt = title || '图片预览';
       image.hidden = true;
       if (status) { status.hidden = false; status.textContent = '正在加载图片…'; }
       modal.classList.add('show');
-      getProtectedMedia(MEDIA_LIGHTBOX_PATH).then(media => {
-        if (!MEDIA_LIGHTBOX_PATH || !modal.classList.contains('show')) return;
+      getProtectedMedia(mediaPath).then(media => {
+        if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
         const url = protectedMediaUrl(media);
         if (!url) throw new Error('图片已清理');
-        image.onload = () => { image.hidden = false; if (status) status.hidden = true; };
-        image.onerror = () => { image.hidden = true; if (status) { status.hidden = false; status.textContent = '图片加载失败'; } };
+        image.onload = () => {
+          if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
+          image.hidden = false;
+          if (status) status.hidden = true;
+        };
+        image.onerror = () => {
+          if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
+          image.hidden = true;
+          if (status) { status.hidden = false; status.textContent = '图片加载失败'; }
+        };
         image.src = url;
       }).catch(error => {
+        if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
         if (status) { status.hidden = false; status.textContent = error.message || '图片读取失败'; }
       });
       return true;
     }
     function closeMediaLightbox() {
+      MEDIA_LIGHTBOX_REQUEST_ID += 1;
       MEDIA_LIGHTBOX_PATH = '';
       const image = $('mediaLightboxImage');
       if (image) { image.onload = null; image.onerror = null; image.removeAttribute('src'); image.hidden = true; }
@@ -9100,10 +9124,9 @@ Source prompt:
         const available = occupied && item.available !== false;
         const active = slot === activeImageSlot || item?.active === true;
         const status = !occupied ? '空位' : available ? '' : '文件缺失';
-        const thumbnail = SELFIE_IDENTITY_THUMBNAILS.get(slot);
         imageRows.push(`<div class="selfie-identity-row${active ? ' active' : ''}" data-selfie-image-slot="${slot}">
           <span class="selfie-identity-slot">${slot}</span>
-          <div class="selfie-identity-thumb" data-selfie-identity-thumb="${slot}">${thumbnail ? `<img src="${thumbnail}" alt="形象图 ${slot} 缩略图">` : ''}</div>
+          <div class="selfie-identity-thumb" data-selfie-identity-thumb="${slot}"></div>
           <div class="selfie-identity-copy"><strong>形象图 ${slot}</strong>${status ? `<span>${status}</span>` : ''}</div>
           <div class="actions">${occupied && available && !active ? '<button type="button" class="secondary selfie-image-select">选择</button>' : ''}${occupied ? '<button type="button" class="danger selfie-image-remove">移除</button>' : ''}</div>
         </div>`);
@@ -9121,6 +9144,7 @@ Source prompt:
       $('selfieImagePoolList')?.querySelectorAll('.selfie-image-remove').forEach(button => {
         button.onclick = () => removeSelfieImage(Number(button.closest('[data-selfie-image-slot]').dataset.selfieImageSlot));
       });
+      renderSelfieIdentityThumbnails(imagePool.map(item => Number(item.slot)));
       void loadSelfieIdentityThumbnails(imagePool);
 
       const personaRows = [];
@@ -9128,9 +9152,9 @@ Source prompt:
         const item = personaBySlot.get(slot);
         if (!item || (!item.name && !item.prompt)) continue;
         const active = slot === activePersonaSlot || item.active === true;
-        personaRows.push(`<div class="selfie-identity-row${active ? ' active' : ''}" data-selfie-persona-slot="${slot}">
+        personaRows.push(`<div class="selfie-identity-row selfie-persona-row${active ? ' active' : ''}" data-selfie-persona-slot="${slot}">
           <span class="selfie-identity-slot">${slot}</span>
-          <div class="selfie-identity-copy"><strong>${escapeHtml(item.name || `人设 ${slot}`)}</strong><span>${active ? '当前使用 · ' : ''}${escapeHtml(item.prompt || '未填写描述')}</span></div>
+          <div class="selfie-identity-copy"><strong>${escapeHtml(item.name || `人设 ${slot}`)}${active ? ' · 当前使用' : ''}</strong><span class="selfie-persona-description" tabindex="0" aria-label="形象描述">${escapeHtml(item.prompt || '未填写描述')}</span></div>
           <div class="actions">${active ? '' : '<button type="button" class="secondary selfie-persona-select">选择</button>'}<button type="button" class="danger selfie-persona-remove">移除</button></div>
         </div>`);
       }
@@ -9161,6 +9185,39 @@ Source prompt:
       const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
       if ($('selfieStatus')) $('selfieStatus').textContent = `${mode === 'persona' ? '使用形象人设池' : (data.has_image ? '形象参考图已设置' : '尚未设置形象参考图')} · 类型：${appearanceLabel}`;
     }
+    function showSelfieIdentityThumbnailError(slot, message) {
+      const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
+      if (!frame) return;
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'secondary selfie-identity-thumb-retry';
+      retry.title = `${message || '缩略图加载失败'}，点击重试`;
+      retry.setAttribute('aria-label', `重新加载形象图 ${slot} 缩略图`);
+      retry.innerHTML = mediaRetryIconSvg();
+      retry.onclick = () => {
+        retry.disabled = true;
+        void loadSelfieIdentityThumbnails(SELFIE_IDENTITY_DATA?.image_pool || []);
+      };
+      frame.replaceChildren(retry);
+    }
+    function renderSelfieIdentityThumbnails(slots) {
+      const version = SELFIE_IDENTITY_THUMBNAIL_VERSION;
+      for (const slot of slots) {
+        const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
+        const dataUrl = SELFIE_IDENTITY_THUMBNAILS.get(slot);
+        if (!frame || !dataUrl) continue;
+        const image = document.createElement('img');
+        image.alt = `形象图 ${slot} 缩略图`;
+        image.onerror = () => {
+          if (version !== SELFIE_IDENTITY_THUMBNAIL_VERSION || !frame.isConnected || !frame.contains(image)) return;
+          SELFIE_IDENTITY_THUMBNAILS.delete(slot);
+          SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
+          showSelfieIdentityThumbnailError(slot, '缩略图无法解码');
+        };
+        frame.replaceChildren(image);
+        image.src = dataUrl;
+      }
+    }
     function loadSelfieIdentityThumbnails(imagePool) {
       const slots = imagePool.filter(item => item && item.available !== false).map(item => Number(item.slot)).filter(Number.isInteger);
       if (!slots.length || SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION === SELFIE_IDENTITY_THUMBNAIL_VERSION
@@ -9170,21 +9227,20 @@ Source prompt:
       request.promise = api('/api/selfie-identity-thumbnails').then(res => {
         if (version !== SELFIE_IDENTITY_THUMBNAIL_VERSION) return;
         const items = Array.isArray(res.data?.items) ? res.data.items : [];
-        SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = version;
         SELFIE_IDENTITY_THUMBNAILS = new Map(items
           .filter(item => Number.isInteger(Number(item.slot)) && String(item.data_url || '').startsWith('data:image/'))
           .map(item => [Number(item.slot), String(item.data_url)]));
-        for (const slot of slots) {
-          const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
-          const dataUrl = SELFIE_IDENTITY_THUMBNAILS.get(slot);
-          if (!frame || !dataUrl) continue;
-          const image = document.createElement('img');
-          image.alt = `形象图 ${slot} 缩略图`;
-          image.src = dataUrl;
-          image.onerror = () => image.remove();
-          frame.replaceChildren(image);
+        SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = slots.every(slot => SELFIE_IDENTITY_THUMBNAILS.has(slot)) ? version : -1;
+        renderSelfieIdentityThumbnails(slots);
+        for (const slot of slots.filter(slot => !SELFIE_IDENTITY_THUMBNAILS.has(slot))) {
+          showSelfieIdentityThumbnailError(slot, '未能读取缩略图');
         }
-      }).catch(() => {}).finally(() => {
+      }).catch(error => {
+        if (version !== SELFIE_IDENTITY_THUMBNAIL_VERSION) return;
+        for (const slot of slots.filter(slot => !SELFIE_IDENTITY_THUMBNAILS.has(slot))) {
+          showSelfieIdentityThumbnailError(slot, error.message);
+        }
+      }).finally(() => {
         if (SELFIE_IDENTITY_THUMBNAIL_REQUEST === request) SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
       });
       SELFIE_IDENTITY_THUMBNAIL_REQUEST = request;

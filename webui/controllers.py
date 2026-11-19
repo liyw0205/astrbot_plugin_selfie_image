@@ -1139,7 +1139,9 @@ class SelfieProfileController:
                 "slot": slot,
                 "data_url": f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}",
             })
-        return self._result({"items": items})
+        # Only generated JPEG bytes and slot numbers are returned. Text redaction
+        # can mistake compressed pixels for credentials and corrupt the Base64.
+        return SelfieProfileControllerResult({"items": items})
 
     async def ensure_daily_schedule(self) -> SelfieProfileControllerResult:
         hook = getattr(self.plugin, "ensure_selfie_daily_schedule_from_web", None)

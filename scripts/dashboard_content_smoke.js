@@ -120,6 +120,21 @@ async function main() {
         await evaluate("document.documentElement.classList.add('embedded-dashboard-ready');");
       }
       await evaluate('CONFIG={};fillForms();');
+      await evaluate("navigateToTab('image');");
+      await check(label+' preview hiding defaults off', "!$('enablePreviewHidden').checked");
+      await check(label+' preview hiding above daily limit', `(()=>{
+        const preview=$('enablePreviewHidden').closest('label').getBoundingClientRect();
+        const daily=$('enableDailyLimit').closest('label').getBoundingClientRect();
+        return preview.bottom<=daily.top&&Math.abs(preview.left-daily.left)<1
+          &&preview.right<=innerWidth+1&&daily.right<=innerWidth+1;
+      })()`);
+      await click('#enablePreviewHidden');
+      await evaluate('collectForms();fillForms();');
+      await check(label+' preview hiding round trip on', "CONFIG.image.enable_preview_hidden===true&&$('enablePreviewHidden').checked&&!CONFIG.image.enable_daily_limit");
+      await click('#enablePreviewHidden');
+      await evaluate('collectForms();fillForms();');
+      await check(label+' preview hiding round trip off', "CONFIG.image.enable_preview_hidden===false&&!$('enablePreviewHidden').checked");
+      await screenshot(label+'-image-settings');
       await check(label+' alert thresholds have defaults after config load',`$('alertRecordSuccessRate').value==='80'&&$('alertGenerationP95').value==='60'&&$('alertCacheOrphanGrowth').value==='10'`);
       await evaluate(`CONFIG=${JSON.stringify(config)};renderAllChannelLists();navigateToTab('channels');`);
       await screenshot(label+'-channels');

@@ -268,15 +268,20 @@
     .selfie-identity-slot { color: var(--primary-strong); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .selfie-identity-thumb { width: 48px; height: 48px; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
     .selfie-identity-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .selfie-identity-thumb-retry { display: grid; place-items: center; width: 100%; height: 100%; padding: 6px; border: 0; border-radius: 0; }
+    .selfie-identity-thumb-retry svg { width: 20px; height: 20px; }
+    .selfie-persona-row { grid-template-columns: 42px minmax(0, 1fr) auto; align-items: start; }
     .selfie-identity-copy { display: grid; gap: 2px; min-width: 0; }
     .selfie-identity-copy strong, .selfie-identity-copy span { min-width: 0; overflow-wrap: anywhere; }
     .selfie-identity-copy strong { font-size: 12px; }
     .selfie-identity-copy span { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .selfie-identity-copy .selfie-persona-description { display: block; height: 92px; overflow-y: auto; white-space: pre-wrap; line-height: 1.55; overscroll-behavior: contain; }
     .selfie-identity-row .actions { margin: 0; justify-content: flex-end; }
     .selfie-identity-row .actions button { white-space: nowrap; }
     .selfie-persona-form textarea { min-height: 76px; }
     @media (max-width: 520px) {
       .selfie-identity-row { grid-template-columns: 34px 44px minmax(0, 1fr); }
+      .selfie-persona-row { grid-template-columns: 34px minmax(0, 1fr); }
       .selfie-identity-thumb { width: 44px; height: 44px; }
       .selfie-identity-row .actions { grid-column: 1 / -1; justify-content: flex-start; }
       .selfie-identity-row .actions button { flex: 1 1 auto; }

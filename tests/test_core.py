@@ -7565,7 +7565,11 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("passthrough", block)
             doc = block.lower().split('"""', 2)[1] if '"""' in block else ""
             self.assertNotIn("fallback", doc)
-        help_body = main_src.split("def _help_text_body", 1)[1].split("def _resolve_help_image_path", 1)[0]
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = object.__new__(SelfieImagePlugin)
+        plugin.config = types.SimpleNamespace(web_enable=False, web_host="127.0.0.1", web_port=14514)
+        help_body = plugin._help_text_body()
         self.assertIn("自动判断", help_body)
         self.assertIn("不会自动塞形象图", help_body)
         self.assertNotIn("文生视频", help_body)

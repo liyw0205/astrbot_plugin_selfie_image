@@ -175,10 +175,9 @@
         const available = occupied && item.available !== false;
         const active = slot === activeImageSlot || item?.active === true;
         const status = !occupied ? '空位' : available ? '' : '文件缺失';
-        const thumbnail = SELFIE_IDENTITY_THUMBNAILS.get(slot);
         imageRows.push(`<div class="selfie-identity-row${active ? ' active' : ''}" data-selfie-image-slot="${slot}">
           <span class="selfie-identity-slot">${slot}</span>
-          <div class="selfie-identity-thumb" data-selfie-identity-thumb="${slot}">${thumbnail ? `<img src="${thumbnail}" alt="形象图 ${slot} 缩略图">` : ''}</div>
+          <div class="selfie-identity-thumb" data-selfie-identity-thumb="${slot}"></div>
           <div class="selfie-identity-copy"><strong>形象图 ${slot}</strong>${status ? `<span>${status}</span>` : ''}</div>
           <div class="actions">${occupied && available && !active ? '<button type="button" class="secondary selfie-image-select">选择</button>' : ''}${occupied ? '<button type="button" class="danger selfie-image-remove">移除</button>' : ''}</div>
         </div>`);
@@ -196,6 +195,7 @@
       $('selfieImagePoolList')?.querySelectorAll('.selfie-image-remove').forEach(button => {
         button.onclick = () => removeSelfieImage(Number(button.closest('[data-selfie-image-slot]').dataset.selfieImageSlot));
       });
+      renderSelfieIdentityThumbnails(imagePool.map(item => Number(item.slot)));
       void loadSelfieIdentityThumbnails(imagePool);
 
       const personaRows = [];
@@ -203,9 +203,9 @@
         const item = personaBySlot.get(slot);
         if (!item || (!item.name && !item.prompt)) continue;
         const active = slot === activePersonaSlot || item.active === true;
-        personaRows.push(`<div class="selfie-identity-row${active ? ' active' : ''}" data-selfie-persona-slot="${slot}">
+        personaRows.push(`<div class="selfie-identity-row selfie-persona-row${active ? ' active' : ''}" data-selfie-persona-slot="${slot}">
           <span class="selfie-identity-slot">${slot}</span>
-          <div class="selfie-identity-copy"><strong>${escapeHtml(item.name || `人设 ${slot}`)}</strong><span>${active ? '当前使用 · ' : ''}${escapeHtml(item.prompt || '未填写描述')}</span></div>
+          <div class="selfie-identity-copy"><strong>${escapeHtml(item.name || `人设 ${slot}`)}${active ? ' · 当前使用' : ''}</strong><span class="selfie-persona-description" tabindex="0" aria-label="形象描述">${escapeHtml(item.prompt || '未填写描述')}</span></div>
           <div class="actions">${active ? '' : '<button type="button" class="secondary selfie-persona-select">选择</button>'}<button type="button" class="danger selfie-persona-remove">移除</button></div>
         </div>`);
       }
@@ -236,6 +236,39 @@
       const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
       if ($('selfieStatus')) $('selfieStatus').textContent = `${mode === 'persona' ? '使用形象人设池' : (data.has_image ? '形象参考图已设置' : '尚未设置形象参考图')} · 类型：${appearanceLabel}`;
     }
+    function showSelfieIdentityThumbnailError(slot, message) {
+      const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
+      if (!frame) return;
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'secondary selfie-identity-thumb-retry';
+      retry.title = `${message || '缩略图加载失败'}，点击重试`;
+      retry.setAttribute('aria-label', `重新加载形象图 ${slot} 缩略图`);
+      retry.innerHTML = mediaRetryIconSvg();
+      retry.onclick = () => {
+        retry.disabled = true;
+        void loadSelfieIdentityThumbnails(SELFIE_IDENTITY_DATA?.image_pool || []);
+      };
+      frame.replaceChildren(retry);
+    }
+    function renderSelfieIdentityThumbnails(slots) {
+      const version = SELFIE_IDENTITY_THUMBNAIL_VERSION;
+      for (const slot of slots) {
+        const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
+        const dataUrl = SELFIE_IDENTITY_THUMBNAILS.get(slot);
+        if (!frame || !dataUrl) continue;
+        const image = document.createElement('img');
+        image.alt = `形象图 ${slot} 缩略图`;
+        image.onerror = () => {
+          if (version !== SELFIE_IDENTITY_THUMBNAIL_VERSION || !frame.isConnected || !frame.contains(image)) return;
+          SELFIE_IDENTITY_THUMBNAILS.delete(slot);
+          SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
+          showSelfieIdentityThumbnailError(slot, '缩略图无法解码');
+        };
+        frame.replaceChildren(image);
+        image.src = dataUrl;
+      }
+    }
     function loadSelfieIdentityThumbnails(imagePool) {
       const slots = imagePool.filter(item => item && item.available !== false).map(item => Number(item.slot)).filter(Number.isInteger);
       if (!slots.length || SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION === SELFIE_IDENTITY_THUMBNAIL_VERSION
@@ -245,21 +278,20 @@
       request.promise = api('/api/selfie-identity-thumbnails').then(res => {
         if (version !== SELFIE_IDENTITY_THUMBNAIL_VERSION) return;
         const items = Array.isArray(res.data?.items) ? res.data.items : [];
-        SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = version;
         SELFIE_IDENTITY_THUMBNAILS = new Map(items
           .filter(item => Number.isInteger(Number(item.slot)) && String(item.data_url || '').startsWith('data:image/'))
           .map(item => [Number(item.slot), String(item.data_url)]));
-        for (const slot of slots) {
-          const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
-          const dataUrl = SELFIE_IDENTITY_THUMBNAILS.get(slot);
-          if (!frame || !dataUrl) continue;
-          const image = document.createElement('img');
-          image.alt = `形象图 ${slot} 缩略图`;
-          image.src = dataUrl;
-          image.onerror = () => image.remove();
-          frame.replaceChildren(image);
+        SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = slots.every(slot => SELFIE_IDENTITY_THUMBNAILS.has(slot)) ? version : -1;
+        renderSelfieIdentityThumbnails(slots);
+        for (const slot of slots.filter(slot => !SELFIE_IDENTITY_THUMBNAILS.has(slot))) {
+          showSelfieIdentityThumbnailError(slot, '未能读取缩略图');
         }
-      }).catch(() => {}).finally(() => {
+      }).catch(error => {
+        if (version !== SELFIE_IDENTITY_THUMBNAIL_VERSION) return;
+        for (const slot of slots.filter(slot => !SELFIE_IDENTITY_THUMBNAILS.has(slot))) {
+          showSelfieIdentityThumbnailError(slot, error.message);
+        }
+      }).finally(() => {
         if (SELFIE_IDENTITY_THUMBNAIL_REQUEST === request) SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
       });
       SELFIE_IDENTITY_THUMBNAIL_REQUEST = request;

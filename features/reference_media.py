@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import os
 import re
 import threading
@@ -22,6 +24,7 @@ except ImportError:  # Compatibility with older AstrBot layouts
     from astrbot.api.utils import logger
 
 from ..core.providers import ImageReference
+from ..generation.preview_hidden import build_hidden_preview
 from .reference_collector import ReferenceCollector
 from ..core.utils import (
     detect_mime_by_bytes,
@@ -368,6 +371,25 @@ class ReferenceMediaMixin:
             return Image.from_file_system(path)
         return Image(file=path)
 
+    async def _generated_image_component(self, file_path: str, record: Optional[dict]) -> Any:
+        if not getattr(getattr(self, "config", None), "image_enable_preview_hidden", False):
+            return self._create_image_component(file_path)
+        dimension, pixels, frames = image_validation_limits(self.config)
+        data = await asyncio.to_thread(
+            build_hidden_preview, file_path,
+            max_dimension=dimension, max_pixels=pixels, max_frames=frames,
+        )
+        if record is not None:
+            record["image_alias_md5s"] = list(dict.fromkeys([
+                *(record.get("image_alias_md5s") or []), hashlib.md5(data).hexdigest(),
+            ]))[-24:]
+        if hasattr(Image, "fromBytes"):
+            return Image.fromBytes(data)
+        encoded = base64.b64encode(data).decode("ascii")
+        if hasattr(Image, "fromBase64"):
+            return Image.fromBase64(encoded)
+        return Image(file="base64://" + encoded)
+
 
     def _persona_identity_reference(self, *, allow_logo: bool = True) -> Optional[ImageReference]:
         """Return the configured persona image, optionally with logo fallback."""
@@ -437,7 +459,8 @@ class ReferenceMediaMixin:
                 except Exception as exc:
                     logger.warning("[SelfieImage] image code lookup failed: %s", redact_sensitive_text(str(exc)))
                 try:
-                    result = event.chain_result([self._create_image_component(file_path)])
+                    component = await self._generated_image_component(file_path, record)
+                    result = event.chain_result([component])
                     if (
                         record
                         and record.get("image_code")

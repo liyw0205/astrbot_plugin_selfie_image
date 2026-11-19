@@ -613,6 +613,22 @@ def test_config_and_proxy_reads_mask_legacy_credentials_without_losing_fields(ht
     assert http.plugin.config.proxies[0]["password"] == "proxy-secret"
 
 
+def test_preview_hiding_toggle_roundtrips_without_changing_daily_limit(http):
+    initial = assert_success(http.call("/api/config"))
+    assert initial["image"]["enable_preview_hidden"] is False
+    daily_limit = initial["image"]["enable_daily_limit"]
+    for enabled in (True, False):
+        saved = assert_success(http.call("/api/config", method="POST", body={
+            "image": {"enable_preview_hidden": enabled},
+        }))
+        assert saved["image"]["enable_preview_hidden"] is enabled
+        assert http.plugin.config.image_enable_preview_hidden is enabled
+        current = assert_success(http.call("/api/config"))
+        assert current["image"]["enable_preview_hidden"] is enabled
+        assert current["image"]["enable_daily_limit"] is daily_limit
+        assert http.plugin.config.image_channels[0].api_key == "channel-secret"
+
+
 @pytest.mark.parametrize("wrapped", [False, True])
 @pytest.mark.parametrize("operation", ["save", "import"])
 def test_config_flat_and_wrapped_masked_roundtrips_keep_identity_and_runtime_secrets(http, wrapped, operation):
@@ -1590,6 +1606,37 @@ def test_selfie_reference_round_trip_reaches_real_persona(http, tmp_path):
     assert changed["has_image"] is True
     assert assert_success(http.call("/api/selfie-reference/clear", method="POST", body={}))["has_image"] is False
     assert PersonaManager(str(tmp_path)).get_reference_image() is None
+
+
+def test_identity_thumbnails_preserve_decodable_image_bytes_on_both_hosts(http, tmp_path, monkeypatch):
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.webui.services import render_image_thumbnail
+
+    persona = PersonaManager(tmp_path)
+    http.plugin.persona = persona
+    source = BytesIO()
+    Image.new("RGB", (128, 128), "red").save(source, format="PNG")
+    persona.save_reference_image(source.getvalue())
+    raw = render_image_thumbnail(persona.get_reference_path(), max_dimension=128)
+    # An aligned JPEG comment gives a portable key-like Base64 sequence,
+    # independent of Pillow/libjpeg compression differences between platforms.
+    comment = base64.b64decode("AIzaAAAAAAAAAAAA")
+    raw = raw[:2] + b"\xff\xfe" + (len(comment) + 2).to_bytes(2, "big") + comment + raw[2:]
+    monkeypatch.setattr("astrbot_plugin_selfie_image.webui.controllers.render_image_thumbnail", lambda *_args, **_kwargs: raw)
+    expected = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+    assert "AIza" in expected
+    result = assert_success(http.call("/api/selfie-identity-thumbnails"))
+    assert result == {"items": [{"slot": 1, "data_url": expected}]}
+    decoded = base64.b64decode(result["items"][0]["data_url"].split(",", 1)[1], validate=True)
+    with Image.open(BytesIO(decoded)) as thumbnail:
+        thumbnail.load()
+        assert thumbnail.size == (128, 128)
+        assert thumbnail.format == "JPEG"
 
 
 def test_identity_pool_routes_reach_real_store_on_both_hosts(http, tmp_path):

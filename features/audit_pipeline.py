@@ -169,6 +169,8 @@ class AuditMixin:
         for record in records:
             if not record.get("generated_image_paths"):
                 continue
+            if wanted in (record.get("image_alias_md5s") or []):
+                return record
             if self._record_image_md5(record) == wanted:
                 record["md5"] = wanted
                 return record

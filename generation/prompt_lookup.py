@@ -30,6 +30,8 @@ def new_image_code(used: set[str]) -> str:
 def image_fingerprint(data: bytes) -> dict[str, Any]:
     try:
         with Image.open(BytesIO(data)) as opened:
+            if opened.info.get("default_image"):
+                opened.seek(1)
             image = ImageOps.exif_transpose(opened).convert("RGB")
             gray = image.convert("L")
             horizontal = list(gray.resize((9, 8), Image.Resampling.LANCZOS).tobytes())
@@ -199,20 +201,28 @@ class PromptLookupMixin:
 
         scope = self._context_session_key(event)
         by_record: dict[str, list[dict[str, str]]] = {}
+        aliases_by_record: dict[str, list[str]] = {}
         for record, receipt in deliveries:
             record_id = str(record.get("id") or "").strip()
             mid = message_id(receipt)
             if record_id and mid:
                 by_record.setdefault(record_id, []).append({"scope": scope, "message_id": mid})
-        if not by_record:
+            if record_id:
+                aliases_by_record.setdefault(record_id, []).extend(
+                    str(digest) for digest in record.get("image_alias_md5s", [])
+                    if re.fullmatch(r"[a-f0-9]{32}", str(digest))
+                )
+        if not by_record and not any(aliases_by_record.values()):
             return
         if self._record_database_degraded():
             return
         with self._records_lock:
             changed = []
             for current in self._records:
-                additions = by_record.get(str(current.get("id") or ""))
-                if not additions:
+                record_id = str(current.get("id") or "")
+                additions = by_record.get(record_id, [])
+                aliases = aliases_by_record.get(record_id, [])
+                if not additions and not aliases:
                     continue
                 messages = list(current.get("delivery_messages") or [])
                 updated = False
@@ -220,6 +230,11 @@ class PromptLookupMixin:
                     if item not in messages:
                         messages.append(item)
                         updated = True
+                current_aliases = list(current.get("image_alias_md5s") or [])
+                merged_aliases = list(dict.fromkeys([*current_aliases, *aliases]))[-24:]
+                if merged_aliases != current_aliases:
+                    current["image_alias_md5s"] = merged_aliases
+                    updated = True
                 if not updated:
                     continue
                 current["delivery_messages"] = messages[-32:]

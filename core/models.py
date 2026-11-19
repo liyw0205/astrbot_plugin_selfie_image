@@ -73,6 +73,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "record_keep_limit": 1000,
         "show_generation_info": False,
         "show_model_info": False,
+        "enable_preview_hidden": False,
         "rate_limit_seconds": 0,
         "enable_daily_limit": False,
         "daily_limit_count": 10,
@@ -315,6 +316,7 @@ class AICatConfig:
     image_record_keep_limit: int
     image_show_generation_info: bool
     image_show_model_info: bool
+    image_enable_preview_hidden: bool
     image_rate_limit_seconds: int
     image_enable_daily_limit: bool
     image_daily_limit_count: int
@@ -535,6 +537,7 @@ class AICatConfig:
             image_record_keep_limit=to_int(image.get("record_keep_limit"), 1000, minimum=10, maximum=10000),
             image_show_generation_info=to_bool(image.get("show_generation_info"), False),
             image_show_model_info=to_bool(image.get("show_model_info"), False),
+            image_enable_preview_hidden=to_bool(image.get("enable_preview_hidden"), False),
             image_rate_limit_seconds=to_int(image.get("rate_limit_seconds"), 0, minimum=0, maximum=3600),
             image_enable_daily_limit=to_bool(image.get("enable_daily_limit"), False),
             image_daily_limit_count=to_int(image.get("daily_limit_count"), 10, minimum=1, maximum=1000),

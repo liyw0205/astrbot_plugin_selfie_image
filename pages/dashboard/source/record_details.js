@@ -98,32 +98,47 @@
       if (modal) modal.classList.remove('show');
     }
     let MEDIA_LIGHTBOX_PATH = '';
+    let MEDIA_LIGHTBOX_REQUEST_ID = 0;
     function openMediaLightbox(path, title = '图片预览') {
       const modal = $('mediaLightboxModal');
       const image = $('mediaLightboxImage');
       const status = $('mediaLightboxStatus');
       if (!modal || !image || !path) return false;
       MEDIA_LIGHTBOX_PATH = String(path || '').trim();
+      const requestId = ++MEDIA_LIGHTBOX_REQUEST_ID;
+      const mediaPath = MEDIA_LIGHTBOX_PATH;
       if ($('mediaLightboxTitle')) $('mediaLightboxTitle').textContent = title || '图片预览';
       if ($('mediaLightboxDownload')) $('mediaLightboxDownload').disabled = false;
+      image.onload = null;
+      image.onerror = null;
       image.removeAttribute('src');
       image.alt = title || '图片预览';
       image.hidden = true;
       if (status) { status.hidden = false; status.textContent = '正在加载图片…'; }
       modal.classList.add('show');
-      getProtectedMedia(MEDIA_LIGHTBOX_PATH).then(media => {
-        if (!MEDIA_LIGHTBOX_PATH || !modal.classList.contains('show')) return;
+      getProtectedMedia(mediaPath).then(media => {
+        if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
         const url = protectedMediaUrl(media);
         if (!url) throw new Error('图片已清理');
-        image.onload = () => { image.hidden = false; if (status) status.hidden = true; };
-        image.onerror = () => { image.hidden = true; if (status) { status.hidden = false; status.textContent = '图片加载失败'; } };
+        image.onload = () => {
+          if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
+          image.hidden = false;
+          if (status) status.hidden = true;
+        };
+        image.onerror = () => {
+          if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
+          image.hidden = true;
+          if (status) { status.hidden = false; status.textContent = '图片加载失败'; }
+        };
         image.src = url;
       }).catch(error => {
+        if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
         if (status) { status.hidden = false; status.textContent = error.message || '图片读取失败'; }
       });
       return true;
     }
     function closeMediaLightbox() {
+      MEDIA_LIGHTBOX_REQUEST_ID += 1;
       MEDIA_LIGHTBOX_PATH = '';
       const image = $('mediaLightboxImage');
       if (image) { image.onload = null; image.onerror = null; image.removeAttribute('src'); image.hidden = true; }

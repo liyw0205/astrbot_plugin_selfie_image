@@ -104,7 +104,7 @@ from .generation.selfie_workflow import SelfieWorkflowService
 from .generation.web_test_workflow import WebTestImageWorkflow
 from .generation.image_scheduler import ImageJobScheduler
 from .generation.model_status_report import ImageStatusService
-from .generation.help_poster import ensure_help_images
+from .generation.help_poster import FULL_SECTIONS, ensure_help_images
 from .generation.task_service import GenerationTaskService
 from .features.framework_persona import resolve_framework_persona
 from .generation.generation_records import metric_window_seconds
@@ -3512,7 +3512,7 @@ class SelfieImagePlugin(
             yield event.chain_result([self._create_image_component(help_path)])
             return
         # 无图时退回简短提示，避免空白
-        yield event.plain_result("帮助图暂不可用。发 /生图help 看文字说明。")
+        yield event.plain_result("帮助图暂不可用。发 /生图help 查看完整说明。")
 
     @filter.command("生图help")
     async def cmd_help_text(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
@@ -3524,57 +3524,15 @@ class SelfieImagePlugin(
         yield event.plain_result(self._help_text_body())
 
     def _help_text_body(self) -> str:
-        return "\n".join(
-            [
-                f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}",
-                "",
-                "常用：",
-                "· 生图数量　用 -c 指定张数，可放在提示词任意位置，如 /画 一位约 20 岁的角色 -c 3 夜景；旧的 /画 3 仍可用",
-                "· /画 或 /生图　写想要的画面；有附图/引用图就按图改，没图就按文字出；不自动带入形象图",
-                "· 引用即提示词　引用一条文字消息后直接发 /画、/自拍 等，会把被引用文字当作提示词；自己写的正文优先",
-                "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图",
-                "· /图生图　必须附图或引用图，按原文改图；不自动使用形象图",
-                "· /nai　仅选启用的 NAI 模型，优先 NAI4、其次 NAI5，无需加入模型优先级；可写 [画师名] 提示词，附图可图生图",
-                "· /nai5　仅使用启用的 NAI5；/nai 画师 查看画师串，/nai 画师名 设置本会话默认，/nai 默认 恢复；前端预设管理可编辑画师串",
-                "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
-                "· /看看腿　随机展示黑丝、白丝等日常袜装穿搭，默认腰线至鞋履的第三人称平视构图；可指定长裤、全身、姿势或自拍",
-                "· /查看提示词 [六位编号|最近]　查询最终实际提示词，也支持引用图片；编号和正文分两条消息",
-                "· /查看生图提示词 [六位编号]　由当前聊天 LLM 反推图片；反推编号可取回已有结果",
-                "· /看看COS　随机一套内置 COS 换装；未指定时每次随机使用他拍、第一视角或自拍视角，可明确写「他拍」「第一视角」或「自拍」固定视角；可用 -c 指定数量，预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题",
-                "· /看看你　像别人随手拍你",
-                "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象",
-                "",
-                "自动判断：",
-                "· /画：有图=图生图，没图=文生图；不会自动塞形象图",
-                "· 自拍/合影/看看：会用当前形象；形象类型可设自动、真人、动漫",
-                "· 引用：引用图=参考图，引用文字=提示词；两者可同时用，自己写的正文优先",
-                "",
-                "模型与进度：",
-                "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
-                "· /生图状态　看最近 7 天模型成功率、耗时、错误和历史；可跟 1h、24h、7d、30d 与页码（兼容 /生图记录状态）",
-                "· /生图任务　看进行中的生图任务，包含 LLM 调用；可跟任务号",
-                "· /生图取消　取消还在排的/进行中的任务",
-                "· 管理员名单：/生图加黑 ID/@用户 [理由]、/生图加白 ID/@用户 [理由]、/生图释放 ID/@用户",
-                "",
-                "形象：",
-                "· /形象查看　看当前参考图、形象类型与今日状态",
-                "· /形象设置　发图设形象；也可写 自动 / 真人 / 动漫 改形象类型",
-                "· /形象设置 编号　切换 1-10 形象图；/形象移除 编号　移除指定形象图",
-                "· /形象人设添加 名称 描述　添加文字人设；/形象人设设置 编号；/形象人设移除 编号",
-                "· /形象清除　去掉参考图",
-                "· /形象刷新　刷新今日穿搭状态",
-                "· /衣橱、/衣橱添加　查看衣橱或附图导入服装",
-                "· /衣橱穿 编号　指定今天穿哪套；/衣橱轮换 顺序（或 随机）设置每日选衣方式",
-                "",
-                "预设：/预设　列表；可在任意生图指令中写「变真人」「变动漫」「变猫娘」「变Q版」「变像素」等图像转换预设；「特殊预设」随机选择上下身结构，「动作预设」随机选择动作，「上身预设」随机选择上身结构，「下身预设」随机选择下身结构；管理员可 /预设添加 名称:内容、/预设删除 名称",
-                "",
-                "说明：一次可写数量表示本条指令要生成的总张数；同时最多进行几张由「同时画几张上限」决定，不锁在单条指令里，新任务自动排队，超过同时上限才等待。图好了会直接发过来。",
-                "· /生图帮助　只看图卡",
-                "· /生图help　看本页完整说明",
-                f"管理页：{'已开' if self.config.web_enable else '未开'}　http://{self.config.web_host}:{self.config.web_port}",
-                "也可在 AstrBot 插件页打开管理界面。",
-            ]
-        )
+        lines = [f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}"]
+        for title, items in FULL_SECTIONS:
+            lines.extend(("", title + "："))
+            lines.extend(f"· {command}　{body}" for command, body in items)
+        lines.extend((
+            "",
+            f"管理页：{'已开' if self.config.web_enable else '未开'}　http://{self.config.web_host}:{self.config.web_port}",
+        ))
+        return "\n".join(lines)
 
     def _resolve_help_image_path(self, kind: str = "quick") -> str:
         """Return a startup-generated help image without regenerating it."""

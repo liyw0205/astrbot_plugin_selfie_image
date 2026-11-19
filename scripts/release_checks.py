@@ -38,6 +38,7 @@ APPROVED_RUNTIME_ADDITIONS = frozenset({
     "generation/selfie_batch_workflow.py",
     "generation/selfie_workflow.py",
     "generation/help_poster.py",
+    "generation/preview_hidden.py",
     "core/async_compat.py",
     "core/persistent_store.py",
     "webui/controllers.py",

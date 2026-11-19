@@ -162,6 +162,35 @@ def test_qq_compression_matches_but_similar_candidates_require_confirmation(plug
     assert len(candidates) == 2
 
 
+@pytest.mark.parametrize("receipt", [None, {"message_id": "hidden-preview"}])
+def test_hidden_preview_delivery_alias_survives_restart_and_resolves_original(plugin, receipt):
+    plugin.config.image_enable_preview_hidden = True
+    row = commit(plugin)
+    event = Event()
+
+    async def send(message):
+        event.sent.append(message)
+        return receipt
+
+    event.send = send
+    path = str(Path(plugin.generated_dir) / row["generated_image_paths"][0])
+    before = Path(path).read_bytes()
+    with patch("astrbot_plugin_selfie_image.features.reference_media.Image", SimpleNamespace(fromBytes=lambda data: data)):
+        assert int(asyncio.run(plugin._send_generated_images(event, [path]))) == 1
+    wrapped = event.sent[0][0]
+    digest = hashlib.md5(wrapped).hexdigest()
+    plugin._records = plugin._load_records()
+    assert digest in plugin._records[0]["image_alias_md5s"]
+    assert plugin._records[0]["md5"] == row["md5"]
+    matched, method, _ = plugin._lookup_prompt_image(
+        event, [ImageReference(data=wrapped, mime_type="image/png")], [],
+    )
+    assert matched["id"] == row["id"]
+    assert method == "图片校验"
+    assert plugin._find_generation_record_by_md5(digest)["id"] == row["id"]
+    assert Path(path).read_bytes() == before
+
+
 def test_lazy_old_fingerprints_and_jpeg_variants_remain_compatible(plugin):
     data = sample_image()
     row = commit(plugin, data)
