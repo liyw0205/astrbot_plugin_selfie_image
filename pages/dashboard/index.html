@@ -333,6 +333,14 @@
     .backup-restore-dialog input[type="file"], .backup-restore-dialog select { width:100%; min-width:0; }
     .modal-body { overflow: auto; padding-right: 4px; }
     .modal-footer { position: sticky; bottom: 0; margin-top: 14px; padding-top: 12px; background: linear-gradient(180deg, rgba(255,255,255,0), #fff 24px); }
+    #channelModal .modal { max-height: 96vh; }
+    #channelModal .modal > .between { flex: 0 0 auto; }
+    #channelModal .modal-body { flex: 1 1 auto; min-height: 0; }
+    #channelModal .modal-footer { flex: 0 0 auto; max-height: 40vh; overflow: auto; }
+    #channelModal #modalStatus { max-height: 18vh; overflow: auto; overscroll-behavior: contain; }
+    #channelModal #modalStatus details { margin-top: 6px; }
+    #channelModal #modalStatus summary { cursor: pointer; }
+    #channelModal #modalStatus pre { max-height: 15vh; overflow: auto; margin: 8px 0 0; }
     .media-source-modal-dialog { width: min(960px, 100%); max-height: 92vh; background: #111; color: #fff; }
     .media-source-modal-dialog .modal-footer { background: linear-gradient(180deg, rgba(17,17,17,0), #111 24px); }
     .media-source-preview { min-height: 220px; max-height: calc(92vh - 120px); overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 4px; }
@@ -1751,62 +1759,76 @@
     </section>
 
     <section id="selfie">
-      <h2>形象</h2>
-      <div class="grid">
-        <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
+      <div class="between">
+        <h2>形象</h2>
+        <button class="secondary" id="refreshSelfieBtn" type="button">刷新</button>
       </div>
-      <label class="checkline"><input id="selfiePersonaEnabled" type="checkbox" disabled aria-busy="true"> 使用形象人设池</label>
-      <div class="muted" id="selfieIdentityModeHint">正在读取形象模式…</div>
-      <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 形象图池为空时用 logo</label>
-      <div class="grid">
-        <div>
-          <label>形象类型</label>
-          <select id="selfieAppearanceType">
-            <option value="auto">自动（不追加类型说明）</option>
-            <option value="real">真人（补形象是真人）</option>
-            <option value="anime">动漫（补形象是动漫人物）</option>
-          </select>
+      <div id="selfieViewTabs" class="tabs-inline" role="tablist" aria-label="形象管理分类">
+        <button id="selfieViewTabAppearance" class="active" type="button" role="tab" aria-selected="true" aria-controls="selfieViewAppearance" data-selfie-view="appearance">形象</button>
+        <button id="selfieViewTabSchedule" type="button" role="tab" aria-selected="false" aria-controls="selfieViewSchedule" data-selfie-view="schedule" tabindex="-1">日程</button>
+        <button id="selfieViewTabWardrobe" type="button" role="tab" aria-selected="false" aria-controls="selfieViewWardrobe" data-selfie-view="wardrobe" tabindex="-1">衣橱</button>
+      </div>
+      <div id="selfieViewAppearance" class="selfie-view-panel" role="tabpanel" aria-labelledby="selfieViewTabAppearance">
+        <div class="grid">
+          <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
+        </div>
+        <label class="checkline"><input id="selfiePersonaEnabled" type="checkbox" disabled aria-busy="true"> 使用形象人设池</label>
+        <div class="muted" id="selfieIdentityModeHint">正在读取形象模式…</div>
+        <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 形象图池为空时用 logo</label>
+        <div class="grid">
+          <div>
+            <label>形象类型</label>
+            <select id="selfieAppearanceType">
+              <option value="auto">自动（不追加类型说明）</option>
+              <option value="real">真人（补形象是真人）</option>
+              <option value="anime">动漫（补形象是动漫人物）</option>
+            </select>
+          </div>
+        </div>
+        <div id="selfieImagePoolPanel" class="selfie-identity-panel" hidden>
+          <div class="between selfie-pool-heading"><h3>形象图池</h3><span id="selfieImagePoolCount" class="muted"></span></div>
+          <div class="grid selfie-image-upload-grid">
+            <div><label for="selfieFile">添加形象参考图</label><input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
+            <div class="selfie-image-preview-wrap"><img id="selfiePreview" class="preview" alt="当前形象参考图"></div>
+          </div>
+          <div class="actions selfie-reference-actions">
+            <button id="uploadSelfie" type="button">添加并选中</button>
+            <button class="danger" id="clearSelfieBtn" type="button" onclick="clearSelfie()">移除当前形象图</button>
+          </div>
+          <div id="selfieImagePoolList" class="selfie-identity-list" aria-live="polite"></div>
+        </div>
+        <div id="selfieStatus" class="selfie-reference-state" aria-live="polite"></div>
+        <div id="selfiePersonaPoolPanel" class="selfie-identity-panel" hidden>
+          <div class="between selfie-pool-heading"><h3>形象人设池</h3><span id="selfiePersonaPoolCount" class="muted"></span></div>
+          <div class="grid selfie-persona-form">
+            <div><label for="selfiePersonaName">人设名称</label><input id="selfiePersonaName" type="text" maxlength="80" placeholder="例如：小玉"></div>
+            <div><label for="selfiePersonaPrompt">形象描述</label><textarea id="selfiePersonaPrompt" maxlength="4000" placeholder="描述固定的外貌、发型和气质"></textarea></div>
+          </div>
+          <div class="actions"><button id="addSelfiePersona" type="button">添加人设</button></div>
+          <div id="selfiePersonaPoolList" class="selfie-identity-list" aria-live="polite"></div>
         </div>
       </div>
-      <div id="selfieImagePoolPanel" class="selfie-identity-panel" hidden>
-        <div class="between selfie-pool-heading"><h3>形象图池</h3><span id="selfieImagePoolCount" class="muted"></span></div>
-        <div class="grid selfie-image-upload-grid">
-          <div><label for="selfieFile">添加形象参考图</label><input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
-          <div class="selfie-image-preview-wrap"><img id="selfiePreview" class="preview" alt="当前形象参考图"></div>
+      <div id="selfieViewSchedule" class="selfie-view-panel" role="tabpanel" aria-labelledby="selfieViewTabSchedule" hidden>
+        <div class="between selfie-pool-heading"><h3>今日日程</h3><button class="secondary" type="button" onclick="refreshDailySelfieLocal()">重新生成</button></div>
+        <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
+      </div>
+      <div id="selfieViewWardrobe" class="selfie-view-panel" role="tabpanel" aria-labelledby="selfieViewTabWardrobe" hidden>
+        <h3>自定义衣橱</h3>
+        <div class="grid">
+          <div><label for="wardrobeSelectionMode">每日轮换</label><select id="wardrobeSelectionMode"><option value="random">随机（避开近期穿过的）</option><option value="sequential">按导入顺序</option></select></div>
+          <div id="wardrobeCurrent" class="wardrobe-current" aria-live="polite"></div>
         </div>
-        <div class="actions selfie-reference-actions">
-          <button id="uploadSelfie" type="button">添加并选中</button>
-          <button class="danger" id="clearSelfieBtn" type="button" onclick="clearSelfie()">移除当前形象图</button>
+        <div class="grid">
+          <div><label for="wardrobeFile">服装图片（可多选）</label><input id="wardrobeFile" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
+          <div><label>名称</label><input id="wardrobeName" type="text" maxlength="120" placeholder="留空使用文件名，多张同名时自动编号"></div>
+          <div><label>描述</label><input id="wardrobeDescription" type="text" maxlength="600" placeholder="材质、版型或必须保留的细节"></div>
+          <div><label>标签</label><input id="wardrobeTags" type="text" maxlength="300" placeholder="夏季,连衣裙"></div>
         </div>
-        <div id="selfieImagePoolList" class="selfie-identity-list" aria-live="polite"></div>
+        <div class="actions"><button id="uploadWardrobe" type="button">添加到衣橱</button><button class="secondary" id="refreshWardrobe" type="button">刷新衣橱</button><button class="secondary" id="exportWardrobe" type="button">导出衣橱</button><button class="secondary" id="importWardrobeBtn" type="button">导入衣橱</button><input id="importWardrobeFile" type="file" accept=".zip,application/zip" style="display:none"></div>
+        <div class="progress-wrap" id="wardrobeBatchProgressWrap" hidden><div class="between"><span id="wardrobeBatchProgressLabel">准备中</span><button class="icon-button" id="wardrobeBatchCancel" type="button" title="停止后续导入" aria-label="停止后续导入">×</button></div><progress id="wardrobeBatchProgress" max="1" value="0"></progress><div id="wardrobeBatchResult" role="status"></div></div>
+        <div class="progress-wrap" id="wardrobeArchiveProgressWrap" hidden><div class="between"><span id="wardrobeArchiveProgressLabel">准备中</span><span id="wardrobeArchiveProgressValue">0%</span><button class="icon-button" id="wardrobeArchiveCancelUpload" type="button" title="取消上传" aria-label="取消上传" hidden>×</button></div><progress id="wardrobeArchiveProgress" max="100" value="0"></progress></div>
+        <div id="selfieWardrobeList" class="daily-schedule" aria-live="polite"></div>
       </div>
-      <div class="actions"><button class="secondary" id="refreshSelfieBtn" type="button">刷新形象</button><button class="secondary" onclick="refreshDailySelfieLocal()">重新生成今日日程</button></div>
-      <div id="selfieStatus" class="selfie-reference-state" aria-live="polite"></div>
-      <div id="selfiePersonaPoolPanel" class="selfie-identity-panel" hidden>
-        <div class="between selfie-pool-heading"><h3>形象人设池</h3><span id="selfiePersonaPoolCount" class="muted"></span></div>
-        <div class="grid selfie-persona-form">
-          <div><label for="selfiePersonaName">人设名称</label><input id="selfiePersonaName" type="text" maxlength="80" placeholder="例如：小玉"></div>
-          <div><label for="selfiePersonaPrompt">形象描述</label><textarea id="selfiePersonaPrompt" maxlength="4000" placeholder="描述固定的外貌、发型和气质"></textarea></div>
-        </div>
-        <div class="actions"><button id="addSelfiePersona" type="button">添加人设</button></div>
-        <div id="selfiePersonaPoolList" class="selfie-identity-list" aria-live="polite"></div>
-      </div>
-      <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
-      <h3 style="margin-top:18px">自定义衣橱</h3>
-      <div class="grid">
-        <div><label for="wardrobeSelectionMode">每日轮换</label><select id="wardrobeSelectionMode"><option value="random">随机（避开近期穿过的）</option><option value="sequential">按导入顺序</option></select></div>
-        <div id="wardrobeCurrent" class="wardrobe-current" aria-live="polite"></div>
-      </div>
-      <div class="grid">
-        <div><label for="wardrobeFile">服装图片（可多选）</label><input id="wardrobeFile" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
-        <div><label>名称</label><input id="wardrobeName" type="text" maxlength="120" placeholder="留空使用文件名，多张同名时自动编号"></div>
-        <div><label>描述</label><input id="wardrobeDescription" type="text" maxlength="600" placeholder="材质、版型或必须保留的细节"></div>
-        <div><label>标签</label><input id="wardrobeTags" type="text" maxlength="300" placeholder="夏季,连衣裙"></div>
-      </div>
-      <div class="actions"><button id="uploadWardrobe" type="button">添加到衣橱</button><button class="secondary" id="refreshWardrobe" type="button">刷新衣橱</button><button class="secondary" id="exportWardrobe" type="button">导出衣橱</button><button class="secondary" id="importWardrobeBtn" type="button">导入衣橱</button><input id="importWardrobeFile" type="file" accept=".zip,application/zip" style="display:none"></div>
-      <div class="progress-wrap" id="wardrobeBatchProgressWrap" hidden><div class="between"><span id="wardrobeBatchProgressLabel">准备中</span><button class="icon-button" id="wardrobeBatchCancel" type="button" title="停止后续导入" aria-label="停止后续导入">×</button></div><progress id="wardrobeBatchProgress" max="1" value="0"></progress><div id="wardrobeBatchResult" role="status"></div></div>
-      <div class="progress-wrap" id="wardrobeArchiveProgressWrap" hidden><div class="between"><span id="wardrobeArchiveProgressLabel">准备中</span><span id="wardrobeArchiveProgressValue">0%</span><button class="icon-button" id="wardrobeArchiveCancelUpload" type="button" title="取消上传" aria-label="取消上传" hidden>×</button></div><progress id="wardrobeArchiveProgress" max="100" value="0"></progress></div>
-      <div id="selfieWardrobeList" class="daily-schedule" aria-live="polite"></div>
     </section>
 
     <section id="audit">
@@ -1878,7 +1900,7 @@
     <div class="modal">
       <div class="between">
         <h2 id="channelModalTitle">编辑生图渠道</h2>
-        <button class="secondary" type="button" onclick="closeChannelModal()">关闭</button>
+        <button class="secondary" id="channelModalCloseButton" type="button" aria-label="关闭渠道编辑">关闭</button>
       </div>
       <div class="modal-body">
       <div class="grid">
@@ -4248,6 +4270,21 @@ Source prompt:
       renderModalModels(ch);
       refreshModelSelectors();
     }
+    function showModelRefreshError(error) {
+      const status = $('modalStatus');
+      const message = String(error?.message || error || '模型缓存刷新失败').trim();
+      const detail = message.length > 12000 ? `${message.slice(0, 12000)}\n…错误详情已截断` : message;
+      status.replaceChildren();
+      status.append(document.createTextNode('刷新失败。'));
+      if (!detail) return;
+      const disclosure = document.createElement('details');
+      const summary = document.createElement('summary');
+      const pre = document.createElement('pre');
+      summary.textContent = '查看错误详情';
+      pre.textContent = detail;
+      disclosure.append(summary, pre);
+      status.append(disclosure);
+    }
     async function refreshChannelModels(index = EDITING_CHANNEL_INDEX) {
       const ch = (EDITING_CHANNEL_IS_NEW || index === EDITING_CHANNEL_INDEX)
         ? currentModalChannel()
@@ -4267,7 +4304,7 @@ Source prompt:
         }
         refreshModelSelectors();
         $('modalStatus').textContent = `刷新成功：${ch.models_cache.length} 个模型（点「保存渠道」后生效）`;
-      } catch (e) { $('modalStatus').textContent = e.message; }
+      } catch (e) { showModelRefreshError(e); }
     }
     async function saveChannelModal() {
       const ch = currentModalChannel();
@@ -9106,6 +9143,18 @@ Source prompt:
     let SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
     let SELFIE_IDENTITY_THUMBNAIL_VERSION = 0;
     let SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
+    function switchSelfieView(view) {
+      const availableViews = ['appearance', 'schedule', 'wardrobe'];
+      if (!availableViews.includes(view)) return;
+      for (const tab of document.querySelectorAll('[data-selfie-view]')) {
+        const active = tab.dataset.selfieView === view;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        const panel = $(tab.getAttribute('aria-controls'));
+        if (panel) panel.hidden = !active;
+      }
+    }
     function ensureSelfieStateScope() {
       const scope = protectedMediaScope();
       if (SELFIE_STATE_SCOPE && SELFIE_STATE_SCOPE !== scope) {
@@ -13017,6 +13066,7 @@ Source prompt:
       card.addEventListener('click', () => navigateToTab(card.dataset.navTarget));
     });
     $('loginBtn').onclick = enterApp;
+    $('channelModalCloseButton')?.addEventListener('click', closeChannelModal);
     $('embeddedBootRetry')?.addEventListener('click', () => void initializeEmbeddedDashboard());
     $('refreshGroupsBtn')?.addEventListener('click', () => loadQQGroups(true));
     $('saveGroupsBtn')?.addEventListener('click', saveQQGroups);
@@ -13226,6 +13276,21 @@ Source prompt:
     };
 
     $('uploadSelfie').onclick = uploadSelfie;
+    const selfieViewTabs = [...document.querySelectorAll('[data-selfie-view]')];
+    selfieViewTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => switchSelfieView(tab.dataset.selfieView));
+      tab.addEventListener('keydown', event => {
+        let nextIndex = index;
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % selfieViewTabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (index + selfieViewTabs.length - 1) % selfieViewTabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = selfieViewTabs.length - 1;
+        else return;
+        event.preventDefault();
+        selfieViewTabs[nextIndex].focus();
+        switchSelfieView(selfieViewTabs[nextIndex].dataset.selfieView);
+      });
+    });
     if ($('refreshSelfieBtn')) $('refreshSelfieBtn').onclick = () => refreshSelfie(true);
     if ($('clearSelfieBtn')) $('clearSelfieBtn').onclick = clearSelfie;
     if ($('selfiePersonaEnabled')) $('selfiePersonaEnabled').onchange = saveSelfieIdentityMode;

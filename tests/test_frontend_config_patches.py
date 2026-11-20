@@ -68,3 +68,34 @@ assert.notStrictEqual(patch.proxies, current.proxies);
     )
     assert result.returncode == 0, result.stderr
 
+
+def test_model_cache_refresh_error_does_not_expand_or_lock_channel_modal():
+    root = Path(__file__).resolve().parents[1]
+    channel_source = (root / "pages/dashboard/source/channel_editor.js").read_text(encoding="utf-8")
+    bootstrap = (root / "pages/dashboard/source/bootstrap.js").read_text(encoding="utf-8")
+    styles = (root / "pages/dashboard/source/styles.css").read_text(encoding="utf-8")
+    template = (root / "pages/dashboard/index.source.html").read_text(encoding="utf-8")
+
+    assert "function showModelRefreshError(error)" in channel_source
+    assert "disclosure.append(summary, pre);" in channel_source
+    assert "catch (e) { showModelRefreshError(e); }" in channel_source
+    assert 'id="channelModalCloseButton"' in template
+    assert "channelModalCloseButton')?.addEventListener('click', closeChannelModal)" in bootstrap
+    assert "#channelModal #modalStatus { max-height: 18vh; overflow: auto;" in styles
+
+
+def test_selfie_management_is_split_into_appearance_schedule_and_wardrobe_tabs():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "pages/dashboard/index.source.html").read_text(encoding="utf-8")
+    selfie_source = (root / "pages/dashboard/source/selfie_auth.js").read_text(encoding="utf-8")
+    bootstrap = (root / "pages/dashboard/source/bootstrap.js").read_text(encoding="utf-8")
+
+    for view in ("appearance", "schedule", "wardrobe"):
+        assert f'data-selfie-view="{view}"' in template
+        assert f'id="selfieView{view.title()}"' in template
+    assert 'id="selfieViewSchedule" class="selfie-view-panel" role="tabpanel"' in template
+    assert 'id="selfieViewWardrobe" class="selfie-view-panel" role="tabpanel"' in template
+    assert "function switchSelfieView(view)" in selfie_source
+    assert "tab.setAttribute('aria-selected', String(active));" in selfie_source
+    assert "event.key === 'ArrowRight'" in bootstrap
+

@@ -317,6 +317,14 @@
     .backup-restore-dialog input[type="file"], .backup-restore-dialog select { width:100%; min-width:0; }
     .modal-body { overflow: auto; padding-right: 4px; }
     .modal-footer { position: sticky; bottom: 0; margin-top: 14px; padding-top: 12px; background: linear-gradient(180deg, rgba(255,255,255,0), #fff 24px); }
+    #channelModal .modal { max-height: 96vh; }
+    #channelModal .modal > .between { flex: 0 0 auto; }
+    #channelModal .modal-body { flex: 1 1 auto; min-height: 0; }
+    #channelModal .modal-footer { flex: 0 0 auto; max-height: 40vh; overflow: auto; }
+    #channelModal #modalStatus { max-height: 18vh; overflow: auto; overscroll-behavior: contain; }
+    #channelModal #modalStatus details { margin-top: 6px; }
+    #channelModal #modalStatus summary { cursor: pointer; }
+    #channelModal #modalStatus pre { max-height: 15vh; overflow: auto; margin: 8px 0 0; }
     .media-source-modal-dialog { width: min(960px, 100%); max-height: 92vh; background: #111; color: #fff; }
     .media-source-modal-dialog .modal-footer { background: linear-gradient(180deg, rgba(17,17,17,0), #111 24px); }
     .media-source-preview { min-height: 220px; max-height: calc(92vh - 120px); overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 4px; }

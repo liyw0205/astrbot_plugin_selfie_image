@@ -316,6 +316,26 @@ def test_double_heart_selfie_uses_offscreen_timer_and_overrides_daily_action() -
     assert "手机与支架均留在画面外" in action
 
 
+def test_stretching_selfie_uses_activity_framing_without_selfie_arm_or_forced_gaze() -> None:
+    action = build_selfie_look_action(
+        "在舞蹈室拉伸，在落地镜前坐着压腿，自然表情",
+        scene_light_provider=lambda _kind: (["卧室沙发"], ["暖黄台灯"]),
+        preferred_scene="卧室沙发",
+        preferred_gesture="刚坐好整理袖口",
+    )
+
+    assert "【shot:activity】" in action
+    assert "画外固定机位活动自拍" in action
+    assert "人物不持机、不伸持机手臂" in action
+    assert "中景或更宽取景" in action
+    assert "完整容纳动作与支撑关系" in action
+    assert "视线自然跟随活动，不强制看向镜头" in action
+    assert "必须看向镜头" not in action
+    assert "近景胸像自拍" not in action
+    assert "卧室沙发" not in action
+    assert "刚坐好整理袖口" not in action
+
+
 def test_single_heart_selfie_leaves_the_other_hand_free_and_normal_selfie_keeps_arm_shot() -> None:
     single = build_selfie_look_action(
         "单手比心",

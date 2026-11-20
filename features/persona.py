@@ -47,6 +47,7 @@ from .daily_schedule import (
     resolve_business_date,
     timeline_from_period_route,
 )
+from .action_intent import classify_action_camera_intent
 from .wardrobe import WardrobeItem, WardrobeStore
 from .daily_prompt_pools import (
     DAILY_ACTION_VARIANTS,
@@ -404,20 +405,10 @@ def extra_overrides_period(extra: str) -> bool:
 
 def has_explicit_activity_request(text: str) -> bool:
     """Recognize activities that need their own environment and free hands."""
-    value = re.sub(r"\s+", "", str(text or ""))
-    pattern = (
-        r"(?:骑(?:自行车|单车|山地车|公路车|摩托车|电动车|车|行|马)|"
-        r"游泳|跑步|慢跑|滑雪|滑冰|滑板|冲浪|攀岩|跳舞|跳绳|打网球|打羽毛球|"
-        r"打篮球|踢足球|练瑜伽|做瑜伽|健身|举铁|开车|驾驶)"
-        r"(?!服|衣|裤|装|鞋|图案)"
-    )
-    for match in re.finditer(pattern, value):
-        prefix = value[max(0, match.start() - 16):match.start()]
-        if not re.search(
-            r"(?:不要|不需要|不想|别|不|避免|禁止)(?:再|去|在|要|进行|继续)*$", prefix,
-        ):
-            return True
-    return has_explicit_work_request(text)
+    return classify_action_camera_intent(
+        text,
+        is_work=has_explicit_work_request(text),
+    ).is_activity
 
 
 _WORK_REQUEST_PATTERN = re.compile(
@@ -460,6 +451,10 @@ def has_explicit_work_request(text: str) -> bool:
 def extra_overrides_context(extra: str) -> bool:
     """Detect an explicit scene or lighting context that replaces daily status."""
     compact = normalize_intent_text(extra)
+    action_intent = classify_action_camera_intent(
+        extra,
+        is_work=has_explicit_work_request(extra),
+    )
     return includes_any(
         compact,
         [
@@ -479,28 +474,12 @@ def extra_overrides_context(extra: str) -> bool:
             "窗光",
             "自然光",
             "柔光",
-            "咖啡馆",
-            "咖啡店",
-            "街上",
-            "街边",
-            "室外",
-            "户外",
-            "书店",
-            "教室",
-            "客厅",
-            "卧室",
-            "厨房",
-            "阳台",
-            "窗边",
-            "海边",
-            "公园",
-            "车站",
-            "地铁",
-            "影棚",
-            "摄影棚",
-            "室内",
         ],
-    ) or extra_overrides_period(extra) or has_explicit_activity_request(extra)
+    ) or extra_overrides_period(extra) or (
+        action_intent.is_activity
+        or action_intent.explicit_scene
+        or action_intent.needs_action_framing
+    )
 
 
 def extra_overrides_mood(extra: str) -> bool:

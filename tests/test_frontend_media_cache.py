@@ -433,11 +433,17 @@ def test_record_persona_reference_is_loaded_after_markup_without_inline_html_dat
 
 def test_selfie_controls_only_offer_local_daily_outfit_refresh():
     controls = PAGE[PAGE.index('<input id="selfieFile"'):PAGE.index('<div id="selfieStatus"', PAGE.index('<input id="selfieFile"'))]
-    assert 'id="refreshSelfieBtn"' in controls
+    selfie_start = PAGE.index('<section id="selfie">')
+    selfie_end = PAGE.index('</section>', selfie_start)
+    selfie_page = PAGE[selfie_start:selfie_end]
+    schedule_start = selfie_page.index('<div id="selfieViewSchedule"')
+    wardrobe_start = selfie_page.index('<div id="selfieViewWardrobe"', schedule_start)
+    schedule_view = selfie_page[schedule_start:wardrobe_start]
+    assert 'id="refreshSelfieBtn"' in selfie_page
     assert 'id="clearSelfieBtn"' in controls
     assert '今日穿搭' not in controls
-    assert 'onclick="refreshDailySelfieLocal()"' in controls
-    assert '重新生成今日日程' in controls
+    assert 'onclick="refreshDailySelfieLocal()"' in schedule_view
+    assert '重新生成' in schedule_view
     assert 'class="actions selfie-reference-actions"' in controls
     assert 'onclick="refreshDailySelfieLlm()"' not in PAGE
     assert "async function refreshDailySelfieLlm()" not in PAGE

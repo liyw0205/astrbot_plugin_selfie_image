@@ -12,9 +12,14 @@ from ..features.persona import (
     appearance_type_output_instruction,
     current_period,
     extra_overrides_outfit,
-    has_explicit_activity_request,
     has_explicit_work_request,
     group_style_lines,
+)
+from ..features.action_intent import (
+    HANDHELD_CAMERA_RE,
+    ActionCameraIntent,
+    classify_action_camera_intent,
+    is_positive_request_match,
 )
 from .group_prompt_pool import GROUP_COMPOSITIONS, GROUP_COMPOSITIONS_BY_ID
 from .prompt_templates import explicit_selfie_action_mode, has_explicit_gaze_request, resolve_appearance_type
@@ -46,7 +51,8 @@ SELFIE_SHOT_LINES = {
     "back_view": "竖屏半身中近景的纯背面自拍构图，主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，不要求露出正脸；双手按当前小动作自然配合，不强制垂放，不凭空增加栏杆或道具。",
     "back_three_quarter": "竖屏半身中近景的背后三分之四自拍构图，镜头同时看到后背和一侧肩胯；头部顺着身体方向，不回头硬露正脸，双手按当前小动作自然配合，不凭空增加栏杆或道具。",
     "back_lookback": "背面或侧后方自拍构图，身体保持背向镜头，按用户要求略微回头，肩颈连贯，只呈现自然可见的侧脸；不为露出完整正脸过度扭颈，双手继续完成用户指定动作，景别与画幅按用户要求。",
-    "activity": "使用画外固定机位自摄，景别与裁切按用户要求，为指定活动和相关器材留出自然空间，双手用于完成活动，不额外伸手举机或改成镜前持机动作。",
+    "activity": "画外固定机位活动自拍：手机和支架留在画面外，人物不持机、不伸持机手臂；机位方向按用户要求，用户未指定景别时采用中景或更宽取景，指定景别仅在能完整容纳动作与支撑关系时沿用，否则使用满足动作的最小有效取景，不用脸部或胸像近景截断动作；双手用于完成指定活动。",
+    "pose": "竖屏姿势主体自拍中近景：按用户指定自拍方式取景；手部空闲时允许一只手自然持机，若双手均需动作则设备留在画外；画面涵盖坐卧、跪姿或下蹲所需的身体范围与支撑接触，不用胸像近景裁掉姿势，不为持机改变动作。",
     "side_profile": "竖屏侧身半身中近景自拍，身体和头部自然朝向同一侧，肩胯约四十五度侧向镜头，不回头硬露正脸，颈部和肩线保持自然。",
 }
 
@@ -94,7 +100,8 @@ THIRD_PERSON_SHOT_LINES = {
     "back_view": "竖屏半身中近景的纯背面他拍构图，人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手按动作自然配合，不强制垂放或凭空增加道具。",
     "back_three_quarter": "竖屏半身中近景的背后三分之四他拍构图，镜头同时看到后背和一侧肩胯；头部顺着身体方向，不回头硬露正脸，双手按动作自然配合，不凭空增加栏杆或道具。",
     "back_lookback": "背面或侧后方他拍构图，身体保持背向镜头，按用户要求略微回头，肩颈连贯，只呈现自然可见的侧脸；不为露出完整正脸过度扭颈，双手继续完成用户指定动作，景别与画幅按用户要求。",
-    "activity": "景别与裁切按用户要求，为指定活动和相关器材留出自然空间，双手用于完成活动，不额外加入持机或无关的摆拍动作。",
+    "activity": "机位方向按用户要求，景别仅在能容纳动作与支撑关系时沿用用户指定，否则使用满足活动的最小有效取景；为相关器材留出自然空间，双手用于完成活动，不额外加入持机或无关摆拍动作。",
+    "pose": "稳定画外机位的姿势主体中近景：完整容纳坐卧、跪姿或下蹲姿势及其支撑接触，不用胸像近景裁掉动作；不额外加入道具或摆拍动作。",
     "side_profile": "竖屏半身中近景的纯侧身他拍，身体、肩线和面部朝向一致，呈自然侧面轮廓，不回头、不为露正脸扭转脖子。",
 }
 
@@ -193,11 +200,15 @@ def _has_explicit_action_override(text: str) -> bool:
     terms = (
         "站立", "站着", "坐姿", "坐着", "坐在", "床沿", "跪坐", "跪姿", "躺下", "侧躺", "趴着",
         "行走", "走路", "散步", "奔跑", "跳跃", "托腮", "比心", "双手举起",
-        "整理发丝", "整理袖口", "拿着", "手持", "捧着", "抱着", "倚靠", "靠墙",
+        "整理发丝", "整理袖口", "拿着", "端杯", "端着", "手持", "捧着", "抱着", "倚靠", "靠墙",
         "回头", "回眸", "回望", "转头", "弯腰", "前倾", "俯身", "伸手", "抬手", "举手",
         "叉腰", "插兜", "蹲下", "蹲着", "躺着",
     )
-    return has_explicit_activity_request(text) or any(
+    intent = classify_action_camera_intent(
+        text,
+        is_work=has_explicit_work_request(text),
+    )
+    return intent.is_activity or intent.needs_action_framing or any(
         _has_positive_staging_term(compact, term) for term in terms
     )
 
@@ -222,9 +233,21 @@ def _has_explicit_staging_scene(text: str) -> bool:
     compact = re.sub(r"\s+", "", str(text or ""))
     if "场景随机" in compact or "背景随机" in compact:
         return False
-    return has_explicit_activity_request(text) or any(
+    intent = classify_action_camera_intent(text, is_work=has_explicit_work_request(text))
+    return intent.explicit_scene or intent.needs_action_framing or any(
         _has_positive_staging_term(compact, term) for term in SELFIE_ENVIRONMENT_TERMS
     )
+
+
+def _compatible_camera_request(text: str, intent: ActionCameraIntent) -> str:
+    """Keep the selfie request while removing a handheld camera that conflicts with the action."""
+    if not intent.requires_offscreen_camera:
+        return text
+    value = str(text or "")
+    for match in reversed(list(HANDHELD_CAMERA_RE.finditer(value))):
+        if is_positive_request_match(value, match):
+            value = value[:match.start()] + "自拍成片" + value[match.end():]
+    return value
 
 
 def _has_explicit_staging_light(text: str) -> bool:
@@ -563,8 +586,22 @@ def build_crop_waist_selfie_action(
     has_refs: bool = False,
     *,
     appearance_type: str = "auto",
+    action_intent: ActionCameraIntent | None = None,
 ) -> str:
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
+    extra = re.sub(r"\s+", " ", str(extra_request or ""))
+    from ..studio.studio import default_image_preset_seed
+
+    # Classify only the user's addition, not the built-in preset pose.
+    builtin = default_image_preset_seed()["漏腰"]["prompt"]
+    extra = extra.replace(re.sub(r"\s+", " ", builtin), "")
+    if action_intent is None:
+        action_intent = classify_action_camera_intent(
+            extra,
+            is_work=has_explicit_work_request(extra),
+        )
+    action_framing = bool(action_intent and action_intent.needs_action_framing)
+    framing = "activity" if action_intent and action_intent.requires_offscreen_camera else "pose"
     base = (
         "【自拍 / 漏腰模式】"
         "以当前 AI 形象为主角的休闲自拍成片。"
@@ -572,6 +609,16 @@ def build_crop_waist_selfie_action(
         "原有服装的款式、颜色、材质、领口、袖型、图案、配饰、层次和穿着方式全部保持不变，"
         "保持下装、人物身份、发型和脸部特征不变。"
         + (
+            "由主角自行启动手机定时拍摄，手机与支架留在画面外；"
+            if action_framing and action_intent and action_intent.requires_offscreen_camera else
+            "按用户指定自拍方式成片；"
+            if action_framing else ""
+        )
+        + (
+            "参考图只提供身份和服装线索；姿势、机位、场景和光线按指定动作自然完成，不另加沙发或床。"
+            if has_refs and action_framing else
+            "本次机位：" + SELFIE_SHOT_LINES[framing] + "漏腰只约束上衣腰线细节，动作完整性优先；不为突出腰线裁掉动作所需肢体或支撑关系。"
+            if action_framing else
             "姿势、表情、机位、场景和光线沿用参考图，不另加沙发或床。"
             if has_refs else
             "室内柔和自然光，略高机位，放松地坐在沙发边，以头部至胯部的竖屏构图清楚呈现腰线。"
@@ -580,12 +627,7 @@ def build_crop_waist_selfie_action(
     )
     if has_refs:
         base = "参考用户附图的氛围或构图，" + base
-    from ..studio.studio import default_image_preset_seed
-
-    extra = re.sub(r"\s+", " ", str(extra_request or ""))
-    # Only the exact built-in is owned by this builder; custom presets stay intact.
-    builtin = default_image_preset_seed()["漏腰"]["prompt"]
-    extra = extra.replace(re.sub(r"\s+", " ", builtin), "").strip(" 。，,；;")
+    extra = extra.strip(" 。，,；;")
     if extra and extra not in base and extra not in {"漏腰", "露腰", "漏腰杀", "小蛮腰"}:
         base += f" 用户补充要求优先：{extra}。"
     return base + " 【shot:crop_waist】"
@@ -604,14 +646,15 @@ def build_selfie_look_action(
 ) -> str:
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
     appearance_type = resolve_appearance_type(appearance_type, extra)
-    work_scene, work_action = _work_staging_hints(extra)
-    work_request = bool(work_action)
     if looks_like_crop_waist_request(extra):
         return build_crop_waist_selfie_action(
             extra,
             has_refs,
             appearance_type=appearance_type,
         )
+    work_scene, work_action = _work_staging_hints(extra)
+    work_request = bool(work_action)
+    action_intent = classify_action_camera_intent(extra, is_work=work_request)
     scenes, lights = scene_light_provider("selfie")
     explicit_scene = _has_explicit_staging_scene(extra)
     event_context_enabled = bool(
@@ -639,24 +682,34 @@ def build_selfie_look_action(
         tags=preferred_tags if event_context_enabled else (),
     )
     orientation = _requested_staging_orientation(extra)
-    activity = has_explicit_activity_request(extra)
+    offscreen_camera = action_intent.requires_offscreen_camera or action_intent.explicit_camera == "offscreen"
     rear_hair_close_request = any(
         _has_positive_staging_term(extra, term) for term in COS_JSON_REAR_HAIR_REQUEST_TERMS
     )
+    action_camera_priority = (
+        action_intent.full_body_motion
+        or action_intent.needs_support
+        or action_intent.is_task
+    )
     shot = (
-        "timer_half" if heart_pose
+        "activity" if action_camera_priority
+        else "timer_half" if heart_pose
+        else "activity" if action_intent.requires_offscreen_camera
         else "back_lookback" if orientation in {"back", "back_three_quarter"} and _has_explicit_lookback(extra)
         else "back_three_quarter" if orientation == "back_three_quarter"
         else "back_view" if orientation == "back"
         else "side_profile" if orientation == "side"
-        else "activity" if activity
+        else "pose" if action_intent.needs_pose_framing
+        else "timer_half" if action_intent.explicit_camera == "offscreen"
+        else "mirror_half" if action_intent.explicit_camera == "mirror"
+        else "arm_half" if action_intent.explicit_camera == "handheld"
         else random.choices(
             [name for name, _ in shot_pool],
             weights=[weight for _, weight in shot_pool],
             k=1,
         )[0]
     )
-    explicit_light = _has_explicit_staging_light(extra) or activity
+    explicit_light = _has_explicit_staging_light(extra) or action_intent.needs_action_framing
     if shot in {"back_view", "back_three_quarter", "back_lookback"}:
         preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
         scene = work_scene or ("" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot)))
@@ -700,6 +753,8 @@ def build_selfie_look_action(
     gaze_line = (
         "视线和表情按用户明确要求执行，不额外要求看镜头。"
         if has_explicit_gaze_request(extra)
+        else "视线自然跟随活动，不强制看向镜头。"
+        if action_intent.needs_action_framing
         else "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
     )
     capture_finishes = SELFIE_MIRROR_FINISHES if shot in {"mirror_half", "mirror_full"} else SELFIE_CANDID_FINISHES
@@ -716,7 +771,7 @@ def build_selfie_look_action(
         "【自拍 / 看看模式】展示 AI 现在的样子。"
         + (
             "由主角自行启动手机定时拍摄，拍摄者不入画；这是自摄成片，不要求出现手机或自拍手臂。"
-            if rear_view or activity
+            if rear_view or offscreen_camera
             else "自拍成片，拍摄者不入画。"
         )
         + (gaze_line if not rear_view and not side_view else "")
@@ -743,7 +798,7 @@ def build_selfie_look_action(
         # keep the user's text without the COS contract marker used by the
         # downstream COS router.
         label = "用户指定内容" if re.search(r"\bcos\b|COS", extra, re.I) else "用户补充要求优先"
-        base += f" {label}：{extra}。"
+        base += f" {label}：{_compatible_camera_request(extra, action_intent)}。"
     return base + f" 【shot:{shot}】"
 
 
@@ -762,6 +817,7 @@ def build_third_person_look_action(
     scenes, lights = scene_light_provider("look_you")
     work_scene, work_action = _work_staging_hints(extra_request)
     work_request = bool(work_action)
+    action_intent = classify_action_camera_intent(extra_request, is_work=work_request)
     explicit_scene = _has_explicit_staging_scene(extra_request)
     shot_pool = [item for item in THIRD_PERSON_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
@@ -785,20 +841,20 @@ def build_third_person_look_action(
         tags=preferred_tags if event_context_enabled else (),
     )
     orientation = _requested_staging_orientation(extra_request)
-    activity = has_explicit_activity_request(extra_request)
     shot = (
-        "back_lookback" if orientation in {"back", "back_three_quarter"} and _has_explicit_lookback(extra_request)
+        "activity" if action_intent.requires_offscreen_camera
+        else "back_lookback" if orientation in {"back", "back_three_quarter"} and _has_explicit_lookback(extra_request)
         else "back_three_quarter" if orientation == "back_three_quarter"
         else "back_view" if orientation == "back"
         else "side_profile" if orientation == "side"
-        else "activity" if activity
+        else "pose" if action_intent.needs_pose_framing
         else random.choices(
             [name for name, _ in shot_pool],
             weights=[weight for _, weight in shot_pool],
             k=1,
         )[0]
     )
-    explicit_light = _has_explicit_staging_light(extra_request) or activity
+    explicit_light = _has_explicit_staging_light(extra_request) or action_intent.needs_action_framing
     if shot in {"back_view", "back_three_quarter", "back_lookback"}:
         preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
         scene = work_scene or ("" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot)))

@@ -788,6 +788,21 @@
       renderModalModels(ch);
       refreshModelSelectors();
     }
+    function showModelRefreshError(error) {
+      const status = $('modalStatus');
+      const message = String(error?.message || error || '模型缓存刷新失败').trim();
+      const detail = message.length > 12000 ? `${message.slice(0, 12000)}\n…错误详情已截断` : message;
+      status.replaceChildren();
+      status.append(document.createTextNode('刷新失败。'));
+      if (!detail) return;
+      const disclosure = document.createElement('details');
+      const summary = document.createElement('summary');
+      const pre = document.createElement('pre');
+      summary.textContent = '查看错误详情';
+      pre.textContent = detail;
+      disclosure.append(summary, pre);
+      status.append(disclosure);
+    }
     async function refreshChannelModels(index = EDITING_CHANNEL_INDEX) {
       const ch = (EDITING_CHANNEL_IS_NEW || index === EDITING_CHANNEL_INDEX)
         ? currentModalChannel()
@@ -807,7 +822,7 @@
         }
         refreshModelSelectors();
         $('modalStatus').textContent = `刷新成功：${ch.models_cache.length} 个模型（点「保存渠道」后生效）`;
-      } catch (e) { $('modalStatus').textContent = e.message; }
+      } catch (e) { showModelRefreshError(e); }
     }
     async function saveChannelModal() {
       const ch = currentModalChannel();

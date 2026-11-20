@@ -31,6 +31,7 @@
       card.addEventListener('click', () => navigateToTab(card.dataset.navTarget));
     });
     $('loginBtn').onclick = enterApp;
+    $('channelModalCloseButton')?.addEventListener('click', closeChannelModal);
     $('embeddedBootRetry')?.addEventListener('click', () => void initializeEmbeddedDashboard());
     $('refreshGroupsBtn')?.addEventListener('click', () => loadQQGroups(true));
     $('saveGroupsBtn')?.addEventListener('click', saveQQGroups);
@@ -240,6 +241,21 @@
     };
 
     $('uploadSelfie').onclick = uploadSelfie;
+    const selfieViewTabs = [...document.querySelectorAll('[data-selfie-view]')];
+    selfieViewTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => switchSelfieView(tab.dataset.selfieView));
+      tab.addEventListener('keydown', event => {
+        let nextIndex = index;
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % selfieViewTabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (index + selfieViewTabs.length - 1) % selfieViewTabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = selfieViewTabs.length - 1;
+        else return;
+        event.preventDefault();
+        selfieViewTabs[nextIndex].focus();
+        switchSelfieView(selfieViewTabs[nextIndex].dataset.selfieView);
+      });
+    });
     if ($('refreshSelfieBtn')) $('refreshSelfieBtn').onclick = () => refreshSelfie(true);
     if ($('clearSelfieBtn')) $('clearSelfieBtn').onclick = clearSelfie;
     if ($('selfiePersonaEnabled')) $('selfiePersonaEnabled').onchange = saveSelfieIdentityMode;

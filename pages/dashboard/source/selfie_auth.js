@@ -159,6 +159,18 @@
     let SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
     let SELFIE_IDENTITY_THUMBNAIL_VERSION = 0;
     let SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
+    function switchSelfieView(view) {
+      const availableViews = ['appearance', 'schedule', 'wardrobe'];
+      if (!availableViews.includes(view)) return;
+      for (const tab of document.querySelectorAll('[data-selfie-view]')) {
+        const active = tab.dataset.selfieView === view;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        const panel = $(tab.getAttribute('aria-controls'));
+        if (panel) panel.hidden = !active;
+      }
+    }
     function ensureSelfieStateScope() {
       const scope = protectedMediaScope();
       if (SELFIE_STATE_SCOPE && SELFIE_STATE_SCOPE !== scope) {

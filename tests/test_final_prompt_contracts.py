@@ -110,7 +110,9 @@ def test_cycling_selfie_command_reaches_final_prompt_without_schedule_or_pose_co
     action = captured["original_prompt"]
     prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
     assert captured["aspect_ratio"] == "9:16"
-    assert selected_contract_id(action, "shot") == "back_lookback"
+    assert selected_contract_id(action, "shot") == "activity"
+    assert "机位方向按用户要求" in action
+    assert "画外固定机位活动自拍" in action
     assert query in prompt
     assert refs
     assert [ref.data for ref in refs] == [b"identity"]
@@ -126,12 +128,48 @@ def test_cycling_selfie_command_reaches_final_prompt_without_schedule_or_pose_co
         assert conflict not in prompt
 
 
+def test_activity_camera_contract_suppresses_schedule_staging_but_keeps_outfit_and_mood(tmp_path):
+    from astrbot_plugin_selfie_image.features.daily_schedule import DailySchedule, ScheduleEvent
+    from astrbot_plugin_selfie_image.features.persona import daily_schedule_date_key
+
+    persona = PersonaManager(tmp_path)
+    schedule = DailySchedule(
+        date=daily_schedule_date_key(), route_id="action-camera", theme="日程主题不应入图",
+        mood="心情线索保留", seed="action-camera",
+        events=[ScheduleEvent(
+            id="all-day", start="00:00", end="23:59", title="日程事件不应入图",
+            scene="日程场景不应入图", action="日程动作不应入图", status="日程状态不应入图",
+            outfit_ref="main",
+        )],
+        outfits={"main": "今日穿搭保留"},
+    )
+    persona._persist_daily_selfie_profile(persona._profile_from_timeline(schedule))
+    action = build_selfie_look_action(
+        "在舞蹈室坐地压腿拉伸",
+        preferred_scene="日程场景不应入图",
+        preferred_gesture="日程动作不应入图",
+    )
+    prompt = persona.build_selfie_prompt(action, "小助", "自然", False, 0)
+
+    assert "【shot:activity】" in prompt
+    assert "今日穿搭保留" in prompt
+    assert "心情线索保留" in prompt
+    for conflict in (
+        "日程主题不应入图", "日程事件不应入图", "日程场景不应入图",
+        "日程动作不应入图", "日程状态不应入图",
+    ):
+        assert conflict not in prompt
+
+
 def selected_contract_id(prompt, key):
     return re.search(rf"【{key}:([a-z_]+)】", prompt).group(1)
 
 
 @pytest.mark.parametrize("builder", [build_selfie_look_action, build_third_person_look_action])
-@pytest.mark.parametrize("activity", ["骑车", "骑自行车", "骑单车", "跑步", "游泳", "滑雪", "练瑜伽"])
+@pytest.mark.parametrize("activity", [
+    "骑车", "骑自行车", "骑单车", "跑步", "游泳", "滑雪", "练瑜伽",
+    "舞蹈室拉伸", "坐着压腿拉伸", "练舞",
+])
 def test_explicit_activities_do_not_receive_indoor_staging(builder, activity):
     action = builder(
         f"{activity}，竖屏实拍",
@@ -163,11 +201,17 @@ def test_user_head_turn_is_independent_of_body_orientation(query, shot):
 @pytest.mark.parametrize("text,expected", [
     ("骑车", True), ("骑行服", False), ("穿贴身运动衣", False),
     ("不要骑车", False), ("不要再去骑车", False), ("不骑车，改为跑步", True),
+    ("舞蹈室拉伸", True), ("坐着压腿拉伸", True), ("练舞", True),
+    ("不要做拉伸", False), ("不要压腿", False), ("拉伸面料", False),
 ])
 def test_activity_detection_distinguishes_actions_from_clothing_and_negations(text, expected):
-    from astrbot_plugin_selfie_image.features.persona import has_explicit_activity_request
+    from astrbot_plugin_selfie_image.features.persona import (
+        extra_overrides_context,
+        has_explicit_activity_request,
+    )
 
     assert has_explicit_activity_request(text) is expected
+    assert extra_overrides_context(text) is expected
 
 
 @pytest.mark.parametrize("text", [
