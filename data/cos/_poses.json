@@ -43,6 +43,8 @@
     "front_arms_raised_arch": ["正面双臂抬起轻仰", "抬臂轻仰站姿", "抬手舒腰仰身", "双臂抬起站姿"],
     "wall_raised_elbow_lean": ["抬臂靠墙侧背前倾", "抬肘靠墙前倾", "抬臂贴墙前倾", "靠墙举臂前倾"],
     "kneeling_back_support": ["跪坐后撑仰身", "跪坐双手后撑", "双膝跪坐后撑", "跪坐轻仰身"],
+    "soft_surface_recline_support": ["软面半躺后撑", "半躺后撑", "半躺支撑姿势"],
+    "soft_surface_recline_hem_hold": ["半躺轻捏衣摆", "半躺捏住衣摆", "半躺轻捏上衣衣摆"],
     "sleeping_on_bed": ["床上熟睡", "熟睡姿势", "睡在床上", "躺床熟睡"],
     "poolside_seated_support": ["池沿侧坐后撑", "池沿侧坐", "池边撑坐"],
     "washbasin_back_support": ["背侧撑台回望", "洗手台背侧回望", "背侧撑台"],
@@ -1122,6 +1124,33 @@
       "random_camera_ids": [
         "third"
       ]
+    },
+    "soft_surface_recline_support": {
+      "title": "软面半躺后撑",
+      "scene_ids": ["bedroom_carpet", "living_room_rug", "gray_rug_recline", "gray_bed_recline"],
+      "contact_shadow_id": "default",
+      "prompt": "人物臀部落在当前场景已有且足够宽的承托面上，上身从髋部自然轻后倾，身体轴线在画面中略呈对角线。一只手放在同侧髋部后方的承托面上，手掌与肩、肘、腕形成连续自然的支撑关系；另一只手放松轻停腰侧或同侧髋旁。头颈顺着躯干自然微抬，朝向斜前上方的镜头，不单独大幅扭头。保持静态坐靠，腰背不过度反折；画外腿部自然放松，不额外指定跪姿或伸腿动作。保留当前 COS 衣装的结构与覆盖。",
+      "pose_family": "recline_support",
+      "random_weight": 2,
+      "face_visibility": "optional",
+      "framing_ids": ["recline_high_close"],
+      "expression_ids": ["calm", "gentle", "confident"],
+      "camera_ids": ["third", "first", "selfie"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "soft_surface_recline_hem_hold": {
+      "title": "半躺轻捏衣摆",
+      "scene_ids": ["bedroom_carpet", "living_room_rug", "gray_rug_recline", "gray_bed_recline"],
+      "contact_shadow_id": "default",
+      "prompt": "人物臀部落在当前场景已有且足够宽的承托面上，上身从髋部自然轻后倾，身体轴线在画面中略呈对角线。一只手放在同侧髋部后方的承托面上，手掌与肩、肘、腕形成连续自然的支撑关系；另一只手仅在当前服装本身有可活动的上衣下摆时，轻捏腰侧自由下摆，手指与布料接触清楚，衣摆只有轻微横向牵引，不大幅提起、不拉领口或改变服装。若服装没有合适的自由下摆，空闲手放松轻停腰侧或同侧髋旁，不凭空生成短上衣。头颈顺着躯干自然微抬，朝向斜前上方的镜头，不单独大幅扭头。保持静态坐靠，腰背不过度反折；画外腿部自然放松，不额外指定跪姿或伸腿动作。保留当前 COS 衣装的结构与覆盖。",
+      "pose_family": "recline_support",
+      "explicit_only": true,
+      "random_weight": 1,
+      "face_visibility": "optional",
+      "framing_ids": ["recline_high_close"],
+      "expression_ids": ["calm", "gentle", "confident"],
+      "camera_ids": ["third", "first", "selfie"],
+      "random_camera_ids": ["third", "first", "selfie"]
     },
     "photo_frame_break_bottom_left": {
       "title": "白边照片前倾破框",

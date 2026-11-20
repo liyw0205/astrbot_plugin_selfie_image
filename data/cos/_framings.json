@@ -127,6 +127,12 @@
       "prompt": "镜头位于人物斜前上方约三十度向下拍摄，竖幅近中景从头部取到大腿中段，人物占据主要画幅；自然保留靠近镜头的单手动作，前景手部略大但不遮住面部，不使用正上方顶视或远景",
       "random_camera_ids": ["third", "first", "selfie"]
     },
+    "recline_high_close": {
+      "title": "半躺高位斜俯近景",
+      "prompt": "9:16竖幅近距离人像，镜头位于人物斜前上方约三十五至五十度向下拍摄，从头顶取到腰胯附近；面部位于画面上部，肩颈、服装与腰侧手部自然入画，后撑手保留清楚的接触关系。人物占据主要画幅，使用自然近距透视，不采用正上方垂直顶拍、极端广角或远景，拍摄设备与拍摄者肢体位于画外",
+      "scene_ids": ["bedroom_carpet", "living_room_rug", "gray_rug_recline", "gray_bed_recline"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
     "low_angle_close_three_quarter": {
       "title": "侧前低机位近距仰拍",
       "prompt": "镜头位于人物侧前方、膝部至腰部以下的近距离低位，略向上拍摄头部至大腿中段的竖幅近中景；使用正常焦段，人物占据画面主体，突出姿势轮廓与服装线条，不贴近腿部、不使用夸张广角或远景",

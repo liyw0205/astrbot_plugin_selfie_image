@@ -39,6 +39,37 @@ def test_business_date_respects_day_boundary() -> None:
     assert resolve_business_date(datetime.datetime(2026, 10, 29, 5, 0), "05:00") == "2026-10-29"
 
 
+def test_sexy_outfits_stay_in_their_schedule_periods() -> None:
+    from astrbot_plugin_selfie_image.features import persona
+    from astrbot_plugin_selfie_image.features.daily_prompt_pools import (
+        DAILY_FALLBACK_EVENING_LOOKS,
+        DAILY_FALLBACK_HOME_LOOKS,
+    )
+
+    def choose_candidate(candidates):
+        values = list(candidates)
+        if values and isinstance(values[0], tuple):
+            return values[-1]
+        if values and isinstance(values[0], str):
+            return values[-1]
+        return values[0]
+
+    with patch.object(persona.random, "choice", side_effect=choose_candidate), patch.object(
+        persona.random, "random", return_value=0.0,
+    ):
+        profile = persona.fallback_daily_profile("2026-08-09", "sexy-outfit-period-test")
+
+    sleepwear = [item for item in DAILY_FALLBACK_HOME_LOOKS if any(
+        marker in item for marker in ("睡衣", "睡裙", "睡袍", "睡前")
+    )]
+    awake_homewear = [item for item in DAILY_FALLBACK_HOME_LOOKS if item not in sleepwear]
+    assert profile.outfit_by_period["evening"] in DAILY_FALLBACK_EVENING_LOOKS[6:]
+    assert profile.outfit_by_period["night"] in awake_homewear
+    assert profile.outfit_by_period["late_night"] in sleepwear
+    for period in ("morning", "noon", "afternoon", "evening", "night"):
+        assert not any(marker in profile.outfit_by_period[period] for marker in ("睡衣", "睡裙", "睡袍", "睡前"))
+
+
 def test_current_event_prefers_active_then_previous_or_next() -> None:
     events = [_event("morning", "08:00", "09:00"), _event("evening", "18:00", "19:00")]
     assert select_current_event(events, 8 * 60 + 30).id == "morning"
@@ -376,6 +407,66 @@ def test_leg_focus_ignores_outdoor_schedule_scene_and_keeps_indoor_support() -> 
         assert "户外小径漫步" not in action
         assert f"【wear:{wear}】" in action
         assert sum(item["prompt"] in action for item in LEGFOCUS_OUTFIT_POOL) == 1
+
+
+def test_explicit_work_selfie_overrides_daily_scene_and_action(tmp_path) -> None:
+    from astrbot_plugin_selfie_image.features.persona import (
+        PersonaManager,
+        current_period,
+        daily_schedule_date_key,
+    )
+
+    manager = PersonaManager(str(tmp_path))
+    today = daily_schedule_date_key(manager.business_day_start)
+    period = current_period()
+    event = ScheduleEvent(
+        id="cafe-review",
+        start="00:00",
+        end="23:59",
+        title="咖啡馆项目复盘",
+        status="专注复盘中",
+        scene="咖啡馆靠窗座位",
+        action="在咖啡馆里喝咖啡并查看邮件",
+        outfit_ref="main",
+    )
+    timeline = DailySchedule(
+        date=today,
+        route_id="work-selfie-test",
+        theme="咖啡馆工作日",
+        mood="安静专注",
+        seed="work-selfie-test",
+        events=[event],
+        outfits={"main": "灰色针织衫和深色长裤"},
+    )
+    manager.daily_schedule_store.set_current(timeline, remember_previous=False)
+    manager.data["daily_selfie_profile"] = {
+        "date": today,
+        "outfit": "灰色针织衫和深色长裤",
+        "outfit_by_period": {period: "灰色针织衫和深色长裤"},
+        "status": event.status,
+        "status_by_period": {period: event.status},
+        "mood": timeline.mood,
+        "day_theme": timeline.theme,
+        "source": "fallback",
+        "llm_attempted": False,
+    }
+
+    action = build_selfie_look_action(
+        "拍一张你办公的照片",
+        scene_light_provider=lambda _kind: (["卧室沙发"], ["暖黄台灯"]),
+        preferred_scene=event.scene,
+        preferred_gesture=event.action,
+    )
+    prompt = manager.build_selfie_prompt(action, "小助", "温柔", False, 0)
+
+    assert "【shot:activity】" in action
+    assert "场景倾向：办公室工位" in action
+    assert "在工位前专注处理工作" in action
+    assert "咖啡馆" not in action
+    assert "咖啡馆" not in prompt
+    assert "当前日程事件" not in prompt
+    assert "当前状态：" not in prompt
+    assert "当前日常动作参考：" not in prompt
 
 
 def test_full_outfit_leg_focus_does_not_keep_lower_body_only_rule(tmp_path) -> None:

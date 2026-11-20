@@ -34,7 +34,7 @@
     {
       "cos_type": "原创COS",
       "file": "原创COS.json",
-      "count": 54
+      "count": 56
     },
     {
       "cos_type": "原神",
@@ -811,6 +811,8 @@
     "original_white_shirt_loose_tie",
     "original_knit_cardigan_camisole",
     "original_gray_knit_camisole",
+    "original_skyblue_lace_cami",
+    "original_blue_anime_print_cami",
     "style_deep_sea_opera",
     "style_obsidian_atelier",
     "style_ice_lake_black_swan",

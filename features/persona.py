@@ -417,6 +417,43 @@ def has_explicit_activity_request(text: str) -> bool:
             r"(?:不要|不需要|不想|别|不|避免|禁止)(?:再|去|在|要|进行|继续)*$", prefix,
         ):
             return True
+    return has_explicit_work_request(text)
+
+
+_WORK_REQUEST_PATTERN = re.compile(
+    r"办公(?:室|桌|位|时|中|场景|状态)?(?!用品|服|衣|装)|工位|公司(?:里|内|办公区|工位)?|写字楼|"
+    r"会议(?:室|桌|现场|中|时|纪要|材料|讨论)|开会|加班|上班(?!穿|搭|服|衣)|"
+    r"工作(?!服|衣|装)(?:中|时|期间|状态|场景|画面|照|自拍|照片)?|"
+    r"电脑(?:桌)?前|对着电脑|面对电脑|笔记本(?:电脑)?前|"
+    r"敲(?:键盘|代码)|写(?:代码|程序|文档|报告|邮件)|编写(?:代码|文档|报告)|"
+    r"处理(?:工作|文件|邮件|报表|文档|项目)|回复邮件|查看邮件|收发邮件|"
+    r"整理(?:工作资料|项目资料|文件|报表|资料)|做(?:报表|ppt)|参加会议|参与会议|值班(?:时|中|期间)?|"
+    r"在家(?:远程)?(?:办公|工作)|居家(?:远程)?(?:办公|工作)|远程(?:办公|工作)|线上(?:办公|工作)|"
+    r"office(?:room)?|workplace|workstation|coworking|meeting(?:room)?|"
+    r"working(?:fromhome|athome|fromoffice)?|workfrom(?:home|office)|remote(?:work|office)|"
+    r"work(?:photo|selfie|scene|mode)|athome|atwork|typing|coding",
+    re.I,
+)
+_WORK_REQUEST_NEGATION = re.compile(
+    r"(?:不要|不需要|不想|不希望|不必|不允许|不能|不会|不可|别|避免|禁止|拒绝|没有|无需|不用|不是|并非|不|"
+    r"don'?t|do(?:not|nt)|doesn'?t|doesnot|isn'?t|isnot|aren'?t|arenot|without|avoid|exclude|not|no)"
+    r"[\w\u4e00-\u9fff]{0,20}$",
+    re.I,
+)
+_WORK_REQUEST_CONTRAST = re.compile(
+    r"[，,。；;！？?!\n]|改成|改为|换成|改用|而是|而非|不过|但是|但|转为|instead|ratherthan",
+    re.I,
+)
+
+
+def has_explicit_work_request(text: str) -> bool:
+    """Recognize workplace scenes and work activities, respecting negation."""
+    value = re.sub(r"\s+", "", str(text or ""))
+    for match in _WORK_REQUEST_PATTERN.finditer(value):
+        prefix = value[max(0, match.start() - 32):match.start()]
+        prefix = _WORK_REQUEST_CONTRAST.split(prefix)[-1]
+        if not _WORK_REQUEST_NEGATION.search(prefix):
+            return True
     return False
 
 
@@ -450,7 +487,6 @@ def extra_overrides_context(extra: str) -> bool:
             "户外",
             "书店",
             "教室",
-            "办公室",
             "客厅",
             "卧室",
             "厨房",
@@ -986,27 +1022,36 @@ def fallback_daily_profile(
     }
     used_outfits.update(day_outfits.values())
     evening_looks = DAILY_FALLBACK_EVENING_LOOKS
-    evening_outfit = (
-        day_outfits["afternoon"]
-        if random.random() < 0.68
-        else _remove_outer_layer(day_outfits["afternoon"])
-    )
+    if evening_looks and random.random() < 0.25:
+        # Evening-specific looks only replace the actual evening event.
+        evening_outfit = choose_rendered(list(evening_looks), lambda item: item, blocked=used_outfits)
+    else:
+        evening_outfit = (
+            day_outfits["afternoon"]
+            if random.random() < 0.68
+            else _remove_outer_layer(day_outfits["afternoon"])
+        )
     if not evening_outfit or evening_outfit == day_outfits["afternoon"]:
         evening_outfit = day_outfits["afternoon"]
     used_outfits.add(evening_outfit)
     home_looks = DAILY_FALLBACK_HOME_LOOKS
-    home_outfit = choose_rendered(home_looks, lambda item: item, blocked=used_outfits)
+    sleepwear_markers = ("睡衣", "睡裙", "睡袍", "睡前")
+    sleepwear_looks = [
+        item for item in home_looks
+        if any(marker in item for marker in sleepwear_markers)
+    ]
+    awake_home_looks = [item for item in home_looks if item not in sleepwear_looks]
+    home_outfit = choose_rendered(awake_home_looks or list(home_looks), lambda item: item, blocked=used_outfits)
     used_outfits.add(home_outfit)
-    late_home_candidate = choose_rendered(home_looks, lambda item: item, blocked=used_outfits)
     # The route's night and late-night events are home-based. Returning home
-    # is therefore the natural clothing transition; staying in the outdoor
-    # look here creates an avoidable scene/outfit mismatch.
+    # is therefore the natural clothing transition. Reserve sleepwear for the
+    # bedroom event so it cannot leak into outdoor plans or the return-home slot.
     night_outfit = home_outfit
-    late_home_outfit = (
-        night_outfit
-        if random.random() < 0.74
-        else late_home_candidate
-    )
+    if sleepwear_looks:
+        late_home_outfit = choose_rendered(sleepwear_looks, lambda item: item, blocked=used_outfits)
+    else:
+        late_home_candidate = choose_rendered(home_looks, lambda item: item, blocked=used_outfits)
+        late_home_outfit = night_outfit if random.random() < 0.74 else late_home_candidate
     outfit_by_period = {
         "morning": day_outfits["morning"],
         "noon": day_outfits["noon"],
@@ -2417,12 +2462,10 @@ class PersonaManager(IdentityPoolMixin):
                         else f"第三人称全身日常照片：摄影者完全在画面外，从头部到{foot_target}完整入镜。"
                     ),
                     (
-                        f"成年人物腿部穿搭构图：肩部以上裁出，胸部可自然保留；从肩部裁切线上缘至{foot_target}自然入镜，{foot_visibility}；"
-                        "允许上缘带到头部时，必须同时执行已选姿势对应的表情、视线和上肢动作，"
-                        "不要把脸单独悬在腿部画面上。"
+                        f"成年人物腿部穿搭近中景：上身、肩颈可随姿势自然入画，头脸入镜时视线、表情和上肢动作与腿部姿势连贯；"
+                        f"视觉主体是腿部服装与姿势轮廓，不强求头到脚完整入镜，也不为拍全身拉远；{foot_visibility}。"
                         if leg_face_context
-                        else "成年人物腿部穿搭构图：上缘裁过肩部，头部、脸部和肩部不入镜，胸部可自然保留；"
-                        "不要通过镜面、玻璃倒影、手机屏幕或画中画补出脸部。"
+                        else f"成年人物腿部穿搭近中景：上身、肩颈和头脸可随姿势自然入画，视觉主体仍是腿部服装与姿势轮廓；{foot_visibility}。"
                     )
                     if feet_cropped
                     else f"成年人物单人全身构图：头部、上衣、下装和{foot_target}都完整入镜，以正常拍摄距离呈现整体穿搭。",

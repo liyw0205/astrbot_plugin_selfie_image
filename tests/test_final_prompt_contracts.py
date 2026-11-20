@@ -170,6 +170,78 @@ def test_activity_detection_distinguishes_actions_from_clothing_and_negations(te
     assert has_explicit_activity_request(text) is expected
 
 
+@pytest.mark.parametrize("text", [
+    "拍一张你办公的照片",
+    "拍张工作照",
+    "在办公室里工作时拍一张",
+    "坐在工位前敲键盘",
+    "在电脑前处理邮件",
+    "公司加班中",
+    "去写字楼参加会议",
+    "在家远程办公",
+    "居家远程工作",
+    "值班时拍一张工作照",
+    "在咖啡馆工作",
+    "working from home",
+    "a selfie at the office",
+    "working at a cafe",
+    "a work selfie at my desk",
+])
+def test_workplace_language_is_recognized_as_explicit_context(text):
+    from astrbot_plugin_selfie_image.features.persona import (
+        extra_overrides_context,
+        has_explicit_activity_request,
+        has_explicit_work_request,
+    )
+
+    assert has_explicit_work_request(text)
+    assert has_explicit_activity_request(text)
+    assert extra_overrides_context(text)
+
+
+@pytest.mark.parametrize("text", [
+    "不要在办公室拍照",
+    "不办公，改成卧室自拍",
+    "不在公司工作，只拍日常生活照",
+    "不想办公，改成卧室自拍",
+    "不要工作服，拍日常照",
+    "上班穿搭展示",
+    "办公用品参考图",
+    "do not work in an office",
+])
+def test_workplace_language_detection_respects_negation_and_clothing(text):
+    from astrbot_plugin_selfie_image.features.persona import (
+        extra_overrides_context,
+        has_explicit_work_request,
+    )
+
+    assert not has_explicit_work_request(text)
+    if "办公室" in text:
+        assert not extra_overrides_context(text)
+
+
+@pytest.mark.parametrize(("text", "expected_scene"), [
+    ("拍一张你办公的照片", "办公室工位"),
+    ("在家远程办公", "居家书桌工位"),
+    ("在咖啡馆工作", ""),
+    ("working at a cafe", ""),
+])
+def test_work_scene_hints_follow_explicit_location_not_daily_event(text, expected_scene):
+    action = build_selfie_look_action(
+        text,
+        preferred_scene="咖啡馆靠窗座位",
+        preferred_gesture="在咖啡馆里喝咖啡并查看邮件",
+    )
+
+    if expected_scene:
+        assert f"场景倾向：{expected_scene}" in action
+    else:
+        assert "场景倾向：" not in action
+    assert "咖啡馆靠窗座位" not in action
+    assert "在咖啡馆里喝咖啡并查看邮件" not in action
+    assert "【shot:activity】" in action
+
+
 @pytest.mark.parametrize("text,expected", [
     ("穿贴身运动衣", True), ("换成修身连体服", True), ("穿蓝色瑜伽服", True),
     ("穿过马路", False), ("背对镜头骑车", False), ("按今天的穿搭骑车", False),
@@ -615,8 +687,9 @@ def test_reference_leg_silhouettes_keep_their_camera_specific_crop_in_final_requ
     if camera == "selfie":
         assert "第一人称腰线至足部照片" not in prompt
         assert "从胸下或腰线附近裁" not in prompt
-        assert prompt.count("上缘裁过肩部") == 1
-        assert "胸部可随姿势自然保留" in prompt
+        assert prompt.count("允许上身、肩颈和头脸入画") == 1
+        assert "所选服装原有的露肩、锁骨和腰腹自然保留" in prompt
+        assert "头部、脸部和肩部不入镜" not in prompt
     assert "脚端四周留出少量余量" not in prompt
     assert "腰头至双脚完整" not in prompt
     if pose_id.startswith("edge_"):
@@ -667,7 +740,7 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
         assert f"【leg_support:{support_id}】" in prompt
         assert prompt.count("左右均指人物自身") == 1
         assert prompt.count(LEGFOCUS_ANATOMY_RULE) == 1
-        assert "实际可见部位为主" in prompt
+        assert "实际可见部位为画面主体" in prompt
         assert "可见脚与同侧小腿自然衔接" in prompt
         assert not re.search(r"腿部近照|取至小腿或脚端|脚端随(?:画幅|构图)|取至屈膝与部分小腿", prompt)
         framing_key = "mirror" if view.get("capture_mode") == "mirror" else view["camera"]
@@ -680,8 +753,9 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
         sentences = [part.strip() for part in re.split(r"[。\n]", prompt) if part.strip()]
         duplicates = [part for part, count in Counter(sentences).items() if count > 1]
         assert not duplicates, (pose_id, view_id, duplicates)
-        assert prompt.count("上缘裁过肩部") == 1
-        assert "胸部可随姿势自然保留" in prompt
+        assert prompt.count("允许上身、肩颈和头脸入画") == 1
+        assert "所选服装原有的露肩、锁骨和腰腹自然保留" in prompt
+        assert "头部、脸部和肩部不入镜" not in prompt
         assert "胸部留在画外" not in prompt
         assert "从胸下或腰线附近裁" not in prompt
         if pose_id == "side_seated_front_support":

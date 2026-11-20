@@ -13,6 +13,7 @@ from ..features.persona import (
     current_period,
     extra_overrides_outfit,
     has_explicit_activity_request,
+    has_explicit_work_request,
     group_style_lines,
 )
 from .group_prompt_pool import GROUP_COMPOSITIONS, GROUP_COMPOSITIONS_BY_ID
@@ -296,6 +297,61 @@ def _scene_supports_shot(scene: str, shot: str) -> bool:
     return True
 
 
+def _work_staging_hints(text: str) -> tuple[str, str]:
+    if not has_explicit_work_request(text):
+        return "", ""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    home_work = bool(
+        re.search(r"(?:在家|居家)(?:远程)?(?:办公|工作)|远程(?:办公|工作)|线上(?:办公|工作)|"
+                  r"workingfromhome|workingathome|workfromhome|remote(?:work|office)|athome", compact)
+    )
+    meeting = any(
+        token in compact
+        for token in ("开会", "会议", "参加会议", "参与会议", "meeting")
+    )
+    workplace = any(
+        token in compact
+        for token in ("办公室", "办公桌", "工位", "公司", "写字楼", "office", "workplace", "workstation")
+    )
+    other_scene = any(
+        token in compact
+        for token in (
+            "咖啡馆", "咖啡店", "书店", "图书馆", "卧室", "客厅", "厨房", "阳台", "海边", "公园", "街边",
+            "cafe", "coffeeshop", "bookstore", "library", "bedroom", "livingroom", "kitchen", "balcony", "beach", "park",
+        )
+    )
+
+    if home_work:
+        scene = "居家书桌工位"
+    elif meeting and (workplace or not other_scene):
+        scene = "办公室会议桌旁"
+    elif workplace or not other_scene:
+        scene = "办公室工位"
+    else:
+        scene = ""
+
+    if meeting:
+        action = "自然参与会议并查看手边的会议资料"
+    elif any(token in compact for token in ("写代码", "敲代码", "coding", "敲键盘", "typing")):
+        action = "专注敲键盘处理工作，视线自然落在电脑屏幕上"
+    elif any(token in compact for token in ("站着", "站立", "站在")):
+        action = (
+            "站在工位旁专注处理工作，视线自然落在手头资料上"
+            if scene else "站着专注处理工作，视线自然落在手头资料上"
+        )
+    elif any(token in compact for token in ("坐着", "坐在", "坐姿")):
+        action = (
+            "坐在工位前专注处理工作，视线自然落在电脑屏幕或手头资料上"
+            if scene else "坐着专注处理工作，视线自然落在电脑屏幕或手头资料上"
+        )
+    else:
+        action = (
+            "在工位前专注处理工作，视线自然落在电脑屏幕或手头资料上"
+            if scene else "专注处理工作，视线自然落在电脑屏幕或手头资料上"
+        )
+    return scene, action
+
+
 def _pick_staging_scene(scenes: List[str], orientation: str = "", shot: str = "") -> str:
     compatible = [scene for scene in scenes if not shot or _scene_supports_shot(scene, shot)]
     if orientation in {"back", "back_three_quarter"}:
@@ -548,6 +604,8 @@ def build_selfie_look_action(
 ) -> str:
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
     appearance_type = resolve_appearance_type(appearance_type, extra)
+    work_scene, work_action = _work_staging_hints(extra)
+    work_request = bool(work_action)
     if looks_like_crop_waist_request(extra):
         return build_crop_waist_selfie_action(
             extra,
@@ -601,13 +659,15 @@ def build_selfie_look_action(
     explicit_light = _has_explicit_staging_light(extra) or activity
     if shot in {"back_view", "back_three_quarter", "back_lookback"}:
         preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
-        scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot))
+        scene = work_scene or ("" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot)))
         requested_gesture = _requested_back_action(extra, extra if explicit_scene else scene)
         gesture = (
             "肩颈自然放松，双手留在画外，不遮挡后侧发型"
             if rear_hair_close_request
             else requested_gesture
             if requested_gesture
+            else work_action
+            if work_request
             else preferred_gesture
             if event_context_enabled and preferred_gesture and _daily_action_compatible(preferred_gesture, scene, shot)
             else _safe_daily_action(scene, shot, selfie=True)
@@ -615,7 +675,7 @@ def build_selfie_look_action(
         light = "" if explicit_light else random.choice(lights)
     else:
         preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
-        scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, orientation, shot))
+        scene = work_scene or ("" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, orientation, shot)))
         gesture_scene = scene or next(
             (item for item in scenes if _scene_supports_shot(item, shot)),
             "",
@@ -624,6 +684,8 @@ def build_selfie_look_action(
             gesture = "双手在胸前自然组成清晰完整的爱心，左右手各一只，双臂从肩部自然连接"
         elif heart_pose == "single":
             gesture = "一只手在胸前自然比心，另一只手放松垂在身体侧边，双臂从肩部自然连接"
+        elif work_request:
+            gesture = work_action
         else:
             gesture = (
                 preferred_gesture
@@ -644,6 +706,7 @@ def build_selfie_look_action(
     capture_finish = random.choice(capture_finishes) if not extra and not heart_pose else ""
     if (
         _has_explicit_action_override(extra)
+        and not work_request
         and not heart_pose
         and not rear_hair_close
         and not (rear_view and requested_gesture)
@@ -695,7 +758,10 @@ def build_third_person_look_action(
     preferred_action: str = "",
     preferred_tags: Iterable[str] = (),
 ) -> str:
+    extra_request = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
     scenes, lights = scene_light_provider("look_you")
+    work_scene, work_action = _work_staging_hints(extra_request)
+    work_request = bool(work_action)
     explicit_scene = _has_explicit_staging_scene(extra_request)
     shot_pool = [item for item in THIRD_PERSON_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
@@ -735,11 +801,13 @@ def build_third_person_look_action(
     explicit_light = _has_explicit_staging_light(extra_request) or activity
     if shot in {"back_view", "back_three_quarter", "back_lookback"}:
         preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
-        scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot))
+        scene = work_scene or ("" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot)))
         requested_action = _requested_back_action(extra_request, extra_request if explicit_scene else scene)
         action = (
             requested_action
             if requested_action
+            else work_action
+            if work_request
             else preferred_action
             if event_context_enabled and preferred_action and _daily_action_compatible(preferred_action, scene, shot)
             else _safe_daily_action(scene, shot, selfie=False)
@@ -747,13 +815,15 @@ def build_third_person_look_action(
         light = "" if explicit_light else random.choice(lights)
     else:
         preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
-        scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, orientation, shot))
+        scene = work_scene or ("" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, orientation, shot)))
         action_scene = scene or next(
             (item for item in scenes if _scene_supports_shot(item, shot)),
             "",
         )
         action = (
-            preferred_action
+            work_action
+            if work_request
+            else preferred_action
             if event_context_enabled and preferred_action and _daily_action_compatible(preferred_action, scene, shot)
             else _safe_daily_action(action_scene, shot, selfie=False)
         )
@@ -761,7 +831,7 @@ def build_third_person_look_action(
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
     rear_view = shot in {"back_view", "back_three_quarter", "back_lookback"}
     side_view = shot == "side_profile"
-    if _has_explicit_action_override(extra_request) and not (rear_view and requested_action):
+    if _has_explicit_action_override(extra_request) and not work_request and not (rear_view and requested_action):
         action = ""
     base = (
         "【他拍 / 看看你模式】展示 AI 当前样子的自然日常成片。"

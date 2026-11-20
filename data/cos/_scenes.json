@@ -83,6 +83,8 @@
         "wall_raised_elbow_lean",
         "seated_side_curve",
         "relaxed_recline",
+        "soft_surface_recline_support",
+        "soft_surface_recline_hem_hold",
         "over_shoulder",
         "back_to_camera"
       ],
@@ -131,6 +133,32 @@
         "warm_blush",
         "soft_feminine"
       ]
+    },
+    "gray_rug_recline": {
+      "title": "灰色地毯半躺角落",
+      "aliases": ["灰色地毯半躺", "灰色地毯角落", "灰色织物地毯", "灰色地毯", "浅灰地毯"],
+      "prompt": "简洁室内的一角铺有灰色粗织地毯，织物纹理清楚，地面留出足够宽且平整的承托区域；背景只保留少量干净墙面与家具边缘，不出现床品或额外人物。",
+      "style_prompt": "灰色织物与室内浅色细节保持自然生活质感，背景克制、不抢人物主体。",
+      "lighting_ids": ["room_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
+      "style_family": "domestic_snapshot",
+      "style_ids": ["natural_snapshot", "soft_creator_static", "retro_ccd_static"],
+      "pose_ids": ["soft_surface_recline_support", "soft_surface_recline_hem_hold"],
+      "tags": ["domestic", "indoor", "soft_ground"],
+      "makeup_ids": ["natural_clean", "warm_blush", "soft_feminine"]
+    },
+    "gray_bed_recline": {
+      "title": "深灰床面半躺",
+      "aliases": ["深灰床面半躺", "深灰床面", "深灰色床品", "灰色床面", "灰色床铺"],
+      "prompt": "整洁室内的宽阔深灰色床面，床品为柔软不透明织物并带有自然褶皱，提供连续平整的坐靠承托区域；背景保持简洁，不出现其他人物或拍摄设备。",
+      "style_prompt": "深灰床品与室内自然色彩保持区分，织物褶皱真实克制，不把画面处理成夜间熟睡场景。",
+      "lighting_ids": ["room_diffuse"],
+      "style_weights": {"natural_snapshot": 5, "soft_creator_static": 4},
+      "style_family": "domestic_snapshot",
+      "style_ids": ["natural_snapshot", "soft_creator_static", "cool_quiet_snapshot"],
+      "pose_ids": ["soft_surface_recline_support", "soft_surface_recline_hem_hold"],
+      "tags": ["domestic", "indoor", "soft_ground"],
+      "makeup_ids": ["natural_clean", "warm_blush", "soft_feminine"]
     },
     "bedroom_window": {
       "title": "明亮窗边",
@@ -287,6 +315,8 @@
         "seated_knee_up",
         "leaning_rest",
         "relaxed_recline",
+        "soft_surface_recline_support",
+        "soft_surface_recline_hem_hold",
         "over_shoulder",
         "back_to_camera"
       ],

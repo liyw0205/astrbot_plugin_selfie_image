@@ -1404,7 +1404,7 @@ def validate_leg_focus_catalog() -> List[str]:
     framing_contracts = {
         "selfie": ("本人看向自己双腿", ("第三人称画外相机",)),
         "third": ("第三人称画外相机", ("本人看向自己双腿", "镜面中同一人的穿搭倒影")),
-        "mirror": ("镜面中同一人的穿搭倒影", ("第三人称画外相机", "本人看向自己双腿")),
+        "mirror": ("镜中同一人的腿部穿搭与姿势是视觉主体", ("第三人称画外相机", "本人看向自己双腿")),
     }
     for camera, (required, forbidden) in framing_contracts.items():
         prompt = str(LEGFOCUS_CAMERA_FRAMINGS.get(camera) or "")

@@ -41,7 +41,8 @@ def test_bundled_fixture_is_seeded_and_reports_prompt_distribution():
     assert first_metadata == second_metadata
     assert first_metadata["prompt_profile"] == "bundled-assets"
     assert first_metadata["corpus"]["entries"] > 1000
-    assert first_metadata["distinct_prompt_payload_fraction"] == 1.0
+    # Sampling with replacement may collide as the bundled catalog changes.
+    assert first_metadata["distinct_prompt_payload_fraction"] >= 0.99
     assert first_metadata["controlled_marker_match_fraction"] == {
         "prefix": 0.1,
         "post_prefix": 0.1,

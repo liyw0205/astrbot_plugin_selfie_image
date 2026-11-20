@@ -340,6 +340,16 @@ COS_POSE_REQUEST_ALIASES = {
     pose_id: tuple(aliases) for pose_id, aliases in COS_JSON_POSE_REQUEST_ALIASES.items()
 }
 COS_SCENE_REQUEST_TERMS = COS_JSON_SCENE_REQUEST_TERMS
+COS_SOFT_SURFACE_RECLINE_POSE_IDS = frozenset({
+    "soft_surface_recline_support",
+    "soft_surface_recline_hem_hold",
+})
+COS_SOFT_SURFACE_RECLINE_BASE_POSE_ID = "soft_surface_recline_support"
+COS_SOFT_SURFACE_RECLINE_HEM_POSE_ID = "soft_surface_recline_hem_hold"
+COS_SOFT_SURFACE_RECLINE_HEM_LOOK_IDS = frozenset({
+    "original_skyblue_lace_cami",
+    "original_blue_anime_print_cami",
+})
 
 
 def _as_id_set(values: Any) -> set[str]:
@@ -454,6 +464,28 @@ def _requested_cos_scene(text: str) -> str:
     if re.search(rf"(?:{leads})(?!随机)[^，,。；;]{{0,12}}(?:{locations})", raw):
         return "user"
     return ""
+
+
+def _requests_recline_handheld_selfie(text: str) -> bool:
+    return any(
+        _has_positive_request(text, term)
+        for term in COS_JSON_CAMERA_REQUEST_TERMS["mirror_selfie"]
+    ) or any(
+        _has_positive_request(text, term)
+        for term in ("手持自拍", "手持手机自拍", "手机自拍", "拿手机自拍", "举手机自拍")
+    ) or requests_phone_face_cover(text)
+
+
+def _recline_scene_supports_pose(scene_id: str, pose_id: str) -> bool:
+    pose = COS_RANDOM_POSE_CLASSES.get(pose_id, {})
+    if scene_id == "user":
+        return not pose.get("scene_ids")
+    scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
+    return bool(
+        scene
+        and pose_id in _scene_pose_ids(scene)
+        and (not pose.get("scene_ids") or scene_id in pose["scene_ids"])
+    )
 
 
 def _strip_parsed_cos_request_terms(
@@ -1583,6 +1615,12 @@ def _pick_cos_collage_variation(
     requested_scene = _requested_cos_scene(extra_request)
     if requested_scene == "user":
         return None
+    requested_style_id = _requested_cos_style_id(extra_request, requested_scene=requested_scene)
+    if requested_style_id and not requested_scene:
+        allowed_scenes = {
+            scene_id for scene_id in allowed_scenes
+            if requested_style_id in (COS_RANDOM_SCENE_CLASSES[scene_id].get("style_ids") or ())
+        }
 
     if requested_scene:
         scene_ids = [requested_scene] if requested_scene in COS_RANDOM_SCENE_CLASSES else []
@@ -1804,6 +1842,33 @@ def pick_cos_variation(
     avoided_scenes = _as_id_set(avoid_scenes) | _as_id_set(avoid_scene)
     requested_pose = _requested_cos_pose(extra_request)
     requested_scene = _requested_cos_scene(extra_request)
+    selection_notice = ""
+    rejected_pose_ids: set[str] = set()
+    handheld_requested = (
+        (camera or parse_requested_cos_camera(extra_request)) == "selfie"
+        and _requests_recline_handheld_selfie(extra_request)
+    ) or requests_phone_face_cover(extra_request)
+    if handheld_requested:
+        allowed_poses.difference_update(COS_SOFT_SURFACE_RECLINE_POSE_IDS)
+    if (
+        requested_pose == COS_SOFT_SURFACE_RECLINE_HEM_POSE_ID
+        and cos_id not in COS_SOFT_SURFACE_RECLINE_HEM_LOOK_IDS
+    ):
+        requested_pose = COS_SOFT_SURFACE_RECLINE_BASE_POSE_ID
+        selection_notice = "当前套装未核验可活动衣摆，已改用基础半躺后撑动作。"
+    if requested_pose in COS_SOFT_SURFACE_RECLINE_POSE_IDS:
+        scene_conflict = bool(
+            requested_scene
+            and not _recline_scene_supports_pose(requested_scene, requested_pose)
+        )
+        if scene_conflict or handheld_requested:
+            rejected_pose_ids.update(COS_SOFT_SURFACE_RECLINE_POSE_IDS)
+            requested_pose = ""
+            selection_notice = (
+                "已保留指定场景，半躺后撑与该承托面不兼容，改用场景可用姿势。"
+                if scene_conflict
+                else "已保留持机要求，半躺动作的双手已被占用，改用可留出持机手的姿势。"
+            )
     requested_orientation = _requested_cos_orientation(extra_request)
     requested_style_id = _requested_cos_style_id(
         extra_request,
@@ -1814,9 +1879,18 @@ def pick_cos_variation(
             scene_id for scene_id in allowed_scenes
             if requested_style_id in (COS_RANDOM_SCENE_CLASSES.get(scene_id, {}).get("style_ids") or ())
         }
+        if (
+            requested_pose in COS_SOFT_SURFACE_RECLINE_POSE_IDS
+            and not any(_recline_scene_supports_pose(scene_id, requested_pose) for scene_id in allowed_scenes)
+        ):
+            rejected_pose_ids.update(COS_SOFT_SURFACE_RECLINE_POSE_IDS)
+            requested_pose = ""
+            selection_notice = "已保留影像风格对应的场景，改用该场景的兼容姿势。"
+    if rejected_pose_ids and requests_phone_face_cover(extra_request):
+        allowed_poses.intersection_update(COS_RANDOM_SELFIE_POSE_IDS)
     selected_combination: Optional[Dict[str, Any]] = None
 
-    if multi_view_collage and not requested_pose and camera == "third":
+    if multi_view_collage and not requested_pose and not rejected_pose_ids and camera == "third":
         collage = _pick_cos_collage_variation(
             cos_id,
             extra_request=extra_request,
@@ -1832,6 +1906,7 @@ def pick_cos_variation(
         and not multi_view_collage
         and not requested_scene
         and not requested_pose
+        and not rejected_pose_ids
         and not requested_orientation
         and random.random() < 0.6
     ):
@@ -1864,6 +1939,7 @@ def pick_cos_variation(
             compatible_poses = _poses_for_orientation(compatible_poses, requested_orientation)
             compatible_poses = _poses_for_camera(compatible_poses, camera)
         compatible_poses = [item for item in compatible_poses if item not in COS_EXPLICIT_ONLY_POSE_IDS]
+        compatible_poses = [item for item in compatible_poses if item not in rejected_pose_ids]
         if not requested_pose:
             safe_poses = [
                 item for item in compatible_poses
@@ -1904,6 +1980,7 @@ def pick_cos_variation(
             if scene_id in allowed_scenes
             for pose_id in _scene_pose_ids(scene)
             if pose_id in allowed_poses
+            and pose_id not in rejected_pose_ids
             and pose_id not in COS_EXPLICIT_ONLY_POSE_IDS
             and pose_id in _poses_for_camera((pose_id,), camera)
             and not _cos_unsafe_random_pair(cos_id, scene_id, pose_id, camera)
@@ -1941,7 +2018,9 @@ def pick_cos_variation(
             scene = COS_RANDOM_SCENE_CLASSES[scene_id]
             candidate_poses = [
                 pose_id for pose_id in _scene_pose_ids(scene)
-                if pose_id in allowed_poses and pose_id in _poses_for_camera((pose_id,), camera)
+                if pose_id in allowed_poses
+                and pose_id not in rejected_pose_ids
+                and pose_id in _poses_for_camera((pose_id,), camera)
             ]
             safe_candidate_poses = [
                 pose_id for pose_id in candidate_poses
@@ -1949,7 +2028,12 @@ def pick_cos_variation(
             ]
             if safe_candidate_poses:
                 candidate_poses = safe_candidate_poses
-            pose_id = _pick_cos_pose(candidate_poses or list(allowed_poses))
+            if candidate_poses:
+                pose_id = _pick_cos_pose(candidate_poses)
+            elif rejected_pose_ids or handheld_requested:
+                pose_id = "user"
+            else:
+                pose_id = _pick_cos_pose(list(allowed_poses))
 
     scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
     style_id, scene_style_prompt = _pick_scene_style(scene_id, extra_request)
@@ -2014,6 +2098,7 @@ def pick_cos_variation(
         "expression_id": expression_id,
         "makeup_id": makeup_id,
         "style_family": str((scene or {}).get("style_family") or ""),
+        "selection_notice": selection_notice,
     }
     if selected_combination:
         result.update(
@@ -2669,8 +2754,8 @@ def requests_phone_face_cover(text: str) -> bool:
         "遮脸", "遮住脸", "挡脸", "挡住脸", "遮面", "挡面",
         "遮住半张脸", "半张脸", "遮挡脸部", "遮住部分脸",
     )
-    return any(word in compact for word in phone_words) and any(
-        word in compact for word in face_cover_words
+    return any(_has_positive_request(compact, word) for word in phone_words) and any(
+        _has_positive_request(compact, word) for word in face_cover_words
     )
 
 
@@ -3077,6 +3162,20 @@ def build_cos_look_action(
         use_combinations=True,
     )
     collage_active = bool(variation.get("panel_prompt"))
+    recline_handheld_fallback = bool(
+        camera_kind == "selfie"
+        and _requests_recline_handheld_selfie(extra_request)
+        and variation.get("pose_id") not in COS_SOFT_SURFACE_RECLINE_POSE_IDS
+        and (
+            requested_pose in COS_SOFT_SURFACE_RECLINE_POSE_IDS
+            or (
+                variation.get("pose_id") == "user"
+                and COS_SOFT_SURFACE_RECLINE_POSE_IDS.intersection(
+                    COS_RANDOM_SCENE_CLASSES.get(variation.get("scene_id"), {}).get("pose_ids") or ()
+                )
+            )
+        )
+    )
     collage_fallback_reason = ""
     if explicit_collage and not collage_active:
         if requested_pose or has_explicit_framing:
@@ -3205,11 +3304,18 @@ def build_cos_look_action(
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或其它拍摄设备；"
             if phone_face_cover
-            else "采用固定或定时自拍，拍摄设备完全在画面外；双手严格保持已选姿势和道具，不添加手持手机，也不强行遮脸。"
-            if not handheld_allowed
             else (
-                ("按明确要求对镜取景，但" if mirror_selfie_requested else "采用固定或定时自拍，")
-                + "拍摄设备完全在画面外；主角双手保持已选动作，未明确要求遮脸时不要用物件遮脸挡衣服。"
+                "按明确要求的自拍方式，由主角原有的一只手自然持唯一一部普通手机，空闲手保持当前姿势；"
+                "持机手替代原有同侧手部动作或道具，不额外增加持机手；"
+                "手机和手指连接清楚，不遮挡服装主体；若为对镜自拍，镜面中只出现同一人物与手机，不重复出现镜外身体或第二人物；"
+                "人物保持两条手臂和两只手，不添加额外肢体或第二部手机。"
+                if recline_handheld_fallback
+                else "采用固定或定时自拍，拍摄设备完全在画面外；双手严格保持已选姿势和道具，不添加手持手机，也不强行遮脸。"
+                if not handheld_allowed
+                else (
+                    ("按明确要求对镜取景，但" if mirror_selfie_requested else "采用固定或定时自拍，")
+                    + "拍摄设备完全在画面外；主角双手保持已选动作，未明确要求遮脸时不要用物件遮脸挡衣服。"
+                )
             )
         )
         framing = (

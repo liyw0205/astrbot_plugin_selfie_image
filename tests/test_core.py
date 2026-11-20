@@ -793,7 +793,7 @@ class ConfigModelTests(unittest.TestCase):
         )
         zh = build_selfie_builtin_prompt(action, has_reference_image=True, appearance_type="real")
         self.assertEqual(zh.count(action), 1)
-        self.assertIn("头部、脸部和肩部不入镜", zh)
+        self.assertIn("允许上身、肩颈和头脸入画", zh)
         translated_action = "Adult indoor lower-body photo. Sit on the bed edge; preserve the referenced clothes."
         en = build_selfie_builtin_prompt(
             action, language="en", has_reference_image=True, appearance_type="real",
@@ -7630,7 +7630,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿 【wear:white】", "小助", "温柔", True, 0)
             self.assertIn("【看看腿 / 单一室内构图】", legs)
-            self.assertIn("头部、脸部和肩部不入镜", legs)
+            self.assertIn("允许上身、肩颈和头脸入画", legs)
             self.assertIn("保留自然体态与比例", legs)
             self.assertIn("【outfit:reference】", legs)
             self.assertEqual(legs.count("【legs:outfit】"), 1)
@@ -7754,7 +7754,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertFalse(intent.is_group_photo)
             prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
             self.assertIn("【看看腿 / 单一室内构图】", prompt)
-            self.assertIn("头部、脸部和肩部不入镜", prompt)
+            self.assertIn("允许上身、肩颈和头脸入画", prompt)
             self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("微胖软肉", prompt)
             self.assertNotIn("不要大象腿猪腿", prompt)
@@ -8078,7 +8078,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertEqual(text.count("保留原有上装、下装、连体结构和配饰"), 1)
         self.assertIn("袜装或鞋履仅按本次明确要求调整", text)
         self.assertEqual(text.count("腿部细节："), 1)
-        self.assertIn("头部、脸部和肩部不入镜", text)
+        self.assertIn("允许上身、肩颈和头脸入画", text)
         for forbidden in ("白色不透连裤袜，完整日常穿搭", "小皮鞋", "日常长裤搭配", "全身穿搭展示"):
             self.assertNotIn(forbidden, text)
 
@@ -8131,7 +8131,7 @@ class LegFocusTests(unittest.TestCase):
                 view_id = re.search(r"【leg_view:([a-z_]+)】", action).group(1)
                 self.assertIn(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"], action)
                 self.assertIn("【outfit:reference】", action)
-                self.assertIn("头部、脸部和肩部不入镜", action)
+                self.assertIn("允许上身、肩颈和头脸入画", action)
                 self.assertNotIn("本次随机腿部细节", action)
                 self.assertNotIn("户外小径漫步", action)
 
@@ -8790,7 +8790,7 @@ class LegFocusTests(unittest.TestCase):
             if not plugin_main.is_special_cos_look(item):
                 self.assertNotIn("手机", item["prompt"], item["id"])
         wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
-        self.assertTrue(any(marker in wrap for marker in ("对镜", "他拍", "第一视角")), wrap)
+        self.assertRegex(wrap, r"【cam:(?:selfie|third|first)】")
         self.assertNotIn("第一人称自拍或居家随手拍", wrap)
         self.assertEqual(plugin_main.parse_requested_cos_camera("他拍"), "third")
         self.assertEqual(plugin_main.parse_requested_cos_camera("第一视角"), "first")

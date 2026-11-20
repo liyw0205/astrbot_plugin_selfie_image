@@ -68,6 +68,17 @@ def test_style_only_request_selects_its_environment_even_with_combination_picker
     assert selected_id(action, "style") == style_id
 
 
+@pytest.mark.parametrize("scene_id", SCENE_STYLES)
+def test_collage_picker_preserves_style_scene_constraints(scene_id):
+    style_id = SCENE_STYLES[scene_id]
+    variation = cos.pick_cos_variation(
+        "roxy_cream", extra_request=COS_JSON_STYLES[style_id]["aliases"][0],
+        camera="third", multi_view_collage=True,
+    )
+    assert variation["scene_id"] == scene_id
+    assert variation["style_id"] == style_id
+
+
 @pytest.mark.parametrize("scene_id,pose_id", [
     (scene_id, pose_id)
     for scene_id in SCENE_STYLES

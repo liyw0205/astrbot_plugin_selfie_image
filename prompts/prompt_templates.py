@@ -614,16 +614,16 @@ def build_selfie_builtin_prompt(
         if feet_cropped and camera_kind == "selfie"
         else f"全身镜前自拍：人物从头部到{foot_target_zh}完整入镜，手机自然持握且不遮挡主要穿搭。"
         if camera_kind == "selfie"
-        else "第三人称腿部穿搭照片：摄影者完全在画面外，以普通焦段和适中距离取景。"
+        else "第三人称腿部穿搭近中景照片：摄影者完全在画面外，以普通焦段和自然透视取景。"
         if feet_cropped
         else f"第三人称全身日常照片：拍摄者完全在画面外，人物从头部到{foot_target_zh}完整入镜。"
     )
     if is_legs and feet_cropped:
         legs_line = camera_line_zh + (
-            "若头部进入画面，必须同时有与腿部姿势配套的视线、表情和上肢动作；不要把脸单独悬在腿部构图上。"
+            "上身和肩颈随姿势自然入画，头脸入镜时视线、表情和上肢动作与腿部姿势连贯；不为露脸改变取景。"
             if leg_face_context
-            else "画面上缘裁过肩部，头部、脸部和肩部不入镜，胸部可自然保留；不通过镜面或倒影补出脸。"
-        ) + f"成年人物腿部穿搭展示：从肩部裁切线上缘至{foot_target_zh}自然入镜，{foot_visibility_zh}，保持服装完整、比例自然。"
+            else "上身、肩颈和头脸可随姿势自然入画，不强制裁过肩部或通过镜面、倒影补出脸。"
+        ) + f"成年人物腿部穿搭近中景：视觉主体为腿部服装与姿势轮廓，不强求头到脚完整入镜，也不为拍全身拉远；{foot_visibility_zh}，所选服装完整、身体比例自然。"
     elif is_legs:
         legs_line = camera_line_zh + f"成年人物全身穿搭照片，头部、上衣、下装与{foot_target_zh}完整入镜，以正常拍摄距离自然呈现整体穿搭。"
     else:
@@ -657,7 +657,7 @@ def build_selfie_builtin_prompt(
         )
     )
     leg_crop_line = (
-        f"以腰线至{foot_target_zh}的自然构图展示{lower_outfit_display_zh}，肢体比例自然连续，避免家具遮挡足部。"
+        f"以腿部穿搭和姿势轮廓为视觉主体，近中景范围随视角与姿势自然呈现可见的{lower_outfit_display_zh}，不强制裁过肩部或拍全身；肢体比例自然连续，避免家具遮挡足部。"
         if is_legs and feet_cropped
         else ""
     )

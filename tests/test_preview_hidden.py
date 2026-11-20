@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from PIL import Image, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 from astrbot_plugin_selfie_image.core.models import AICatConfig
 from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMixin
@@ -87,12 +87,41 @@ def test_cover_remains_available_without_unicode_font_support(tmp_path):
     path = tmp_path / "generated.png"
     Image.new("RGB", (180, 300), "red").save(path)
     font = getattr(ImageFont, "load_default_imagefont", ImageFont.load_default)()
-    with patch("astrbot_plugin_selfie_image.generation.preview_hidden._fallback_font", return_value=font):
+    with patch("astrbot_plugin_selfie_image.generation.preview_hidden._font", return_value=font):
         encoded = build_hidden_preview(str(path))
     with Image.open(BytesIO(encoded)) as result:
         assert result.info["default_image"] is True
         result.seek(1)
         assert result.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+
+
+@pytest.mark.parametrize("font_size", [None, 48], ids=["bitmap-fallback", "missing-chinese-glyphs"])
+def test_missing_chinese_glyphs_use_readable_centered_english(tmp_path, monkeypatch, font_size):
+    path = tmp_path / "generated.png"
+    Image.new("RGB", (1024, 1536), "red").save(path)
+    font = (getattr(ImageFont, "load_default_imagefont", ImageFont.load_default)()
+            if font_size is None else ImageFont.load_default(size=font_size))
+    drawn = []
+    draw_text = ImageDraw.ImageDraw.text
+
+    def capture(draw, xy, text, *args, **kwargs):
+        drawn.append(text)
+        return draw_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
+    encoded = build_hidden_preview(str(path), font_loader=lambda *_args, **_kwargs: font)
+    with Image.open(BytesIO(encoded)) as result:
+        cover = result.convert("RGB")
+        bounds = ImageChops.difference(cover, Image.new("RGB", cover.size, cover.getpixel((0, 0)))).getbbox()
+        assert drawn == ["View original"]
+        assert bounds is not None
+        left, top, right, bottom = bounds
+        assert right - left > 150
+        assert bottom - top >= 40
+        assert abs((left + right) / 2 - cover.width / 2) <= 2
+        assert abs((top + bottom) / 2 - cover.height / 2) <= 2
+        result.seek(1)
+        assert result.convert("RGB").tobytes() == Image.new("RGB", result.size, "red").tobytes()
 
 
 @pytest.mark.parametrize("gif_loop,plays", [(None, 1), (0, 0), (2, 3)])
@@ -174,6 +203,13 @@ def test_hidden_preview_bytes_reach_delivery_and_redelivery(tmp_path, remember_f
     path = tmp_path / "generated.png"
     Image.new("RGB", (60, 100), "red").save(path)
     plugin = _delivery_plugin(True)
+    font_requests = []
+
+    def font_loader(size, *, bold=False):
+        font_requests.append((size, bold))
+        return ImageFont.load_default(size=size)
+
+    plugin._status_report_font = font_loader
     event = _Event()
     record = {"id": "record-1", "generated_image_paths": [str(path)]}
     deliveries = []
@@ -188,6 +224,7 @@ def test_hidden_preview_bytes_reach_delivery_and_redelivery(tmp_path, remember_f
     with patch("astrbot_plugin_selfie_image.features.reference_media.Image", SimpleNamespace(fromBytes=lambda data: data)):
         result = asyncio.run(plugin._send_generated_images(event, [str(path)], remember_failures=remember_failures))
     assert int(result) == 1
+    assert font_requests == [(10, True)]
     encoded = event.sent[0][0]
     with Image.open(BytesIO(encoded)) as opened:
         assert opened.info["default_image"] is True

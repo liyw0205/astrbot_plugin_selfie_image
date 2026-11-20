@@ -377,6 +377,7 @@ class ReferenceMediaMixin:
         dimension, pixels, frames = image_validation_limits(self.config)
         data = await asyncio.to_thread(
             build_hidden_preview, file_path,
+            font_loader=getattr(self, "_status_report_font", None),
             max_dimension=dimension, max_pixels=pixels, max_frames=frames,
         )
         if record is not None:

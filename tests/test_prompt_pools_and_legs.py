@@ -291,18 +291,23 @@ class PromptPoolJsonTests(unittest.TestCase):
                     self.assertEqual(action.count(LEGFOCUS_CAMERA_FRAMINGS[framing_key]), 1)
                     self.assertNotIn(LEGFOCUS_CAMERA_FRAMINGS[other], action)
                     self.assertEqual(action.count(view["prompt"]), 1)
+                    self.assertIn("允许上身、肩颈和头脸入画", action)
+                    self.assertIn("不额外添加衣物或物件遮挡", action)
+                    self.assertNotIn("头部、脸部和肩部不入镜", action)
                     if camera == "selfie":
                         if framing_key == "mirror":
-                            self.assertIn("镜面中同一人的穿搭倒影", action)
+                            self.assertIn("镜中同一人的腿部穿搭与姿势是视觉主体", action)
+                            self.assertIn("竖屏近中景", action)
+                            self.assertIn("不为补全头脚拉远镜头", action)
                             self.assertNotIn("本人看向自己双腿", action)
                         else:
                             self.assertIn("本人看向自己双腿", action)
-                        self.assertIn("上缘裁过肩部", action)
-                        self.assertIn("胸部可随姿势自然保留", action)
                         self.assertNotRegex(action, r"胸下(?:起裁|裁切|取景|开始)|三分之四侧向|椅背只")
                         self.assertNotIn("手持", action)
                     else:
                         self.assertIn("第三人称画外相机从人物外部拍摄", action)
+                        self.assertIn("视觉重点落在腿部穿搭", action)
+                        self.assertIn("不为拍全人物而退成远景", action)
                         self.assertNotIn("本人看向自己双腿", action)
 
     def test_leg_camera_contract_survives_persona_and_bilingual_templates(self) -> None:
@@ -885,8 +890,9 @@ class PromptPoolJsonTests(unittest.TestCase):
         )
 
         self.assertIn(action, prompt_zh)
-        self.assertIn("头部、脸部和肩部不入镜", prompt_zh)
-        self.assertIn("胸部可随姿势自然保留", prompt_zh)
+        self.assertIn("允许上身、肩颈和头脸入画", prompt_zh)
+        self.assertIn("所选服装原有的露肩、锁骨和腰腹自然保留", prompt_zh)
+        self.assertNotIn("头部、脸部和肩部不入镜", prompt_zh)
         self.assertNotIn("全身镜前自拍", prompt_zh)
         self.assertNotIn("日常长裤搭配", prompt_zh)
         self.assertIn("Close indoor lower-body outfit photo", prompt_en)
