@@ -1,6 +1,7 @@
 """Pose categories must constrain both selection and persisted action contracts."""
 
 import asyncio
+import random
 import re
 from collections import Counter
 from types import SimpleNamespace
@@ -90,6 +91,33 @@ def test_generic_kneeling_does_not_resolve_to_one_fixed_pose():
     assert parse_requested_leg_pose("跪姿") == ""
     assert parse_requested_leg_pose("跪坐") == ""
     assert parse_requested_leg_pose("并膝自然跪坐") == "kneeling_sit_back"
+    assert all("跪姿" not in pose["aliases"] for pose in LEGFOCUS_POSE_BY_ID.values())
+
+
+def test_pose_detail_is_randomized_inside_the_selected_pose_and_preserved_by_recovery():
+    from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_BY_ID
+
+    pose_id = "edge_knees_together_dangle"
+    expected = {item["id"] for item in LEGFOCUS_POSE_BY_ID[pose_id]["detail_variants"]}
+    selected = set()
+    with patch("astrbot_plugin_selfie_image.cos.leg_focus.random", random.Random(41)):
+        for _ in range(80):
+            action = build_leg_focus_action("第三人称 床沿", force_pose=pose_id)
+            selected.add(re.search(r"【pose_detail:([a-z_]+)】", action).group(1))
+    assert selected == expected
+
+    action = build_leg_focus_action(
+        "第三人称 床沿", force_pose=pose_id, force_pose_detail="one_toe_soft_flex",
+    )
+    assert has_leg_focus_contract(action)
+    assert ensure_leg_focus_action(action) == action
+    invalid = action.replace(
+        "【pose_detail:one_toe_soft_flex】", "【pose_detail:unknown_detail】",
+    )
+    assert not has_leg_focus_contract(invalid)
+    rebuilt = ensure_leg_focus_action(invalid)
+    assert has_leg_focus_contract(rebuilt)
+    assert "【pose_detail:unknown_detail】" not in rebuilt
 
 
 @pytest.mark.parametrize("pose_id", list(LEGFOCUS_POSE_BY_ID))
@@ -101,7 +129,7 @@ def test_exact_pose_name_still_selects_the_requested_pose(pose_id):
 
 def test_expansion_has_the_accepted_posture_distribution():
     assert Counter(pose["posture"] for pose in LEGFOCUS_POSE_BY_ID.values()) == {
-        "standing": 7, "seated": 14, "lying": 5, "side_lying": 3,
+        "standing": 7, "seated": 12, "lying": 5, "side_lying": 3,
         "prone": 3, "reclined": 4, "kneeling": 6,
     }
 
@@ -250,3 +278,33 @@ def test_batch_rebuild_keeps_category_without_locking_one_pose(tmp_path, query, 
     assert len(poses) == 3
     assert all(LEGFOCUS_POSE_BY_ID[pose_id]["posture"] in postures for pose_id in poses)
     assert len(set(poses)) > 1
+
+
+def test_batch_rebuild_uses_distinct_details_before_repeating_a_fixed_pose(tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(tmp_path)
+    plugin.config = SimpleNamespace(image_max_batch_count=10)
+    plugin._ensure_daily_selfie_schedule = AsyncMock()
+    plugin._persona_identity_reference = lambda **_kw: None
+    plugin._prompt_en_needed = lambda *_a, **_kw: False
+    plugin._run_image_generation = AsyncMock(return_value={"success": True})
+
+    async def run_shots(**kwargs):
+        return [await kwargs["run_one"](index) for index in range(kwargs["total"])]
+
+    plugin._run_counted_generation_shots = run_shots
+    query = "第三人称 床沿 并膝悬腿"
+    action = build_leg_focus_action(query, force_pose="edge_knees_together_dangle")
+    asyncio.run(plugin._run_selfie_batches_unlocked(
+        "", None, action, [], "command-look-legs", 2, "9:16", "1K", "失败",
+        rebuild_extra_request=query,
+    ))
+    details = [
+        re.search(r"【pose_detail:([a-z_]+)】", call.args[0]).group(1)
+        for call in plugin._run_image_generation.call_args_list
+    ]
+    assert len(details) == 2
+    assert len(set(details)) == 2

@@ -53,7 +53,8 @@ from astrbot_plugin_selfie_image.prompts.selfie_actions import (
 
 
 DIRECT_SELF_SEATED_POSES = {
-    "seated_thigh_gentle_pinch", "seated_self_knees_offset", "chair_self_parallel_knees_offset",
+    "seated_thigh_gentle_pinch", "seated_knees_offset", "seated_ankles_softly_crossed",
+    "chair_self_parallel_knees_offset",
 }
 
 
@@ -601,7 +602,7 @@ def test_random_leg_outfit_replaces_reference_clothing_but_reference_outfit_does
 
 @pytest.mark.parametrize("english", [False, True])
 @pytest.mark.parametrize("pose_id,outfit_id,scene_id,support_id", [
-    ("edge_single_foot_flex", "blouse_fitted_mini", "bed_edge", "raised_edge"),
+    ("edge_knees_together_dangle", "blouse_fitted_mini", "bed_edge", "raised_edge"),
     ("seated_knees_offset", "tweed_short_skirt_set", "gaming_chair", "seat_edge"),
 ])
 def test_leg_skirt_camera_and_coverage_survive_final_prompt_assembly(
@@ -615,6 +616,7 @@ def test_leg_skirt_camera_and_coverage_survive_final_prompt_assembly(
     assert outfit["capture_profile"] == "skirt"
     action = build_leg_focus_action(
         force_pose=pose_id, force_outfit=outfit_id, preferred_scene=scene_id,
+        force_view="third_oblique_low",
     )
     plugin = plugin_for_prompts(tmp_path, english)
     prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
@@ -660,7 +662,7 @@ def test_leg_legacy_front_skirt_retry_preserves_clothes_and_changes_camera(tmp_p
     plugin = plugin_for_prompts(tmp_path, english)
     prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, legacy, []))
     assert has_leg_focus_contract(prompt)
-    assert "【pose:edge_single_foot_flex】" in prompt
+    assert "【pose:edge_knees_together_dangle】" in prompt
     assert "【leg_scene:bed_edge】" in prompt
     assert "【outfit:blouse_fitted_mini】" in prompt
     assert "【leg_view:third_oblique_low】" in prompt
@@ -683,14 +685,13 @@ def test_incompatible_leg_requests_are_rejected_before_prompt_generation(query):
     ("edge_knees_together_dangle", "third_front_low"),
     ("edge_knees_together_dangle", "third_side_low"),
     ("edge_knees_together_ankles_apart", "third_front_low"),
-    ("edge_ankles_apart_both_flex", "third_oblique_low"),
     ("kneeling_sit_back", "self_forward_down"),
     ("kneeling_upright", "self_steep_down"),
     ("kneeling_upright", "third_oblique_low"),
     ("kneeling_sit_back", "self_mirror_front_down"),
     ("kneeling_upright", "self_mirror_left_down"),
     ("seated_thigh_gentle_pinch", "self_forward_down"),
-    ("seated_self_knees_offset", "self_right_down"),
+    ("seated_knees_offset", "self_right_down"),
     ("mirror_side_sit_shins_overlap", "self_mirror_left_gentle_down"),
     ("mirror_seated_knees_apart_feet_together", "self_mirror_front_gentle_down"),
     ("chair_self_parallel_knees_offset", "self_right_down"),
@@ -720,7 +721,7 @@ def test_reference_leg_silhouettes_keep_their_camera_specific_crop_in_final_requ
     assert prompt.count(LEGFOCUS_CAMERA_FRAMINGS[framing_key]) == 1
     assert sum(prompt.count(rule) for rule in LEGFOCUS_REFERENCE_RULES.values()) == 1
     assert "严格遵循以上已锁定的看看腿动作合同" not in prompt
-    if pose_id in {"edge_knees_together_dangle", "edge_knees_together_ankles_apart", "edge_ankles_apart_both_flex", "chair_thigh_cross_slant", "kneeling_upright"} and camera == "third":
+    if pose_id in {"edge_knees_together_dangle", "edge_knees_together_ankles_apart", "chair_thigh_cross_slant", "kneeling_upright"} and camera == "third":
         assert camera == "third"
         assert "第一人称" not in prompt
         assert "俯拍" not in prompt
@@ -767,7 +768,7 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
             assert view["elevation"] in {"down", "level"}
             assert "人物外部" not in prompt
         if support_id in {"seat_edge", "raised_edge", "chair_seat", "armrest", "backrest"}:
-            if pose_id in DIRECT_SELF_SEATED_POSES:
+            if pose_id in DIRECT_SELF_SEATED_POSES and view["camera"] == "selfie":
                 assert view["camera"] == "selfie", (pose_id, view_id)
                 assert view["elevation"] == "down", (pose_id, view_id)
             else:
@@ -820,8 +821,8 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
 
 
 @pytest.mark.parametrize("pose_id", [
-    "edge_ankles_apart_both_flex", "chair_thigh_cross_slant",
-    "edge_single_foot_flex", "edge_knees_together_slant", "seated_knees_offset",
+    "edge_knees_together_ankles_apart", "chair_thigh_cross_slant",
+    "edge_knees_together_dangle", "edge_knees_together_slant",
 ])
 def test_supported_third_person_poses_use_low_views_only(pose_id):
     pose = LEGFOCUS_POSE_BY_ID[pose_id]
@@ -838,9 +839,7 @@ def test_supported_third_person_poses_use_low_views_only(pose_id):
 
 
 @pytest.mark.parametrize("pose_id,scenes,supports,camera", [
-    ("edge_single_foot_flex", {"bed_edge", "bedroom_bench", "gaming_chair", "desk_chair", "indoor_cabinet"}, {"raised_edge"}, "third"),
     ("edge_knees_together_slant", {"bed_edge", "bedroom_bench", "gaming_chair", "desk_chair", "indoor_cabinet"}, {"raised_edge"}, "third"),
-    ("seated_knees_offset", {"bed_edge", "bedroom_bench", "sofa", "gaming_chair", "desk_chair", "living_room_chair", "indoor_desk", "indoor_cabinet"}, {"seat_edge", "chair_seat"}, "third"),
     ("reclined_same_side_knees", {"bed_surface", "sofa", "floor_window", "bedroom_chaise"}, {"reclined_surface"}, "selfie"),
     ("standing_weight_shift", {"indoor_desk", "indoor_cabinet"}, {"standing_edge"}, "third"),
 ])
@@ -955,21 +954,24 @@ def test_crossed_leg_final_requests_keep_each_foot_with_its_own_leg(tmp_path, po
             assert "双脚离地" not in prompt
 
 
-@pytest.mark.parametrize("query,pose_id", [
-    ("小腿倒V", "edge_knees_together_ankles_apart"),
-    ("倒V双脚轻勾", "edge_ankles_apart_both_flex"),
-    ("双脚悬垂", "edge_knees_together_dangle"),
+@pytest.mark.parametrize("query,pose_id,detail_id", [
+    ("小腿倒V", "edge_knees_together_ankles_apart", "toes_relaxed"),
+    ("倒V双脚轻勾", "edge_knees_together_ankles_apart", "both_toes_soft_flex"),
+    ("单脚轻勾", "edge_knees_together_dangle", "one_toe_soft_flex"),
+    ("双脚悬垂", "edge_knees_together_dangle", "toes_relaxed"),
 ])
 @pytest.mark.parametrize("external_reference", [False, True])
-def test_dangling_foot_variants_keep_their_pose_camera_and_clothing(tmp_path, query, pose_id, external_reference):
+def test_dangling_foot_variants_keep_their_pose_camera_and_clothing(tmp_path, query, pose_id, detail_id, external_reference):
     plugin = plugin_for_prompts(tmp_path)
-    view_id = "third_front_low" if pose_id in {"edge_knees_together_ankles_apart", "edge_knees_together_dangle"} else "third_oblique_low"
+    view_id = "third_front_low"
     action = build_leg_focus_action(
         f"第三人称 床沿 {query}", has_refs=external_reference, force_view=view_id,
+        force_pose_detail=detail_id,
     )
     refs = [ImageReference(data=b"external", mime_type="image/png")] if external_reference else []
     prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, refs))
     assert f"【pose:{pose_id}】" in prompt
+    assert f"【pose_detail:{detail_id}】" in prompt
     assert "【leg_support:raised_edge】" in prompt
     assert "【cam:third】" in prompt
     assert f"【leg_view:{view_id}】" in prompt
@@ -1097,7 +1099,7 @@ def test_leg_mirror_views_require_a_mirror_and_rebuild_obsolete_edge_only_record
 
 @pytest.mark.parametrize("pose_id,query", [
     ("seated_thigh_gentle_pinch", "室内桌边 并膝轻捏大腿"),
-    ("seated_self_knees_offset", "电竞椅 自视并膝错位"),
+    ("seated_knees_offset", "电竞椅 自视并膝错位"),
 ])
 def test_new_leg_self_view_seated_variants_keep_subjective_crop_and_compatible_seat(tmp_path, pose_id, query):
     plugin = plugin_for_prompts(tmp_path)
@@ -1105,13 +1107,17 @@ def test_new_leg_self_view_seated_variants_keep_subjective_crop_and_compatible_s
     prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
     assert f"【pose:{pose_id}】" in prompt
     assert "【cam:selfie】" in prompt
-    assert "【leg_support:chair_seat】" in prompt
+    assert re.search(r"【leg_support:(?:chair_seat|seat_edge)】", prompt)
     assert prompt.count(LEGFOCUS_CAMERA_FRAMINGS["selfie"]) == 1
     assert prompt.count(LEGFOCUS_POSE_BY_ID[pose_id]["prompt"]) == 1
     assert "第三人称" not in prompt
     assert "镜面自拍" not in prompt
-    with pytest.raises(LegFocusDataError, match="不兼容"):
-        build_leg_focus_action("第三人称", force_pose=pose_id)
+    if pose_id == "seated_knees_offset":
+        third_person = build_leg_focus_action("第三人称", force_pose=pose_id)
+        assert "【cam:third】" in third_person
+    else:
+        with pytest.raises(LegFocusDataError, match="不兼容"):
+            build_leg_focus_action("第三人称", force_pose=pose_id)
 
 
 def test_leg_high_kneeling_camera_stays_off_seats_and_skirts(tmp_path):
@@ -1147,7 +1153,7 @@ def test_elevated_seats_keep_external_low_views_and_explicit_self_view_variants(
         for _, support, view in compatible_leg_compositions(pose):
             if support not in seat_supports:
                 continue
-            if pose["id"] in DIRECT_SELF_SEATED_POSES:
+            if pose["id"] in DIRECT_SELF_SEATED_POSES and view["camera"] == "selfie":
                 assert support in {"seat_edge", "chair_seat"}
                 assert view["camera"] == "selfie"
                 assert view["elevation"] == "down"
@@ -1161,8 +1167,8 @@ def test_elevated_seats_keep_external_low_views_and_explicit_self_view_variants(
 
 
 @pytest.mark.parametrize("pose_id", [
-    "chair_thigh_cross_slant", "edge_ankles_apart_both_flex",
-    "edge_knees_together_dangle", "edge_knees_together_ankles_apart",
+    "chair_thigh_cross_slant", "edge_knees_together_ankles_apart",
+    "edge_knees_together_dangle",
 ])
 @pytest.mark.parametrize("query", ["第一人称", "俯拍", "顶拍"])
 def test_seat_edge_poses_reject_self_view_and_downward_camera_requests(pose_id, query):
@@ -1237,8 +1243,8 @@ def test_lying_and_kneeling_keep_support_projection_and_crop_in_final_prompt(
 
 
 @pytest.mark.parametrize("pose_id", [
-    "edge_knees_together_dangle", "edge_ankles_apart_both_flex",
-    "edge_knees_together_ankles_apart", "chair_thigh_cross_slant",
+    "edge_knees_together_dangle", "edge_knees_together_ankles_apart",
+    "chair_thigh_cross_slant",
 ])
 def test_folded_and_forward_legs_do_not_randomly_use_head_on_level_camera(pose_id):
     with pytest.raises(LegFocusDataError, match="不兼容"):
@@ -1289,7 +1295,7 @@ def test_suspended_knees_use_front_view_and_avoid_random_stirrup_socks():
         )
 
 
-@pytest.mark.parametrize("pose_id", ["edge_knees_together_dangle", "edge_ankles_apart_both_flex"])
+@pytest.mark.parametrize("pose_id", ["edge_knees_together_dangle", "edge_knees_together_ankles_apart"])
 def test_edge_leg_poses_keep_third_person_views_and_avoid_stirrup(pose_id):
     from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_HOSIERY_STYLES
 
@@ -1297,9 +1303,9 @@ def test_edge_leg_poses_keep_third_person_views_and_avoid_stirrup(pose_id):
     assert set(pose["camera_views"]) == {"third"}
     assert "stirrup" in pose["disallowed_hosiery_kinds"]
     action = build_leg_focus_action(
-        "黑丝", force_pose=pose_id, force_view="third_oblique_low",
+        "黑丝", force_pose=pose_id, force_view="third_front_low",
     )
-    assert "【leg_view:third_oblique_low】" in action
+    assert "【leg_view:third_front_low】" in action
     assert not any(
         style["kind"] == "stirrup" and style["prompt"] in action
         for style in LEGFOCUS_HOSIERY_STYLES

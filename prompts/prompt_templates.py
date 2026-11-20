@@ -292,7 +292,7 @@ def extract_user_prompt(action: str) -> str:
     match = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if match:
         value = match.group(1)
-        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
+        value = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|legs|legs_face|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
         value = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", value)
         # Older group actions placed their built-in medium after the supplement.
         if has_group_composition_contract(text):

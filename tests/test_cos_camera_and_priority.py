@@ -536,11 +536,13 @@ def test_studio_cos_prompt_uses_the_same_third_person_contract():
     assert "两条手臂和两只手" in action
 
 
-def test_raw_web_cos_prompt_can_be_wrapped_without_selfie_semantics():
+def test_raw_web_cos_prompt_preserves_explicit_mirror_scene():
     action = build_cos_third_person_prompt("严格换装为角色 COS：人物在全身镜前自拍")
     assert "【cam:third】" in action
     assert "自拍" not in action
-    assert "全身镜" not in action
+    assert "【cos_scene:bedroom_mirror】" in action
+    assert "镜中只出现同一人物" in action or "镜中仅呈现这名主体" in action
+    assert "不产生重影或重复镜像" in action
 
 
 def test_unspecified_cos_framing_picks_one_concrete_view():
@@ -588,6 +590,15 @@ def test_camera_adaptation_does_not_corrupt_existing_facing_phrases():
         assert "背面向镜头" not in adapted
         assert "面面向镜头头" not in adapted
         assert "镜头头" not in adapted
+
+
+def test_camera_adaptation_preserves_mirror_scene_staging_only_when_requested():
+    mirror_prompt = "镜面位于人物正前方，镜中只呈现同一人物的一处倒影。"
+
+    assert adapt_cos_outfit_for_camera(
+        mirror_prompt, "third", preserve_mirror=True,
+    ) == mirror_prompt
+    assert "镜前" not in adapt_cos_outfit_for_camera("人物在全身镜前自拍", "third")
 
 
 def test_first_person_random_pose_excludes_pure_side_profile_but_explicit_survives():

@@ -34,13 +34,13 @@ class PromptPoolJsonTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_BY_ID, build_leg_focus_action, compatible_leg_compositions
 
         self.assertEqual(set(LEGFOCUS_POSE_BY_ID), {
-            "chair_thigh_cross_slant", "edge_ankles_apart_both_flex",
+            "chair_thigh_cross_slant",
             "edge_knees_together_dangle", "edge_knees_together_ankles_apart",
             "kneeling_sit_back", "kneeling_upright", "chair_parallel_legs_slant",
             "bed_supine_knees_together", "chair_one_foot_on_stool",
-            "edge_single_foot_flex", "edge_knees_together_slant", "seated_knees_offset",
+            "edge_knees_together_slant", "seated_knees_offset", "seated_ankles_softly_crossed",
             "reclined_same_side_knees", "standing_weight_shift",
-            "seated_thigh_gentle_pinch", "seated_self_knees_offset", "kneeling_relaxed_apart",
+            "seated_thigh_gentle_pinch", "kneeling_relaxed_apart",
             "standing_ankles_cross", "standing_front_toe_touch", "standing_side_staggered",
             "standing_chair_single_leg_back", "standing_one_foot_on_stool", "standing_supported_tiptoe",
             "supine_parallel_extended", "supine_ankles_cross", "supine_one_knee_up", "supine_knees_offset",
@@ -215,7 +215,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             compatible_leg_compositions,
         )
 
-        self.assertEqual(len(LEGFOCUS_POSE_POOL), 42)
+        self.assertEqual(len(LEGFOCUS_POSE_POOL), 40)
         for pose in LEGFOCUS_POSE_POOL:
             self.assertNotIn("scene_ids", pose)
             self.assertIn("camera_views", pose)
@@ -556,7 +556,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.cos import leg_focus
 
         for pose_id in (
-            "seated_thigh_gentle_pinch", "seated_self_knees_offset", "kneeling_relaxed_apart",
+            "seated_thigh_gentle_pinch", "seated_knees_offset", "kneeling_relaxed_apart",
             "mirror_side_sit_shins_overlap", "mirror_seated_knees_apart_feet_together",
             "chair_self_parallel_knees_offset",
         ):
@@ -566,7 +566,8 @@ class PromptPoolJsonTests(unittest.TestCase):
 
             with self.subTest(pose=pose_id), patch.object(leg_focus, "_weighted_pose_choice", side_effect=select_requested):
                 action = leg_focus.build_leg_focus_action()
-                self.assertIn(f"【pose:{pose_id}】", action)
+                expected_id = "seated_knees_offset" if pose_id == "seated_knees_offset" else pose_id
+                self.assertIn(f"【pose:{expected_id}】", action)
                 self.assertTrue(leg_focus.has_leg_focus_contract(action))
 
     def test_leg_batch_keeps_requested_pose_scene_and_varies_the_concrete_camera(self) -> None:

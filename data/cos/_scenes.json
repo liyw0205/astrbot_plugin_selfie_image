@@ -120,7 +120,8 @@
       ],
       "pose_ids": [
         "sleeping_on_bed",
-        "relaxed_recline"
+        "relaxed_recline",
+        "bedside_side_recline"
       ],
       "tags": [
         "domestic",
@@ -133,6 +134,37 @@
         "warm_blush",
         "soft_feminine"
       ]
+    },
+    "bedroom_mirror": {
+      "title": "卧室正面落地镜",
+      "aliases": [
+        "镜前卧室",
+        "卧室镜前",
+        "镜前",
+        "全身镜前",
+        "落地镜前",
+        "对镜自拍",
+        "镜前自拍",
+        "对着镜子自拍",
+        "镜子自拍",
+        "镜中自拍",
+        "对着镜子拍照",
+        "对着镜子拍摄",
+        "对镜拍照",
+        "对镜拍摄",
+        "镜前拍照",
+        "镜前拍摄",
+        "镜子前拍摄"
+      ],
+      "prompt": "安静整洁的卧室试衣角，唯一一面窄边全身镜正对人物并位于人物正前方，镜面中心与站位和视线纵向对齐，不放在人物旁侧；床沿与一盏暖色床头灯退到画面侧后方，只保留少量背景。镜中仅呈现这名主体与现实姿态、服装、视线和光线一致的一处正常倒影；倒影是同一人，不是第二人物，不产生重影或重复镜像。非明确要求持机拍摄时不自动出现手机或拍摄设备。",
+      "style_prompt": "床头暖灯和简洁镜框形成安静的居家层次，镜面反射保持清楚但不压过人物与服装主体。",
+      "lighting_ids": ["bedside_night"],
+      "style_weights": {"natural_snapshot": 5, "warm_daily_snapshot": 3, "retro_ccd_static": 2},
+      "style_family": "domestic_snapshot",
+      "style_ids": ["natural_snapshot", "warm_daily_snapshot", "retro_ccd_static", "soft_creator_static"],
+      "pose_ids": ["mirror_front_stand"],
+      "tags": ["domestic", "indoor", "mirror", "night"],
+      "makeup_ids": ["natural_clean", "warm_blush", "soft_feminine"]
     },
     "gray_rug_recline": {
       "title": "灰色地毯半躺角落",
@@ -156,7 +188,7 @@
       "style_weights": {"natural_snapshot": 5, "soft_creator_static": 4},
       "style_family": "domestic_snapshot",
       "style_ids": ["natural_snapshot", "soft_creator_static", "cool_quiet_snapshot"],
-      "pose_ids": ["soft_surface_recline_support", "soft_surface_recline_hem_hold"],
+      "pose_ids": ["soft_surface_recline_support", "soft_surface_recline_hem_hold", "bedside_side_recline"],
       "tags": ["domestic", "indoor", "soft_ground"],
       "makeup_ids": ["natural_clean", "warm_blush", "soft_feminine"]
     },

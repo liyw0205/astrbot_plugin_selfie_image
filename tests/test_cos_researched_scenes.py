@@ -106,6 +106,58 @@ def test_each_researched_pose_and_crop_keeps_one_light_and_the_original_costume(
         assert final.count(COS_JSON_STYLES[style_id]["prompt"]) == 1
 
 
+@pytest.mark.parametrize("scene_id,pose_id,framing_id", [
+    ("bedroom_sleep", "bedside_side_recline", "bed_side_medium"),
+    ("gray_bed_recline", "bedside_side_recline", "bed_side_medium"),
+    ("bedroom_mirror", "mirror_front_stand", "mirror_front_medium"),
+])
+def test_added_subtle_pose_paths_resolve_scene_pose_and_framing(tmp_path, scene_id, pose_id, framing_id):
+    scene = COS_JSON_SCENES[scene_id]
+    pose = COS_JSON_POSES[pose_id]
+    request = f"{scene['aliases'][0]} {cos.COS_POSE_REQUEST_ALIASES[pose_id][0]}"
+    action = cos.build_cos_look_action(
+        request, force_id="ninghongye_clear_eye", camera="third", has_refs=True,
+    )
+    final = PersonaManager(str(tmp_path)).build_selfie_prompt(
+        action, bot_name="", personality="", has_reference_image=True,
+        has_external_reference=False,
+    )
+
+    assert_compatible_selection(final, scene_id)
+    assert selected_id(final, "pose") == pose_id
+    assert selected_id(final, "framing") == framing_id
+    assert pose["prompt"] in final
+    assert scene["prompt"] in final
+    assert "保留当前 COS 服装结构与覆盖" in pose["prompt"] or pose_id == "mirror_front_stand"
+
+
+@pytest.mark.parametrize("phrase", [
+    "对镜自拍 镜前侧身整理发丝",
+    "对着镜子拍照，镜前整理发丝",
+])
+def test_explicit_mirror_selfie_uses_front_mirror_scene_and_single_reflection(phrase):
+    action = cos.build_cos_look_action(
+        phrase,
+        force_id="ninghongye_clear_eye",
+        has_refs=True,
+    )
+
+    assert "【自拍 / 看看COS模式】" in action
+    assert selected_id(action, "scene") == "bedroom_mirror"
+    assert selected_id(action, "pose") == "mirror_front_stand"
+    assert selected_id(action, "framing") == "mirror_front_medium"
+    assert "镜面中心与站位和视线纵向对齐" in action
+    assert "姿势、服装、比例和受光方向与本体一致" in action
+    assert "第二人物、重影、额外肢体" in action
+
+
+def test_bed_side_recline_is_not_compatible_with_a_floor_only_scene():
+    assert "bedside_side_recline" not in COS_JSON_SCENES["gray_rug_recline"]["pose_ids"]
+    assert set(COS_JSON_POSES["bedside_side_recline"]["scene_ids"]) == {
+        "bedroom_sleep", "gray_bed_recline",
+    }
+
+
 @pytest.mark.parametrize("scene_id", SCENE_STYLES)
 def test_small_scene_pose_pools_fall_back_from_collage_without_other_environments(scene_id):
     action = cos.build_cos_look_action(

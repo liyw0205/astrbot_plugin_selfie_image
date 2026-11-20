@@ -442,13 +442,17 @@ def _requested_cos_orientation(text: str) -> str:
 def _requested_cos_scene(text: str) -> str:
     raw = str(text or "")
     matches = [
-        (len(alias), scene_id)
+        (len(alias), scene_id, alias)
         for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
         for alias in scene["aliases"]
         if _has_positive_request(raw, alias)
     ]
     if matches:
-        return max(matches)[1]
+        # A mirror-selfie phrase selects the capture mode and may imply a
+        # mirror scene, but it should not override an explicitly named room.
+        mirror_capture_terms = set(COS_JSON_CAMERA_REQUEST_TERMS["mirror_selfie"])
+        scene_matches = [match for match in matches if match[2] not in mirror_capture_terms]
+        return max(scene_matches or matches)[1]
     if any(_has_positive_request(raw, term) for term in COS_SCENE_REQUEST_TERMS):
         return "user"
     syntax = COS_JSON_SCENE_REQUEST_SYNTAX_TERMS
@@ -1667,7 +1671,10 @@ def _pick_cos_collage_variation(
             ]
             if frames:
                 compatible[pose_id] = frames
-        if len(compatible) >= 3:
+        if (
+            len(compatible) >= 3
+            and sum(len(frames) for frames in compatible.values()) >= COS_MULTI_VIEW_COLLAGE_PANEL_COUNT
+        ):
             scene_pose_frames[scene_id] = compatible
 
     if not scene_pose_frames:
@@ -1948,7 +1955,12 @@ def pick_cos_variation(
             if safe_poses:
                 compatible_poses = safe_poses
         available_poses = [item for item in compatible_poses if item not in avoided_poses]
-        pose_id = _pick_cos_pose(available_poses or compatible_poses) if compatible_poses else "user"
+        if available_poses:
+            pose_id = _pick_cos_pose(available_poses)
+        elif COS_SOFT_SURFACE_RECLINE_BASE_POSE_ID in compatible_poses:
+            pose_id = COS_SOFT_SURFACE_RECLINE_BASE_POSE_ID
+        else:
+            pose_id = _pick_cos_pose(compatible_poses) if compatible_poses else "user"
     elif requested_pose:
         pose_id = requested_pose
         compatible_scenes = [
@@ -2784,20 +2796,26 @@ def pick_cos_camera(
     return random.choice(available or choices or ("third",))
 
 
-def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
+def adapt_cos_outfit_for_camera(
+    outfit: str,
+    camera: str,
+    *,
+    preserve_mirror: bool = False,
+) -> str:
     text = str(outfit or "")
     if camera not in {"first", "third"}:
         return text
     capture_phrase = "由摄影师拍摄" if camera == "third" else "由主观镜头记录"
-    replacements = (
-        ("对镜坐在木地板地毯上", "坐在木地板地毯上"),
-        ("室内柔光对镜全身", "室内柔光半身"),
-        ("室内素墙对镜全身", "室内素墙半身"),
-        ("室内黑底柔光，单人侧身对镜", "室内黑底柔光，单人侧身半身"),
-        ("对镜全身", "对镜半身"),
-    )
-    for old, new in replacements:
-        text = text.replace(old, new)
+    if not preserve_mirror:
+        replacements = (
+            ("对镜坐在木地板地毯上", "坐在木地板地毯上"),
+            ("室内柔光对镜全身", "室内柔光半身"),
+            ("室内素墙对镜全身", "室内素墙半身"),
+            ("室内黑底柔光，单人侧身对镜", "室内黑底柔光，单人侧身半身"),
+            ("对镜全身", "对镜半身"),
+        )
+        for old, new in replacements:
+            text = text.replace(old, new)
     # Built-in looks predate the camera marker and some still contain
     # "自拍/镜前" wording.  Strip those capture semantics before the action
     # reaches the camera prompt builder; otherwise the two prompt families
@@ -2812,11 +2830,12 @@ def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
     text = text.replace("自拍成片", "摄影成片")
     text = text.replace("自拍照片", "摄影照片")
     text = text.replace("自拍", "摄影")
-    text = text.replace("镜子前", "室内环境")
-    text = text.replace("全身镜前", "室内环境")
-    text = text.replace("全身镜", "室内背景")
-    text = text.replace("镜子", "室内背景")
-    text = text.replace("镜前", "室内环境")
+    if not preserve_mirror:
+        text = text.replace("镜子前", "室内环境")
+        text = text.replace("全身镜前", "室内环境")
+        text = text.replace("全身镜", "室内背景")
+        text = text.replace("镜子", "室内背景")
+        text = text.replace("镜前", "室内环境")
     # Preserve facing directions: matching inside 面对 or 背对 corrupts the
     # subject's orientation instead of removing mirror-capture wording.
     text = re.sub(r"(?<![面背])对镜头", "面向镜头", text)
@@ -3351,7 +3370,11 @@ def build_cos_look_action(
         )
     )
     if variation["prompt"]:
-        base += adapt_cos_outfit_for_camera(variation["prompt"], camera_kind)
+        base += adapt_cos_outfit_for_camera(
+            variation["prompt"],
+            camera_kind,
+            preserve_mirror=variation.get("scene_id") == "bedroom_mirror",
+        )
     if variation.get("panel_prompt"):
         base += variation["panel_prompt"]
     if has_refs:

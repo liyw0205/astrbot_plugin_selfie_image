@@ -24,6 +24,8 @@
     "reach_light": ["伸手触景", "伸手触碰", "触碰身旁", "伸手", "抬手"],
     "over_shoulder": ["背身回眸", "侧身回看", "转身回看", "回头望", "回头看镜头", "从肩上回眸", "回眸", "背面侧身", "背身侧身", "背身侧面", "背面侧颜", "背身侧颜", "背面发型近景", "背侧发型近景", "背后发型特写", "斜后方发型近景", "侧后方发型特写"],
     "relaxed_recline": ["沙发斜倚", "倚坐在沙发", "靠坐在沙发", "侧身倚靠"],
+    "bedside_side_recline": ["床面侧卧轻靠", "床上侧卧抬眼", "枕边侧卧", "床面侧卧"],
+    "mirror_front_stand": ["镜前侧身整理发丝", "镜前整理发丝", "对镜整理头发", "镜前侧身回望", "镜前看向倒影", "镜前轻撩发"],
     "quiet_low_gaze": ["安静低眸", "低眸", "闭眼低眸", "低头闭眼"],
     "hands_gathered_at_sternum": ["胸前拢衣", "双手拢衣", "双手收拢衣襟", "胸前收拢衣襟"],
     "window_back_raised_arms": ["窗边背影抬臂", "背对窗户抬臂", "背窗抬臂", "窗边背影抬手"],
@@ -1124,6 +1126,31 @@
       "random_camera_ids": [
         "third"
       ]
+    },
+    "bedside_side_recline": {
+      "title": "床面侧卧轻靠",
+      "scene_ids": ["bedroom_sleep", "gray_bed_recline"],
+      "contact_shadow_id": "recline",
+      "prompt": "人物侧卧在当前场景已有的床面上，身体轴线自然形成斜线；近侧前臂轻撑床面以抬起肩胸，另一只手放松停在大腿外侧或床面，手指与手臂连接清楚。双膝自然微弯并轻轻错开，髋部、肩线和头颈方向连贯，腿部与床面的承托关系明确；视线可自然投向镜头附近，不为露脸扭颈。保持静态、稳定的侧卧支撑，不完全趴卧、不极端扭腰，保留当前 COS 服装结构与覆盖，不虚构场景中不存在的床品。",
+      "orientation": "side",
+      "pose_family": "recline_support",
+      "random_weight": 1,
+      "face_visibility": "optional",
+      "framing_ids": ["bed_side_medium"],
+      "expression_ids": ["sultry", "flirtatious", "calm"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "mirror_front_stand": {
+      "title": "镜前侧身整理发丝",
+      "scene_ids": ["bedroom_mirror"],
+      "prompt": "人物站在场景已有的镜面前，身体朝向镜子并以三分之四侧身呈现；重心自然落在一条腿上，另一腿放松错前，肩胯轻微错开。一只手抬至耳侧轻整理发丝，另一只手自然停在腰侧，不额外触碰镜面或持物；头部顺着肩线面向自己的倒影，视线落在镜中本人，不回头寻找镜头或扭颈。保持静态轻松的站姿，保留当前 COS 服装结构与覆盖。",
+      "orientation": "side",
+      "pose_family": "mirror_interaction",
+      "random_weight": 1,
+      "framing_ids": ["mirror_front_medium"],
+      "expression_ids": ["sultry", "flirtatious", "calm"],
+      "camera_ids": ["third", "selfie"],
+      "random_camera_ids": ["third", "selfie"]
     },
     "soft_surface_recline_support": {
       "title": "软面半躺后撑",

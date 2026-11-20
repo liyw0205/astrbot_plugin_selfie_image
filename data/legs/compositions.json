@@ -32,7 +32,7 @@
       "id": "edge_knees_together_dangle",
       "title": "座沿并膝悬腿",
       "posture": "seated",
-      "legacy_ids": [],
+      "legacy_ids": ["edge_single_foot_flex"],
       "aliases": [
         "并膝悬腿",
         "并腿悬垂",
@@ -43,10 +43,26 @@
         "双脚悬空",
         "椅上并膝垂腿",
         "椅上并腿垂腿",
-        "并膝垂腿"
+        "并膝垂腿",
+        "单脚轻勾",
+        "一脚轻勾一脚下垂",
+        "座沿单脚勾起",
+        "座沿单脚轻勾"
       ],
       "weight": 2,
-      "prompt": "坐稳较高座沿，双膝轻轻靠近，小腿松弛悬下，双脚离地。两侧脚踝略有前后差，脚尖自然下垂，双手轻扶座面，保持轻松坐姿。",
+      "prompt": "坐稳较高座沿，双膝轻轻靠近，小腿松弛悬下，双脚离地。两侧脚踝略有前后差，脚尖与脚踝自然放松，双手轻扶座面，保持轻松坐姿。",
+      "detail_variants": [
+        {
+          "id": "toes_relaxed",
+          "weight": 2,
+          "prompt": "双脚脚尖自然松弛下垂，左右脚踝保留轻微前后错位。"
+        },
+        {
+          "id": "one_toe_soft_flex",
+          "weight": 1,
+          "prompt": "右脚尖以舒适幅度轻轻向小腿方向勾起，左脚自然下垂，双脚仍离地且脚踝不交缠。"
+        }
+      ],
       "crop_prompts": {
         "third": "座沿承托大腿与双脚离地的关系清楚，两条小腿保留松弛垂落的完整轮廓。"
       },
@@ -68,16 +84,31 @@
       "id": "edge_knees_together_ankles_apart",
       "title": "座沿并膝分踝悬腿",
       "posture": "seated",
-      "legacy_ids": [],
+      "legacy_ids": ["edge_ankles_apart_both_flex"],
       "aliases": [
         "并膝分踝",
         "小腿倒V",
         "倒V",
         "倒V悬腿",
-        "倒V坐姿"
+        "倒V坐姿",
+        "倒V双脚轻勾",
+        "分踝双脚勾起",
+        "座沿分踝双脚轻勾"
       ],
       "weight": 2,
-      "prompt": "坐稳较高座沿，大腿自然靠拢，双膝相邻，小腿分别向外下方舒展，脚踝间距略大于膝间距，形成清楚的上窄下宽倒V轮廓。双脚离地后自然向下松垂、不相交不相叠，双手轻扶身侧座面；左右小腿分别顺接同侧脚，动作幅度克制。",
+      "prompt": "坐稳较高座沿，大腿自然靠拢，双膝相邻，小腿分别向外下方舒展，脚踝间距略大于膝间距，形成清楚的上窄下宽倒V轮廓。双脚离地后自然放松、不相交不相叠，双手轻扶身侧座面；左右小腿分别顺接同侧脚，动作幅度克制。",
+      "detail_variants": [
+        {
+          "id": "toes_relaxed",
+          "weight": 2,
+          "prompt": "双脚自然松弛下垂，脚趾放松，倒V腿线保持柔和。"
+        },
+        {
+          "id": "both_toes_soft_flex",
+          "weight": 1,
+          "prompt": "双脚脚尖以舒适的小幅度轻轻向小腿方向勾起，脚趾仍放松，膝踝方向自然。"
+        }
+      ],
       "crop_prompts": {
         "third": "从正前方看清双膝相邻、两小腿分向两侧的倒V轮廓；座沿承托关系明确，双脚自然下垂且彼此分开，不交叉、不扭转。"
       },
@@ -94,40 +125,12 @@
       }
     },
     {
-      "id": "edge_ankles_apart_both_flex",
-      "title": "座沿分踝双脚轻勾",
-      "posture": "seated",
-      "legacy_ids": [],
-      "aliases": [
-        "倒V双脚轻勾",
-        "分踝双脚勾起"
-      ],
-      "weight": 1,
-      "prompt": "坐稳较高座沿，大腿与双膝自然靠近，小腿从膝部向两侧小幅分开，脚踝间距略大于膝间距。双脚离地，两侧脚尖以舒适幅度向小腿方向轻勾，脚趾放松，双手轻扶身侧座面。",
-      "crop_prompts": {
-        "third": "保留上窄下宽的倒V轮廓与两脚轻勾的弧线，两脚保持自然大小。"
-      },
-      "support_types": [
-        "raised_edge"
-      ],
-      "disallowed_hosiery_kinds": [
-        "stirrup"
-      ],
-      "camera_views": {
-        "third": [
-          "third_front_low",
-          "third_oblique_low"
-        ]
-      }
-    },
-    {
       "id": "kneeling_sit_back",
       "title": "并膝自然跪坐",
       "posture": "kneeling",
       "legacy_ids": [],
       "aliases": [
         "跪坐",
-        "跪姿",
         "双膝跪坐",
         "坐在脚跟上"
       ],
@@ -168,7 +171,6 @@
         "并膝直身跪姿",
         "镜前并膝跪姿",
         "镜前直身跪姿",
-        "跪姿",
         "跪立"
       ],
       "weight": 2,
@@ -282,34 +284,6 @@
       }
     },
     {
-      "id": "edge_single_foot_flex",
-      "title": "座沿单脚轻勾",
-      "posture": "seated",
-      "legacy_ids": [],
-      "aliases": [
-        "单脚轻勾",
-        "一脚轻勾一脚下垂",
-        "座沿单脚勾起"
-      ],
-      "weight": 1,
-      "prompt": "坐稳较高座沿，双膝自然靠近，两条小腿松弛悬下。右小腿比左侧稍向前，右脚尖舒适地轻勾，左脚放松下垂；双脚均离地，脚踝前后错开而不交缠。髋部由座面承托，双手轻放座面两侧，保持随意坐稳的状态。",
-      "crop_prompts": {
-        "third": "保留座沿、大腿至小腿的连贯轮廓和脚前空间，看清一脚轻勾、另一脚下垂的差异；不贴近脚掌取景。"
-      },
-      "support_types": [
-        "raised_edge"
-      ],
-      "disallowed_hosiery_kinds": [
-        "stirrup"
-      ],
-      "camera_views": {
-        "third": [
-          "third_front_low",
-          "third_oblique_low"
-        ]
-      }
-    },
-    {
       "id": "edge_knees_together_slant",
       "title": "座沿并膝斜垂",
       "posture": "seated",
@@ -341,53 +315,102 @@
       "id": "seated_knees_offset",
       "title": "坐姿双膝轻错位",
       "posture": "seated",
-      "legacy_ids": [],
+      "legacy_ids": ["seated_self_knees_offset"],
       "aliases": [
         "双膝轻错位",
         "坐姿错膝",
-        "双膝前后错位"
+        "双膝前后错位",
+        "自视并腿双膝轻错位",
+        "自视并膝错位",
+        "第一人称并膝错位",
+        "自视错膝坐姿",
+        "自拍双膝错位"
       ],
-      "weight": 1,
-      "prompt": "自然坐在座面靠前的位置，大腿轻靠近，右膝稍向前、左膝稍向后，形成轻微前后层次。右脚随右腿向前放置，左脚靠近座下落地，两只脚均有地面承托；小腿各自舒适弯曲，不交叠不缠绕。身体重心留在座面，双手松弛放在身侧。",
+      "weight": 3,
+      "prompt": "自然稳坐在座面靠前的位置，双大腿轻靠近，右膝稍向前、左膝稍向后，形成轻微前后层次。右脚随右腿略向前，左脚靠近座下落地，两脚均有地面承托；小腿各自舒适弯曲，不交叠不缠绕，髋部保持座面承托，上身放松。",
+      "detail_variants": [
+        {
+          "id": "feet_narrow",
+          "weight": 2,
+          "prompt": "双脚落点相距略小于髋宽，脚尖大致朝前，双膝仍保留轻微前后错位。"
+        },
+        {
+          "id": "feet_soft_angle",
+          "weight": 1,
+          "prompt": "前侧脚尖轻轻向外偏转，另一脚自然朝前，脚踝保持放松且不互相交叠。"
+        }
+      ],
       "crop_prompts": {
-        "third": "看清座面、双膝的轻微错位和前后脚落地关系，保留下半身完整动作轮廓；不把近侧膝部单独放大。"
+        "selfie": "从本人上身位置沿大腿向下取景，保留近端大腿至双膝的自然层次与少量座面；膝下部分按取景留在下缘画外，不强行从对面补拍小腿或脚。",
+        "third": "看清座面、双膝的轻微错位和前后脚落地关系，保留本姿势腿部轮廓；不把近侧膝部单独放大。"
       },
       "support_types": [
         "seat_edge",
         "chair_seat"
       ],
       "camera_views": {
+        "selfie": [
+          "self_forward_down",
+          "self_left_down",
+          "self_right_down"
+        ],
         "third": [
           "third_oblique_low"
         ]
       }
     },
     {
+      "id": "seated_ankles_softly_crossed",
+      "title": "坐姿脚踝轻叠",
+      "posture": "seated",
+      "legacy_ids": [],
+      "aliases": ["椅上脚踝轻叠", "坐姿交踝", "并膝轻叠脚踝"],
+      "weight": 1,
+      "prompt": "自然坐稳在座面靠前位置，双大腿轻靠近、双膝略有前后错位。一侧小腿顺势斜向前，近侧脚踝在另一侧脚踝前方轻轻交叠；双脚仍轻触同一平面地面，小腿沿各自膝踝连续，不扭转、不缠绕，髋部保持座面承托。",
+      "detail_variants": [
+        {
+          "id": "right_ankle_forward",
+          "weight": 1,
+          "prompt": "右脚踝位于左脚踝前方，交叠幅度很小，两脚仍自然落地。"
+        },
+        {
+          "id": "left_ankle_forward",
+          "weight": 1,
+          "prompt": "左脚踝位于右脚踝前方，交叠幅度很小，两脚仍自然落地。"
+        }
+      ],
+      "crop_prompts": {
+        "selfie": "从本人上身位置斜向下取景，保留大腿、双膝和脚踝轻叠的连续腿线，座面承托清楚；不贴近脚端或补拍背面。",
+        "third": "呈现双膝轻微错位、低位脚踝轻叠与双脚落地关系，保留座面和腿部轮廓，不夸张放大近侧脚。"
+      },
+      "support_types": ["seat_edge", "chair_seat"],
+      "camera_views": {
+        "selfie": ["self_left_down", "self_right_down"],
+        "third": ["third_oblique_low"]
+      }
+    },
+    {
       "id": "seated_thigh_gentle_pinch",
-      "title": "并膝坐姿轻捏大腿",
+      "title": "并膝坐姿轻触大腿外侧",
       "posture": "seated",
       "legacy_ids": [],
       "aliases": ["并膝轻捏大腿", "轻捏大腿", "轻掐大腿", "捏腿坐姿"],
       "weight": 2,
-      "prompt": "自然坐稳座面，双大腿轻轻靠近、双膝相邻，小腿松弛落向座前地面。本人一只手从腰侧自然落到同侧大腿中段，拇指与其余手指轻轻捏住一小处皮肤或隔着当前袜料轻压，形成轻微自然凹陷；不拉扯衣物，不把手伸入两腿之间，另一只手留在取景外。",
+      "prompt": "自然坐稳座面，双大腿轻轻靠近、双膝相邻，小腿松弛落向座前地面。本人一只手从腰侧自然落到同侧大腿外侧，另一只手留在取景外；不拉扯衣物，不把手伸入两腿之间。",
+      "detail_variants": [
+        {
+          "id": "fingertips_outer_thigh",
+          "weight": 2,
+          "prompt": "手指轻轻搭在当前袜料或衣料覆盖的大腿外侧，触碰幅度克制，不捏起皮肤或织物。"
+        },
+        {
+          "id": "palm_rest_outer_thigh",
+          "weight": 1,
+          "prompt": "手掌松弛地停在同侧大腿外缘，手指自然并拢，不压出明显凹陷。"
+        }
+      ],
       "crop_prompts": {
-        "selfie": "从本人上身位置向下取景，两条大腿、相邻双膝与轻捏处为主体，保留座面承托；膝下小腿与脚可自然留在下缘画外，不为拍全脚部拉远或改变动作。"
-      },
-      "support_types": ["chair_seat", "seat_edge"],
-      "camera_views": {
-        "selfie": ["self_forward_down", "self_left_down", "self_right_down"]
-      }
-    },
-    {
-      "id": "seated_self_knees_offset",
-      "title": "自视并腿双膝轻错位",
-      "posture": "seated",
-      "legacy_ids": [],
-      "aliases": ["自视并膝错位", "第一人称并膝错位", "自视错膝坐姿", "自拍双膝错位"],
-      "weight": 2,
-      "prompt": "自然靠坐稳固座面，双大腿轻轻靠近，右膝比左膝稍向前，两侧膝部有小幅前后和高低差。小腿顺势落向座前地面，两脚各自承重；双腿不交叉、不翘起叠腿，不把一只膝盖收至胸前。",
-      "crop_prompts": {
-        "selfie": "从本人上身位置沿大腿向下取景，保留近端大腿至双膝的自然层次与少量座面；膝下部分按取景留在下缘画外，不强行从对面补拍小腿或脚。"
+        "selfie": "从本人上身位置向下取景，两条大腿、相邻双膝与大腿外侧的轻柔手势为主体，保留座面承托；膝下小腿与脚可自然留在下缘画外，不为拍全脚部拉远或改变动作。"
       },
       "support_types": ["chair_seat", "seat_edge"],
       "camera_views": {
@@ -403,8 +426,24 @@
       "weight": 1,
       "prompt": "臀部坐稳宽软地毯，上身自然直立并略侧转，双腿舒适屈膝收向身前偏一侧。近侧小腿斜横在另一条小腿前上方，交叠处前后层次清楚；两侧脚踝错开，近侧脚底随角度部分朝向镜面，远侧腿脚由近侧小腿自然遮挡。重心留在臀部，不把双膝和小腿收成向身后折叠的跪坐，也不强扭脚踝展示两只脚底。",
       "hand_prompts": {
-        "mirror": "一手在上身附近持手机朝向镜面，另一手自然轻放身侧，双手不承担坐姿支撑，不遮挡腿部交叠处。"
+        "mirror": "一手在上身附近持手机朝向镜面，另一只手自然放松，不承担坐姿支撑，不遮挡腿部交叠处。"
       },
+      "detail_variants": [
+        {
+          "id": "fingertips_outer_thigh",
+          "weight": 2,
+          "cameras": ["selfie"],
+          "capture_modes": ["mirror"],
+          "prompt": "空闲手指尖轻搭近侧大腿外缘，不捏起或牵拉衣料，不进入两腿之间。"
+        },
+        {
+          "id": "hand_rest_by_hip",
+          "weight": 1,
+          "cameras": ["selfie"],
+          "capture_modes": ["mirror"],
+          "prompt": "空闲手自然停在同侧髋部旁的地毯上，手腕放松，不挡住小腿交叠处。"
+        }
+      ],
       "crop_prompts": {
         "selfie": "保留上身、腰胯、屈膝大腿与交叠小腿的连贯轮廓，近侧可见脚端与地毯接触处留在下缘。",
         "mirror": "镜中从肩下上身取至地毯上的可见脚端，屈膝大腿、近侧斜横小腿与远侧小腿的前后层次清楚；交叠处不裁断，远侧脚被挡住的部分保持遮挡。"
@@ -697,6 +736,22 @@
       "aliases": ["侧躺上腿前放", "侧卧上腿屈膝"],
       "weight": 1,
       "prompt": "身体侧卧在宽长软面上，下侧腿沿软面自然伸展，上侧腿舒适屈膝并移到身体前方，上侧膝部和小腿自然落在同一软面；两腿分别连到同侧髋部，不悬空拉伸、不翻转成俯卧。",
+      "detail_variants": [
+        {
+          "id": "outer_thigh_touch",
+          "weight": 2,
+          "cameras": ["third"],
+          "capture_modes": ["direct"],
+          "prompt": "近侧手指轻搭在上侧大腿外缘；另一侧前臂在身前同一软面轻撑上身，两手用途清楚，不进入两腿之间、不拉扯衣物。"
+        },
+        {
+          "id": "hand_rest_surface",
+          "weight": 1,
+          "cameras": ["third"],
+          "capture_modes": ["direct"],
+          "prompt": "一侧前臂在身前同一软面轻撑上身，另一只手自然停在髋部旁的软面上，不遮挡腿部轮廓。"
+        }
+      ],
       "crop_prompts": {"third": "保留下腿伸展与上腿前屈的不同线条，明确上侧膝部由软面承托，腿部交叠处有自然遮挡和接触阴影。"},
       "support_types": ["lying_surface"],
       "camera_views": {"third": ["third_oblique_level", "third_lying_side_level"]}

@@ -58,6 +58,19 @@
       "scene_ids": ["cool_washbasin", "stone_bathroom"],
       "random_camera_ids": ["third", "first", "selfie"]
     },
+    "mirror_front_medium": {
+      "title": "镜前侧后近中景",
+      "prompt": "相机位于人物斜后侧近距离平视拍摄，镜面在人物正前方并与其视线对齐，人物本体和镜中对应倒影同时自然入画；9:16竖幅近中景从头顶取至膝上，人物占据主要画幅，保留适量镜框以交代空间关系。倒影只呈现同一人物一处，姿势、服装、比例和受光方向与本体一致；不把镜子摆在人物画面侧边，不产生第二人物、重影、额外肢体或镜中设备，不用远景或夸张广角",
+      "scene_ids": ["bedroom_mirror"],
+      "camera_ids": ["third", "selfie"],
+      "random_camera_ids": ["third", "selfie"]
+    },
+    "bed_side_medium": {
+      "title": "床面侧卧近中景",
+      "prompt": "相机位于人物侧前方略高处，以克制的斜俯角拍摄竖幅近中景，从头顶取至膝上；完整交代侧卧的肩、腰、髋、弯膝轮廓和前臂撑床接触点，床面占画面下部作为真实承托。人物占据主要画幅，使用正常焦段保持自然比例，不用正上方顶视、远景或夸张广角",
+      "scene_ids": ["bedroom_sleep", "gray_bed_recline"],
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
     "car_window_close": {
       "title": "车内靠窗胸像近景",
       "prompt": "竖幅头肩至胸像近景，机位略高于眼睛，人物占主要画幅，头顶与扶发手部保留自然空间；一侧带到少量车窗，另一侧保留后排椅背，腿脚位于画外，不采用全身、远景或对镜构图，拍摄设备位于画外",

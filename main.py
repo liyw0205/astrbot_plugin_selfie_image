@@ -1421,6 +1421,7 @@ class SelfieImagePlugin(
         force_camera: str = "",
         force_view: str = "",
         avoid_combinations: Optional[set[Tuple[str, str]]] = None,
+        avoid_pose_details: Optional[set[Tuple[str, str]]] = None,
     ) -> str:
         return build_leg_focus_action(
             extra_request,
@@ -1431,6 +1432,7 @@ class SelfieImagePlugin(
             force_camera=force_camera,
             force_view=force_view,
             avoid_combinations=avoid_combinations,
+            avoid_pose_details=avoid_pose_details,
         )
 
     def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:

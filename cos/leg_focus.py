@@ -147,6 +147,29 @@ def _load_pool() -> Dict[str, Any]:
             or any(not isinstance(value, str) or not value.strip() for value in hand_prompts.values())
         )):
             raise LegFocusDataError(f"看看腿姿势手部动作与拍摄方式不匹配: {pose_id}/hand_prompts")
+        detail_variants = raw.get("detail_variants", [])
+        detail_ids: set[str] = set()
+        if not isinstance(detail_variants, list):
+            raise LegFocusDataError(f"看看腿姿势细节变体必须是数组: {pose_id}/detail_variants")
+        for variant in detail_variants:
+            if not isinstance(variant, Mapping):
+                raise LegFocusDataError(f"看看腿姿势细节变体必须是对象: {pose_id}/detail_variants")
+            detail_id = str(variant.get("id") or "").strip()
+            detail_cameras = variant.get("cameras", ["selfie", "third"])
+            detail_modes = variant.get("capture_modes", ["direct", "mirror"])
+            if (
+                not re.fullmatch(r"[a-z_]+", detail_id) or detail_id in detail_ids
+                or not str(variant.get("prompt") or "").strip()
+                or type(variant.get("weight")) is not int or variant["weight"] < 1
+                or not isinstance(detail_cameras, list) or not detail_cameras
+                or any(camera not in {"selfie", "third"} for camera in detail_cameras)
+                or len(set(detail_cameras)) != len(detail_cameras)
+                or not isinstance(detail_modes, list) or not detail_modes
+                or any(mode not in {"direct", "mirror"} for mode in detail_modes)
+                or len(set(detail_modes)) != len(detail_modes)
+            ):
+                raise LegFocusDataError(f"看看腿姿势细节变体字段无效: {pose_id}/{detail_id or 'missing'}")
+            detail_ids.add(detail_id)
         legacy_ids.update(aliases)
         pose_ids.add(pose_id)
     if legacy_ids & pose_ids:
@@ -611,6 +634,26 @@ def _weighted_pose_choice(pool: List[Dict[str, Any]]) -> Dict[str, Any]:
     return dict(random.choices(pool, weights=[int(item["weight"]) for item in pool], k=1)[0])
 
 
+def _weighted_pose_detail_choice(
+    pose: Dict[str, Any], *, camera: str, capture_mode: str,
+    avoid_pose_details: set[Tuple[str, str]] | None = None,
+) -> Dict[str, Any]:
+    variants = [
+        item for item in pose.get("detail_variants", [])
+        if camera in item.get("cameras", ("selfie", "third"))
+        and capture_mode in item.get("capture_modes", ("direct", "mirror"))
+    ]
+    if not variants:
+        return {}
+    pose_id = str(pose["id"])
+    unused = [
+        item for item in variants
+        if (pose_id, str(item["id"])) not in (avoid_pose_details or set())
+    ]
+    choices = unused or variants
+    return dict(random.choices(choices, weights=[int(item["weight"]) for item in choices], k=1)[0])
+
+
 def pick_leg_focus_pose(
     *,
     avoid_id: str = "",
@@ -730,7 +773,7 @@ def parse_requested_leg_camera(text: str) -> str:
 
 LEG_CAMERA_TERMS = {
     "third": ("第三人称", "第三人称视角", "他拍", "别人拍", "朋友拍", "摄影师拍", "路人视角", "非自拍", "notselfie", "thirdperson"),
-    "selfie": ("第一人称", "第一人称视角", "第一视角", "主观视角", "手机自拍", "自拍", "自己拍", "selfie"),
+    "selfie": ("第一人称", "第一人称视角", "第一视角", "主观视角", "自视", "本人视角", "手机自拍", "自拍", "自己拍", "selfie"),
 }
 
 
@@ -762,13 +805,22 @@ def _leg_pose_mentions(text: str) -> List[Tuple[int, str, str, bool]]:
             terms.setdefault(re.sub(r"\s+", "", term).lower(), ("pose", pose["id"]))
     raw = re.sub(r"\s+", "", str(text or "")).lower()
     pattern = "|".join(re.escape(term) for term in sorted(terms, key=len, reverse=True))
+    specific_pose_terms = [term for term, (kind, _) in terms.items() if kind == "pose"]
     matches = []
     for match in re.finditer(pattern, raw):
-        prefix = raw[max(0, match.start() - 12):match.start()]
-        negated = bool(re.search(
+        prefix = raw[max(0, match.start() - 16):match.start()]
+        kind, value = terms[match.group()]
+        phrase_negated = bool(re.search(
+            LEG_NEGATION_PREFIX + r"[^，,。；;！？!?]{0,12}$", prefix,
+        ))
+        if kind == "posture" and phrase_negated and any(
+            raw.startswith(term, match.end()) for term in specific_pose_terms
+        ):
+            continue
+        direct_negated = bool(re.search(
             LEG_NEGATION_PREFIX + r"(?:再|去|在|用|选择|采用|使用)*$", prefix,
         ))
-        kind, value = terms[match.group()]
+        negated = phrase_negated if kind == "pose" else direct_negated
         matches.append((len(match.group()), kind, value, negated))
     return matches
 
@@ -928,7 +980,7 @@ def _weighted_detail_choice(excluded_wears: set[str] | None = None) -> Dict[str,
 
 def _clean_extra_request(extra_request: str) -> str:
     extra = re.sub(r"/?看看腿", " ", str(extra_request or ""), flags=re.I)
-    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|cam|wear|pose|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|cam|wear|pose|pose_detail|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
     # Keep the original constraint once; deleting fragments loses negation,
     # sock lengths, or the support required by a free-form pose.
     for risky_text, neutral_text in LEGFOCUS_RISKY_EXTRA_REPLACEMENTS:
@@ -947,8 +999,10 @@ def build_leg_focus_action(
     force_camera: str = "",
     force_framing: str = "",
     force_view: str = "",
+    force_pose_detail: str = "",
     force_outfit: str = "",
     avoid_combinations: set[Tuple[str, str]] | None = None,
+    avoid_pose_details: set[Tuple[str, str]] | None = None,
     preferred_scene: str = "",
 ) -> str:
     raw_extra = str(extra_request or "")
@@ -1049,6 +1103,26 @@ def build_leg_focus_action(
         }
         if not eligible:
             raise LegFocusDataError("看看腿没有兼容本次指定袜型的姿势，请更换袜型或指定姿势")
+    detail_id = str(force_pose_detail or "").strip()
+    if detail_id:
+        filtered = {}
+        for pose_id, combinations in eligible.items():
+            detail = next((
+                item for item in LEGFOCUS_POSE_BY_ID[pose_id].get("detail_variants", [])
+                if str(item["id"]) == detail_id
+            ), {})
+            compatible = [
+                item for item in combinations
+                if detail
+                and item[2]["camera"] in detail.get("cameras", ("selfie", "third"))
+                and item[2].get("capture_mode", "direct")
+                in detail.get("capture_modes", ("direct", "mirror"))
+            ]
+            if compatible:
+                filtered[pose_id] = compatible
+        eligible = filtered
+        if not eligible:
+            raise LegFocusDataError(f"看看腿姿势细节不存在或与机位不兼容: {requested_pose or '随机姿势'}/{detail_id}")
     unused = {
         pose_id: options for pose_id, combinations in eligible.items()
         if (options := [item for item in combinations if (pose_id, item[2]["id"]) not in (avoid_combinations or set())])
@@ -1060,6 +1134,22 @@ def build_leg_focus_action(
     pose = _weighted_pose_choice(pose_choices)
     pose_id = pose["id"]
     combinations = eligible[pose_id]
+    forced_detail: Dict[str, Any] = {}
+    if detail_id:
+        forced_detail = next((
+            item for item in pose.get("detail_variants", [])
+            if str(item["id"]) == detail_id
+        ), {})
+        if not forced_detail:
+            raise LegFocusDataError(f"看看腿姿势细节不存在或与机位不兼容: {pose_id}/{detail_id}")
+        combinations = [
+            item for item in combinations
+            if item[2]["camera"] in forced_detail.get("cameras", ("selfie", "third"))
+            and item[2].get("capture_mode", "direct")
+            in forced_detail.get("capture_modes", ("direct", "mirror"))
+        ]
+        if not combinations:
+            raise LegFocusDataError(f"看看腿姿势细节不存在或与机位不兼容: {pose_id}/{detail_id}")
     outfit: Dict[str, Any] = {}
     if outfit_source == "pool":
         outfit = forced_outfit or pick_leg_focus_outfit(
@@ -1080,6 +1170,14 @@ def build_leg_focus_action(
     scene_ids = list(dict.fromkeys(item[0]["id"] for item in combinations))
     scene = LEGFOCUS_SCENE_BY_ID[random.choice(scene_ids)]
     support = next(item[1] for item in combinations if item[0]["id"] == scene["id"])
+    capture_mode = str(view.get("capture_mode", "direct"))
+    if detail_id:
+        pose_detail = forced_detail
+    else:
+        pose_detail = _weighted_pose_detail_choice(
+            pose, camera=camera_kind, capture_mode=capture_mode,
+            avoid_pose_details=avoid_pose_details,
+        )
 
     excluded_wears = parse_excluded_legwear(raw_extra)
     requested_wear = str(force_legwear or "").strip()
@@ -1139,7 +1237,6 @@ def build_leg_focus_action(
         outfit_line += "不添加鞋履；袜装或赤足按本次已锁定的腿部细节执行。"
 
     # Each layer owns one constraint: crop, camera, action, setting, or clothing.
-    capture_mode = str(view.get("capture_mode", "direct"))
     framing_key = "mirror" if capture_mode == "mirror" else camera_kind
     framing_lines = [LEGFOCUS_FULL_FRAMING] if framing == "full_outfit" else [
         LEGFOCUS_FRAMING,
@@ -1151,6 +1248,7 @@ def build_leg_focus_action(
         LEGFOCUS_ANATOMY_RULE,
         str(view["prompt"]),
         str(pose["prompt"]),
+        str(pose_detail.get("prompt") or ""),
         str(pose.get("hand_prompts", {}).get(capture_mode, "")),
         LEGFOCUS_SCENE_RULE,
         f"本张室内场景：{scene['prompt']}",
@@ -1177,7 +1275,9 @@ def build_leg_focus_action(
         + (" 【legs_face:context】" if include_face else "")
         + f"【姿势池·{pose['title']}】【场景池·{scene['title']}】"
         + f" 【leg_view:{view['id']}】 【leg_scene:{scene['id']}】 【leg_support:{support}】"
-        + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_id}】 【outfit:{outfit.get('id') or outfit_source}】"
+        + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_id}】"
+        + (f" 【pose_detail:{pose_detail['id']}】" if pose_detail else "")
+        + f" 【outfit:{outfit.get('id') or outfit_source}】"
     )
 
 
@@ -1194,6 +1294,17 @@ def has_leg_focus_contract(text: str) -> bool:
     ):
         return False
     pose_id = _resolve_pose_id(re.search(r"【pose:([a-z_]+)】", raw).group(1))
+    if not pose_id:
+        return False
+    pose = LEGFOCUS_POSE_BY_ID[pose_id]
+    detail_match = re.search(r"【pose_detail:([a-z_]+)】", raw)
+    if detail_match:
+        detail = next((
+            item for item in pose.get("detail_variants", [])
+            if str(item["id"]) == detail_match.group(1)
+        ), {})
+        if not detail:
+            return False
     scene = re.search(r"【leg_scene:([a-z_]+)】", raw)
     support = re.search(r"【leg_support:([a-z_]+)】", raw)
     if not pose_id or not scene or not support:
@@ -1202,10 +1313,18 @@ def has_leg_focus_contract(text: str) -> bool:
     outfit = get_leg_focus_outfit(outfit_id)
     if not outfit and outfit_id not in {"reference", "custom"}:
         return False
+    camera = re.search(r"【cam:(selfie|third)】", raw).group(1)
+    view_id = re.search(r"【leg_view:([a-z_]+)】", raw).group(1)
+    view = LEGFOCUS_VIEW_BY_ID.get(view_id, {})
+    if detail_match and (
+        camera not in detail.get("cameras", ("selfie", "third"))
+        or view.get("capture_mode", "direct") not in detail.get("capture_modes", ("direct", "mirror"))
+    ):
+        return False
     combinations = compatible_leg_compositions(
-        LEGFOCUS_POSE_BY_ID[pose_id],
-        camera=re.search(r"【cam:(selfie|third)】", raw).group(1),
-        view_id=re.search(r"【leg_view:([a-z_]+)】", raw).group(1),
+        pose,
+        camera=camera,
+        view_id=view_id,
         scene_ids=scene.group(1),
         framing=re.search(r"【frame:(full_outfit|leg_detail)】", raw).group(1),
     )
@@ -1226,14 +1345,20 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
     frame_match = re.search(r"【frame:(full_outfit|leg_detail)】", raw)
     scene_match = re.search(r"【leg_scene:([a-z_]+)】", raw)
     outfit_match = re.search(r"【outfit:([a-z_]+)】", raw)
+    detail_match = re.search(r"【pose_detail:([a-z_]+)】", raw)
     outfit = get_leg_focus_outfit(outfit_match.group(1)) if outfit_match else {}
     extra = raw
     if "【legs:outfit】" in raw:
         supplement = re.search(r"用户补充要求优先[:：](.*?)(?=【legs:outfit】|$)", raw, re.S)
         extra = supplement.group(1).strip() if supplement else ""
-    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|cam|wear|pose|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|cam|wear|pose|pose_detail|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
     extra = re.sub(r"/?看看腿", " ", extra, flags=re.I)
     pose_id = _resolve_pose_id(str(pose_match.group(1) if pose_match else ""))
+    force_detail = str(detail_match.group(1) if detail_match else "")
+    if force_detail and force_detail not in {
+        str(item["id"]) for item in LEGFOCUS_POSE_BY_ID.get(pose_id, {}).get("detail_variants", [])
+    }:
+        force_detail = ""
     camera = str(camera_match.group(1) if camera_match else "")
     # An obsolete generated camera tag must not override the current pose rules.
     if "【legs:outfit】" in raw and pose_id and camera:
@@ -1249,6 +1374,7 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
         extra,
         has_refs,
         force_pose=pose_id,
+        force_pose_detail=force_detail,
         force_camera=camera,
         force_outfit=str(outfit.get("id") or ""),
         force_legwear=parse_requested_legwear(str(wear_match.group(0) if wear_match else "")),
