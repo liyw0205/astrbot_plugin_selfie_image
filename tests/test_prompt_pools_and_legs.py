@@ -88,7 +88,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(any("洛丽塔" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertTrue(any("运动短裤" in item or "运动短裙" in item or "网球短裙" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertEqual(len({item["id"] for item in BUILTIN_PROMPTS}), len(BUILTIN_PROMPTS))
-        self.assertEqual(len(BUILTIN_PROMPTS), 67)
+        self.assertEqual(len(BUILTIN_PROMPTS), 80)
         self.assertTrue(all(item["title"] and item["prompt"] for item in BUILTIN_PROMPTS))
         self.assertTrue(GROUP_COMPOSITIONS)
         self.assertTrue(all(item["title"] and item["prompt"] for item in GROUP_COMPOSITIONS))
@@ -209,7 +209,7 @@ class PromptPoolJsonTests(unittest.TestCase):
 
     def test_leg_pool_selects_only_compatible_pose_scene_and_view_combinations(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
-            LEGFOCUS_POSE_POOL,
+            LEGFOCUS_POSE_POOL, LEGFOCUS_SCENE_STATE_POOL,
             LEGFOCUS_VIEW_BY_ID,
             build_leg_focus_action,
             compatible_leg_compositions,
@@ -220,7 +220,9 @@ class PromptPoolJsonTests(unittest.TestCase):
             self.assertNotIn("scene_ids", pose)
             self.assertIn("camera_views", pose)
             scene_ids = {scene["id"] for scene, _, _ in compatible_leg_compositions(pose)}
-            if pose["id"] in {"chair_one_foot_on_stool", "standing_one_foot_on_stool"}:
+            if pose["id"] == "chair_one_foot_on_stool":
+                self.assertEqual(scene_ids, {"chair_footstool", "beach_canvas_chair"})
+            elif pose["id"] == "standing_one_foot_on_stool":
                 self.assertEqual(scene_ids, {"chair_footstool"})
             elif pose["id"] == "reclined_feet_on_stool":
                 self.assertEqual(scene_ids, {"sofa_footstool"})
@@ -237,8 +239,18 @@ class PromptPoolJsonTests(unittest.TestCase):
                     self.assertIn(f"【cam:{camera}】", action)
                     self.assertIn("【frame:leg_detail】", action)
                     self.assertNotIn("看向镜头", action)
-                    selected_scene = action.split("本张室内场景：", 1)[1].split("。", 1)[0]
-                    self.assertNotIn("户外", selected_scene)
+                    selected_scene = re.search(r"本张(室内|室外)场景：([^\n]+)", action)
+                    self.assertIsNotNone(selected_scene)
+                    if selected_scene.group(1) == "室内":
+                        self.assertNotIn("户外", selected_scene.group(2))
+                    else:
+                        selected_state = re.search(r"【leg_state:([a-z_]+)】", action)
+                        prompt_states = [state for state in LEGFOCUS_SCENE_STATE_POOL if state["prompt"] in action]
+                        self.assertLessEqual(len(prompt_states), 1)
+                        self.assertEqual(bool(selected_state), bool(prompt_states))
+                        if not selected_state:
+                            for phrase in ("干爽", "水珠", "水痕", "汗湿"):
+                                self.assertNotIn(phrase, action)
 
     def test_new_leg_poses_keep_scene_support_and_camera_compatibility(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
@@ -251,6 +263,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(chair_combos)
         self.assertTrue(all(scene["id"] in {
             "gaming_chair", "desk_chair", "living_room_chair", "indoor_desk", "indoor_cabinet",
+            "beach_canvas_chair",
         } for scene, _, _ in chair_combos))
         self.assertEqual(set(chair_pose["camera_views"]["third"]), {"third_oblique_low", "third_side_low"})
 
@@ -265,12 +278,16 @@ class PromptPoolJsonTests(unittest.TestCase):
         stool_pose = LEGFOCUS_POSE_BY_ID["chair_one_foot_on_stool"]
         stool_combos = compatible_leg_compositions(stool_pose)
         self.assertTrue(stool_combos)
-        self.assertTrue(all(scene["id"] == "chair_footstool" and support == "chair_footstool" for scene, support, _ in stool_combos))
+        self.assertTrue(all(
+            scene["id"] in {"chair_footstool", "beach_canvas_chair"}
+            and support == "chair_footstool"
+            for scene, support, _ in stool_combos
+        ))
         for scene, support, view in stool_combos:
             action = build_leg_focus_action(
                 force_pose=stool_pose["id"], force_camera="third", force_view=view["id"],
             )
-            self.assertIn("椅前低矮软脚凳", action)
+            self.assertIn("脚凳", action)
             self.assertIn(f"【leg_support:{support}】", action)
 
     def test_leg_camera_contracts_keep_self_view_separate_from_external_crop(self) -> None:
@@ -396,7 +413,9 @@ class PromptPoolJsonTests(unittest.TestCase):
     def test_leg_pool_rejects_missing_or_invalid_camera_and_reference_contracts(self) -> None:
         from astrbot_plugin_selfie_image.cos import leg_focus
 
-        for field in ("camera_framings", "reference_rules", "appearance_prompts"):
+        for field in (
+            "camera_framings", "reference_rules", "appearance_prompts", "capture_styles", "scene_states",
+        ):
             for invalid in (None, {}, {"selfie": "", "third": "external"}, {"zh": [], "en": "reference"}):
                 with self.subTest(field=field, value=invalid):
                     payload = dict(leg_focus._POOL)
@@ -404,6 +423,131 @@ class PromptPoolJsonTests(unittest.TestCase):
                     with patch.object(leg_focus, "read_versioned_json", side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL}):
                         with self.assertRaisesRegex(leg_focus.LegFocusDataError, field):
                             leg_focus._load_pool()
+
+        for probability in (None, True, -0.1, 1.1):
+            with self.subTest(scene_state_probability=probability):
+                payload = dict(leg_focus._POOL)
+                payload["scene_state_probability"] = probability
+                with patch.object(
+                    leg_focus, "read_versioned_json",
+                    side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL},
+                ):
+                    with self.assertRaisesRegex(leg_focus.LegFocusDataError, "scene_state_probability"):
+                        leg_focus._load_pool()
+
+    def test_leg_capture_styles_match_scene_and_camera_mode(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        styles = leg_focus.LEGFOCUS_CAPTURE_STYLE_POOL
+        ids = {style["id"] for style in styles}
+        self.assertEqual(len(ids), len(styles))
+        workout = next(style for style in styles if style["id"] == "post_workout_mirror_flash")
+        self.assertEqual(workout["modes"], ["mirror"])
+        self.assertEqual(workout["scene_ids"], ["floor_mirror"])
+
+        mirror_pose = leg_focus.LEGFOCUS_POSE_BY_ID["mirror_side_sit_shins_overlap"]
+        with patch.object(leg_focus, "_weighted_capture_style_choice", return_value=workout) as choose:
+            action = leg_focus.build_leg_focus_action(
+                "落地镜前", force_pose=mirror_pose["id"], force_camera="selfie",
+            )
+        choose.assert_called_once_with("floor_mirror", "mirror", "indoor", "")
+        self.assertIn("闷热让额角、手臂和腿部有细密汗珠与汗湿反光", action)
+        self.assertIn("【leg_capture_style:post_workout_mirror_flash】", action)
+        self.assertNotIn("【leg_state:", action)
+
+        candidates = [
+            style for style in styles
+            if "third" in style["modes"]
+            and ("*" in style["scene_ids"] or "floor_window" in style["scene_ids"])
+        ]
+        self.assertTrue(candidates)
+        self.assertTrue(any(style["id"] == "rain_window_contrast" for style in candidates))
+
+    def test_outdoor_scenes_have_reachable_states_and_matching_capture_styles(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        outdoor_scenes = [
+            scene for scene in leg_focus.LEGFOCUS_SCENE_POOL
+            if scene.get("environment", "indoor") == "outdoor"
+        ]
+        self.assertEqual(
+            {scene["id"] for scene in outdoor_scenes},
+            {"outdoor_pool_edge", "pool_lounger", "beach_mat", "beach_canvas_chair"},
+        )
+        self.assertTrue(all(scene.get("capture_modes") == ["direct"] for scene in outdoor_scenes))
+        self.assertEqual(leg_focus.LEGFOCUS_SCENE_STATE_PROBABILITY, 0.3)
+        self.assertEqual(
+            {state["id"] for state in leg_focus.LEGFOCUS_SCENE_STATE_POOL},
+            {"pool_water_wet", "beach_sweat_damp"},
+        )
+
+        def build_for_scene(scene: dict, state: dict | None = None) -> str:
+            pose = next(
+                pose for pose in leg_focus.LEGFOCUS_POSE_POOL
+                if leg_focus.compatible_leg_compositions(
+                    pose, camera="selfie", scene_ids=scene["id"],
+                )
+            )
+            with patch.object(leg_focus, "_weighted_scene_state_choice", return_value=state or {}):
+                return leg_focus.build_leg_focus_action(
+                    scene["title"], force_pose=pose["id"], force_camera="selfie", has_refs=True,
+                )
+
+        for scene in outdoor_scenes:
+            with self.subTest(scene=scene["id"]):
+                for camera_mode in ("selfie", "third"):
+                    reachable = [
+                        (pose, combo)
+                        for pose in leg_focus.LEGFOCUS_POSE_POOL
+                        for combo in leg_focus.compatible_leg_compositions(
+                            pose, camera=camera_mode, scene_ids=scene["id"],
+                        )
+                    ]
+                    self.assertTrue(reachable)
+                action = build_for_scene(scene)
+                self.assertIn(f"【leg_scene:{scene['id']}】", action)
+                self.assertNotIn("【leg_state:", action)
+                self.assertNotIn("干爽", action)
+                self.assertNotIn("水珠", action)
+                self.assertNotIn("水痕", action)
+                self.assertFalse(any(item["prompt"] in action for item in leg_focus.LEGFOCUS_SCENE_STATE_POOL))
+                style_id = re.search(r"【leg_capture_style:([a-z_]+)】", action).group(1)
+                matching_styles = leg_focus._compatible_capture_styles(
+                    scene["id"], "selfie", "outdoor",
+                )
+                self.assertIn(style_id, {item["id"] for item in matching_styles})
+                for allowed_state in leg_focus.LEGFOCUS_SCENE_STATE_POOL:
+                    if "outdoor" not in allowed_state["environments"] or (
+                        "*" not in allowed_state["scene_ids"]
+                        and scene["id"] not in allowed_state["scene_ids"]
+                    ):
+                        continue
+                    for camera_mode in ("selfie", "third"):
+                        self.assertTrue(leg_focus._compatible_capture_styles(
+                            scene["id"], camera_mode, "outdoor", allowed_state["id"],
+                        ))
+
+        for state in leg_focus.LEGFOCUS_SCENE_STATE_POOL:
+            scene = next(
+                scene for scene in outdoor_scenes
+                if "*" in state["scene_ids"] or scene["id"] in state["scene_ids"]
+            )
+            with self.subTest(optional_state=state["id"]):
+                action = build_for_scene(scene, state)
+                self.assertIn(f"【leg_state:{state['id']}】", action)
+                self.assertEqual(action.count(state["prompt"]), 1)
+                self.assertEqual(
+                    len([item for item in leg_focus.LEGFOCUS_SCENE_STATE_POOL if item["prompt"] in action]),
+                    1,
+                )
+                scene_id = re.search(r"【leg_scene:([a-z_]+)】", action).group(1)
+                style_id = re.search(r"【leg_capture_style:([a-z_]+)】", action).group(1)
+                matching_styles = leg_focus._compatible_capture_styles(
+                    scene_id, "selfie", "outdoor", state["id"],
+                )
+                self.assertIn(style_id, {item["id"] for item in matching_styles})
+                self.assertNotIn("水珠", state["prompt"])
+                self.assertNotIn("水痕", state["prompt"])
 
     def test_leg_angle_requests_select_actual_camera_geometry_without_selecting_a_pose(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
@@ -699,6 +843,13 @@ class PromptPoolJsonTests(unittest.TestCase):
                             self.assertEqual(style["kind"], "tights")
                         else:
                             self.assertEqual(style["wear"], wear)
+        white_sheer = next(style for style in LEGFOCUS_HOSIERY_STYLES if style["id"] == "white_sheer")
+        black_sheer = next(style for style in LEGFOCUS_HOSIERY_STYLES if style["id"] == "black_sheer")
+        self.assertIn("灰米色差", white_sheer["prompt"])
+        self.assertIn("肤色自然透出", white_sheer["prompt"])
+        self.assertIn("避免袜面纹理被抹平、整体发白、大片过曝高光", white_sheer["prompt"])
+        self.assertIn("细密黑色纤维", black_sheer["prompt"])
+        self.assertIn("局部柔和缎光", black_sheer["prompt"])
         for style in LEGFOCUS_HOSIERY_STYLES:
             for alias in style["aliases"]:
                 with self.subTest(style=style["id"], alias=alias):

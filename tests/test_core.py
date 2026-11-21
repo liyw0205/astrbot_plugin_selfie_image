@@ -7739,7 +7739,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("左右手/脚各一", enhanced)
         legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(object.__new__(plugin_main.SelfieImagePlugin), "", False, force_legwear="白丝")
         self.assertIn("保留自然体态与比例", legs_action)
-        self.assertIn("背景占少量画幅", legs_action)
+        self.assertIn("背景只负责交代地点和光线层次并占少量画幅", legs_action)
         self.assertNotIn("同框", legs_action)
         self.assertNotIn("幽灵手", legs_action)
         self.assertNotIn("断臂", legs_action)
@@ -9600,9 +9600,10 @@ class StudioStoreTests(unittest.TestCase):
             "侧腰双开窗", "极高侧开衩", "薄纱叠层", "开放侧身", "敞怀外套",
             "前襟分离系带", "单肩斜向开胸", "胸腹竖向开口", "下胸弧形开窗",
             "单侧全开裙摆", "前后分片围裹",
+            "双肩垂落露肩", "脊线系扣开背", "侧肋抽绳收束",
             "高腰侧胯开窗", "前裆竖向开口", "高腰后腰开窗", "单侧臀部镂空",
             "前后分片开裆裙", "侧开衩绑带短裤", "高腰透明薄纱下装", "低腰链带下装",
-            "臀后镂空短裙", "双侧高开衩长裙",
+            "臀后镂空短裙", "双侧高开衩长裙", "V形下沉腰头", "单侧腿根抽褶", "前片大腿弧窗",
         )
         for need in (
             "捧脸", "遮脸", "变真人", "变动漫", "变猫娘", "变Q版", "变像素",
@@ -9668,6 +9669,11 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("宽幅弧形开窗", seed["下胸弧形开窗"]["prompt"])
         self.assertIn("完整开放结构", seed["单侧全开裙摆"]["prompt"])
         self.assertIn("前后分片的围裹式结构", seed["前后分片围裹"]["prompt"])
+        self.assertIn("纵向窄开口", seed["脊线系扣开背"]["prompt"])
+        self.assertIn("可见窄缝", seed["侧肋抽绳收束"]["prompt"])
+        self.assertIn("较低的中央腰线显露下腹", seed["V形下沉腰头"]["prompt"])
+        self.assertIn("腿部从侧前方清晰显露", seed["单侧腿根抽褶"]["prompt"])
+        self.assertIn("向上弯起的弧形开窗", seed["前片大腿弧窗"]["prompt"])
 
     def test_upper_lower_structure_aliases_and_display_order(self) -> None:
         import tempfile
@@ -9686,12 +9692,35 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(ACTION_PRESET_ALIAS, "动作预设")
         self.assertEqual(UPPER_PRESET_ALIAS, "上身预设")
         self.assertEqual(LOWER_PRESET_ALIAS, "下身预设")
-        self.assertEqual(len(action_prompt_presets()), 13)
+        self.assertEqual(len(action_prompt_presets()), 20)
         action_titles = {item["title"] for item in action_prompt_presets()}
         self.assertTrue({"捧脸", "男友视角", "咬唇回眸", "侧躺抬眼", "战后力竭", "臣服怯态"}.issubset(action_titles))
-        self.assertEqual(len(upper_prompt_presets()), 17)
-        self.assertEqual(len(lower_prompt_presets()), 10)
-        self.assertEqual(len(special_prompt_presets()), 40)
+        self.assertTrue({"夜窗近摄", "门后独照", "独唱之后"}.issubset(action_titles))
+        self.assertTrue({"暗室祈祷", "床上应援", "健身后镜前检查", "豆浆恶作剧抓拍"}.issubset(action_titles))
+        action_prompts = {item["title"]: item["prompt"] for item in action_prompt_presets()}
+        sweat_titles = {
+            "咬唇回眸", "轻拉衣领", "腰侧轻抚", "耳边靠近", "牵手拉近",
+            "侧躺抬眼", "低头抬眼", "捧脸", "男友视角", "门后独照", "独唱之后",
+        }
+        for title in sweat_titles:
+            if title == "男友视角":
+                self.assertIn("sweating profusely", action_prompts[title])
+                self.assertIn("damp skin", action_prompts[title])
+                self.assertIn("highlights reflect", action_prompts[title])
+                continue
+            self.assertIn("大汗淋漓", action_prompts[title])
+            self.assertIn("汗湿", action_prompts[title])
+            self.assertIn("反光", action_prompts[title])
+        for title in ("俯身靠近", "臣服怯态", "夜窗近摄", "背对回眸", "战后力竭"):
+            self.assertNotIn("大汗淋漓", action_prompts[title])
+        self.assertEqual(len(upper_prompt_presets()), 20)
+        self.assertEqual(len(lower_prompt_presets()), 13)
+        self.assertEqual(len(special_prompt_presets()), 53)
+        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 53)
+        self.assertIn("张开嘴并伸出舌尖", action_prompts["暗室祈祷"])
+        self.assertIn("仰躺者眼睛的位置", action_prompts["床上应援"])
+        self.assertIn("不是从上方俯拍", action_prompts["床上应援"])
+        self.assertIn("同伴的一只手和一小截前臂", action_prompts["豆浆恶作剧抓拍"])
         self.assertEqual(
             {item["id"] for item in special_prompt_presets()},
             {item["id"] for item in action_prompt_presets()}

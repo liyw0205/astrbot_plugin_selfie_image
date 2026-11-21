@@ -166,6 +166,7 @@ def test_reference_sitting_poses_keep_mirror_and_direct_cameras_separate(query, 
     else:
         assert {scene["id"] for scene, _, _ in combinations} == {
             "gaming_chair", "desk_chair", "living_room_chair", "indoor_desk", "indoor_cabinet",
+            "beach_canvas_chair",
         }
     for _, _, view in combinations:
         assert view["camera"] == "selfie"

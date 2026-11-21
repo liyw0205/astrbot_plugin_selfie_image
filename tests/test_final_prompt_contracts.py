@@ -840,7 +840,7 @@ def test_supported_third_person_poses_use_low_views_only(pose_id):
 
 @pytest.mark.parametrize("pose_id,scenes,supports,camera", [
     ("edge_knees_together_slant", {"bed_edge", "bedroom_bench", "gaming_chair", "desk_chair", "indoor_cabinet"}, {"raised_edge"}, "third"),
-    ("reclined_same_side_knees", {"bed_surface", "sofa", "floor_window", "bedroom_chaise"}, {"reclined_surface"}, "selfie"),
+    ("reclined_same_side_knees", {"bed_surface", "sofa", "floor_window", "bedroom_chaise", "pool_lounger"}, {"reclined_surface"}, "selfie"),
     ("standing_weight_shift", {"indoor_desk", "indoor_cabinet"}, {"standing_edge"}, "third"),
 ])
 def test_added_leg_poses_keep_their_required_support_and_camera(pose_id, scenes, supports, camera):

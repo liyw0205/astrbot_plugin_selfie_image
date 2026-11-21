@@ -106,6 +106,13 @@ ACTION_PROMPT_PRESET_IDS = frozenset(
         "preset_submissive_shy_pose",
         "preset_hold_face",
         "preset_bf_view",
+        "preset_night_window_closeup",
+        "preset_doorway_alone",
+        "preset_after_singing",
+        "preset_prayer_wine_pov",
+        "preset_bed_cheer_pov",
+        "preset_post_workout_mirror_check",
+        "preset_soymilk_prank_snapshot",
     }
 )
 UPPER_PROMPT_PRESET_IDS = frozenset(
@@ -127,6 +134,9 @@ UPPER_PROMPT_PRESET_IDS = frozenset(
         "preset_underbust_arc_cutout",
         "preset_single_side_open_skirt",
         "preset_split_panel_wrap",
+        "preset_off_shoulder_drop",
+        "preset_spine_lacing_back",
+        "preset_side_rib_drawstring",
     }
 )
 LOWER_PROMPT_PRESET_IDS = frozenset(
@@ -141,6 +151,9 @@ LOWER_PROMPT_PRESET_IDS = frozenset(
         "preset_low_waist_chainwear",
         "preset_back_hip_cutout_skirt",
         "preset_double_high_slit_skirt",
+        "preset_v_dip_waistband",
+        "preset_single_thigh_gather",
+        "preset_front_thigh_arch_cutout",
     }
 )
 # "特殊预设" is the combined pool; the dedicated aliases expose action,

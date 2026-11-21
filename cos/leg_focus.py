@@ -1,4 +1,4 @@
-"""JSON-backed pose and indoor-scene selection for ``看看腿``."""
+"""JSON-backed pose and scene selection for ``看看腿``."""
 
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ def _load_pool() -> Dict[str, Any]:
         scenes = read_nonempty_list(payload, "scenes", "看看腿场景池")
         poses = read_nonempty_list(payload, "poses", "看看腿姿势池")
         views = read_nonempty_list(view_payload, "views", "看看腿机位池")
+        capture_styles = read_nonempty_list(payload, "capture_styles", "看看腿拍摄质感池")
+        scene_states = read_nonempty_list(payload, "scene_states", "看看腿场景状态池")
     except PromptDataError as exc:
         raise LegFocusDataError(str(exc)) from exc
     scene_ids: set[str] = set()
@@ -35,8 +37,11 @@ def _load_pool() -> Dict[str, Any]:
         if not isinstance(raw, Mapping):
             raise LegFocusDataError(f"看看腿场景第 {index + 1} 项必须是对象")
         scene_id = str(raw.get("id") or "").strip()
+        environment = raw.get("environment", "indoor")
         if not scene_id or scene_id in scene_ids:
             raise LegFocusDataError(f"看看腿场景 id 缺失或重复: {scene_id or index + 1}")
+        if not isinstance(environment, str) or environment not in {"indoor", "outdoor"}:
+            raise LegFocusDataError(f"看看腿场景环境无效: {scene_id}")
         if not str(raw.get("title") or "").strip() or not str(raw.get("prompt") or "").strip():
             raise LegFocusDataError(f"看看腿场景缺少标题或提示词: {scene_id}")
         cameras = raw.get("cameras", ["selfie", "third"])
@@ -198,7 +203,104 @@ def _load_pool() -> Dict[str, Any]:
         )
     ):
         raise LegFocusDataError("看看腿提示词池字段不完整或无效: appearance_prompts")
-    return {**payload, "views": views}
+    scene_state_ids: set[str] = set()
+    state_probability = payload.get("scene_state_probability", 0.3)
+    if type(state_probability) not in (int, float) or not 0 <= state_probability <= 1:
+        raise LegFocusDataError("看看腿场景状态触发概率无效: scene_state_probability")
+    for index, state in enumerate(scene_states):
+        if not isinstance(state, Mapping):
+            raise LegFocusDataError(f"看看腿场景状态第 {index + 1} 项必须是对象")
+        state_id = str(state.get("id") or "").strip()
+        environments = state.get("environments")
+        state_scene_ids = state.get("scene_ids")
+        if (
+            not re.fullmatch(r"[a-z_]+", state_id) or state_id in scene_state_ids
+            or not str(state.get("title") or "").strip()
+            or not str(state.get("prompt") or "").strip()
+            or type(state.get("weight")) is not int or state["weight"] < 1
+            or not isinstance(environments, list) or not environments
+            or any(not isinstance(value, str) or value not in {"indoor", "outdoor"} for value in environments)
+            or len(set(environments)) != len(environments)
+            or not isinstance(state_scene_ids, list) or not state_scene_ids
+            or any(not isinstance(scene_id, str) or not scene_id for scene_id in state_scene_ids)
+            or ("*" in state_scene_ids and state_scene_ids != ["*"])
+            or ("*" not in state_scene_ids and not set(state_scene_ids) <= scene_ids)
+            or len(set(state_scene_ids)) != len(state_scene_ids)
+        ):
+            raise LegFocusDataError(f"看看腿场景状态字段无效: {state_id or index + 1}")
+        scene_state_ids.add(state_id)
+
+    capture_style_ids: set[str] = set()
+    for index, style in enumerate(capture_styles):
+        if not isinstance(style, Mapping):
+            raise LegFocusDataError(f"看看腿拍摄质感第 {index + 1} 项必须是对象")
+        style_id = str(style.get("id") or "").strip()
+        modes = style.get("modes")
+        style_scene_ids = style.get("scene_ids")
+        environments = style.get("environments", ["indoor"])
+        state_ids = style.get("state_ids", [])
+        if (
+            not re.fullmatch(r"[a-z_]+", style_id) or style_id in capture_style_ids
+            or not str(style.get("title") or "").strip()
+            or not str(style.get("prompt") or "").strip()
+            or type(style.get("weight")) is not int or style["weight"] < 1
+            or not isinstance(modes, list) or not modes
+            or any(not isinstance(mode, str) or mode not in {"selfie", "third", "mirror"} for mode in modes)
+            or len(set(modes)) != len(modes)
+            or not isinstance(environments, list) or not environments
+            or any(not isinstance(value, str) or value not in {"indoor", "outdoor"} for value in environments)
+            or len(set(environments)) != len(environments)
+            or not isinstance(style_scene_ids, list) or not style_scene_ids
+            or any(not isinstance(scene_id, str) or not scene_id for scene_id in style_scene_ids)
+            or ("*" in style_scene_ids and style_scene_ids != ["*"])
+            or ("*" not in style_scene_ids and not set(style_scene_ids) <= scene_ids)
+            or len(set(style_scene_ids)) != len(style_scene_ids)
+            or not isinstance(state_ids, list)
+            or any(not isinstance(state_id, str) or state_id not in scene_state_ids for state_id in state_ids)
+            or len(set(state_ids)) != len(state_ids)
+        ):
+            raise LegFocusDataError(f"看看腿拍摄质感字段无效: {style_id or index + 1}")
+        for state_id in state_ids:
+            state = next(item for item in scene_states if item["id"] == state_id)
+            style_scenes = scene_ids if "*" in style_scene_ids else set(style_scene_ids)
+            state_scenes = scene_ids if "*" in state["scene_ids"] else set(state["scene_ids"])
+            if not (set(environments) & set(state["environments"])) or not (style_scenes & state_scenes):
+                raise LegFocusDataError(f"看看腿拍摄质感与场景状态不兼容: {style_id}/{state_id}")
+        capture_style_ids.add(style_id)
+    outdoor_scenes = [scene for scene in scenes if scene.get("environment", "indoor") == "outdoor"]
+    for scene in outdoor_scenes:
+        scene_id = str(scene["id"])
+        states = [
+            state for state in scene_states
+            if "outdoor" in state["environments"]
+            and ("*" in state["scene_ids"] or scene_id in state["scene_ids"])
+        ]
+        if not states:
+            raise LegFocusDataError(f"室外场景缺少兼容状态: {scene_id}")
+        camera_modes = {
+            "mirror" if mode == "mirror" else camera
+            for camera in scene.get("cameras", ["selfie", "third"])
+            for mode in scene.get("capture_modes", ["direct"])
+        }
+        for state in states:
+            for camera_mode in camera_modes:
+                if not any(
+                    "outdoor" in style.get("environments", ["indoor"])
+                    and camera_mode in style["modes"]
+                    and ("*" in style["scene_ids"] or scene_id in style["scene_ids"])
+                    and (not style.get("state_ids") or state["id"] in style["state_ids"])
+                    for style in capture_styles
+                ):
+                    raise LegFocusDataError(
+                        f"室外场景缺少兼容拍摄质感: {scene_id}/{state['id']}/{camera_mode}"
+                    )
+    return {
+        **payload,
+        "views": views,
+        "capture_styles": capture_styles,
+        "scene_states": scene_states,
+        "scene_state_probability": float(state_probability),
+    }
 
 
 def _load_outfit_pool() -> Dict[str, Any]:
@@ -301,6 +403,13 @@ LEGFOCUS_FULL_FRAMING = str(_POOL["full_framing"])
 LEGFOCUS_REFERENCE_RULES = dict(_POOL["reference_rules"])
 LEGFOCUS_SCENE_RULE = str(_POOL["scene_rule"])
 LEGFOCUS_APPEARANCE_PROMPTS = _POOL["appearance_prompts"]
+LEGFOCUS_CAPTURE_STYLE_POOL: List[Dict[str, Any]] = [
+    dict(item) for item in _POOL["capture_styles"]
+]
+LEGFOCUS_SCENE_STATE_POOL: List[Dict[str, Any]] = [
+    dict(item) for item in _POOL["scene_states"]
+]
+LEGFOCUS_SCENE_STATE_PROBABILITY = float(_POOL.get("scene_state_probability", 0.3))
 LEGFOCUS_PRESERVE_PROMPTS = dict(_OUTFITS["preserve_prompts"])
 LEGFOCUS_POOL_REFERENCE_PROMPTS = dict(_OUTFITS["pool_reference_prompts"])
 LEGFOCUS_WEAR_PROMPTS = dict(_OUTFITS["wear_prompts"])
@@ -654,6 +763,40 @@ def _weighted_pose_detail_choice(
     return dict(random.choices(choices, weights=[int(item["weight"]) for item in choices], k=1)[0])
 
 
+def _compatible_capture_styles(
+    scene_id: str, camera_mode: str, environment: str, state_id: str = "",
+) -> List[Dict[str, Any]]:
+    return [
+        item for item in LEGFOCUS_CAPTURE_STYLE_POOL
+        if camera_mode in item["modes"]
+        and environment in item.get("environments", ["indoor"])
+        and ("*" in item["scene_ids"] or scene_id in item["scene_ids"])
+        and (not item.get("state_ids") or state_id in item["state_ids"])
+    ]
+
+
+def _weighted_capture_style_choice(
+    scene_id: str, camera_mode: str, environment: str = "indoor", state_id: str = "",
+) -> Dict[str, Any]:
+    pool = _compatible_capture_styles(scene_id, camera_mode, environment, state_id)
+    if not pool:
+        raise LegFocusDataError(
+            f"看看腿场景没有匹配的拍摄质感: {scene_id}/{environment}/{camera_mode}/{state_id}"
+        )
+    return dict(random.choices(pool, weights=[int(item["weight"]) for item in pool], k=1)[0])
+
+
+def _weighted_scene_state_choice(scene_id: str, environment: str) -> Dict[str, Any]:
+    pool = [
+        item for item in LEGFOCUS_SCENE_STATE_POOL
+        if environment in item["environments"]
+        and ("*" in item["scene_ids"] or scene_id in item["scene_ids"])
+    ]
+    if not pool or random.random() >= LEGFOCUS_SCENE_STATE_PROBABILITY:
+        return {}
+    return dict(random.choices(pool, weights=[int(item["weight"]) for item in pool], k=1)[0])
+
+
 def pick_leg_focus_pose(
     *,
     avoid_id: str = "",
@@ -980,7 +1123,7 @@ def _weighted_detail_choice(excluded_wears: set[str] | None = None) -> Dict[str,
 
 def _clean_extra_request(extra_request: str) -> str:
     extra = re.sub(r"/?看看腿", " ", str(extra_request or ""), flags=re.I)
-    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|cam|wear|pose|pose_detail|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|cam|wear|pose|pose_detail|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
     # Keep the original constraint once; deleting fragments loses negation,
     # sock lengths, or the support required by a free-form pose.
     for risky_text, neutral_text in LEGFOCUS_RISKY_EXTRA_REPLACEMENTS:
@@ -1170,7 +1313,13 @@ def build_leg_focus_action(
     scene_ids = list(dict.fromkeys(item[0]["id"] for item in combinations))
     scene = LEGFOCUS_SCENE_BY_ID[random.choice(scene_ids)]
     support = next(item[1] for item in combinations if item[0]["id"] == scene["id"])
+    environment = str(scene.get("environment", "indoor"))
     capture_mode = str(view.get("capture_mode", "direct"))
+    camera_mode = "mirror" if capture_mode == "mirror" else camera_kind
+    scene_state = _weighted_scene_state_choice(str(scene["id"]), environment) if environment == "outdoor" else {}
+    capture_style = _weighted_capture_style_choice(
+        str(scene["id"]), camera_mode, environment, str(scene_state.get("id") or ""),
+    )
     if detail_id:
         pose_detail = forced_detail
     else:
@@ -1251,8 +1400,10 @@ def build_leg_focus_action(
         str(pose_detail.get("prompt") or ""),
         str(pose.get("hand_prompts", {}).get(capture_mode, "")),
         LEGFOCUS_SCENE_RULE,
-        f"本张室内场景：{scene['prompt']}",
+        f"本张{'室外' if environment == 'outdoor' else '室内'}场景：{scene['prompt']}",
         f"本张姿势支撑：{scene['supports'][support]}。",
+        f"本张状态（{scene_state['title']}）：{scene_state['prompt']}" if scene_state else "",
+        f"本张拍摄质感：{capture_style['prompt']}",
         outfit_line,
     ) if line)
     extra = _clean_extra_request(raw_extra)
@@ -1275,6 +1426,8 @@ def build_leg_focus_action(
         + (" 【legs_face:context】" if include_face else "")
         + f"【姿势池·{pose['title']}】【场景池·{scene['title']}】"
         + f" 【leg_view:{view['id']}】 【leg_scene:{scene['id']}】 【leg_support:{support}】"
+        + f" 【leg_capture_style:{capture_style['id']}】"
+        + (f" 【leg_state:{scene_state['id']}】" if scene_state else "")
         + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_id}】"
         + (f" 【pose_detail:{pose_detail['id']}】" if pose_detail else "")
         + f" 【outfit:{outfit.get('id') or outfit_source}】"
@@ -1351,7 +1504,7 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
     if "【legs:outfit】" in raw:
         supplement = re.search(r"用户补充要求优先[:：](.*?)(?=【legs:outfit】|$)", raw, re.S)
         extra = supplement.group(1).strip() if supplement else ""
-    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|cam|wear|pose|pose_detail|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|cam|wear|pose|pose_detail|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
     extra = re.sub(r"/?看看腿", " ", extra, flags=re.I)
     pose_id = _resolve_pose_id(str(pose_match.group(1) if pose_match else ""))
     force_detail = str(detail_match.group(1) if detail_match else "")

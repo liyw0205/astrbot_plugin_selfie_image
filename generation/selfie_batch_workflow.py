@@ -108,7 +108,7 @@ class SelfieBatchWorkflow:
         match = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
         if match:
             self.extra_keep = str(match.group(1) or "").strip()
-            self.extra_keep = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", self.extra_keep)
+            self.extra_keep = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|wear|outfit|frame):[a-z0-9_]+】\s*", " ", self.extra_keep)
             self.extra_keep = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", self.extra_keep)
             self.extra_keep = re.sub(r"\s+", " ", self.extra_keep).strip(" 。")
         if self.rebuild_extra_request:
