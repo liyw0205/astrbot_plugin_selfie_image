@@ -1690,6 +1690,15 @@ class ConfigModelTests(unittest.TestCase):
         self.assertFalse(classify_generation_error("请求超时")["retryable"])
         self.assertEqual(classify_generation_error("请求超时")["user_message"], "模型超时（180s）")
         self.assertEqual(classify_generation_error("gateway timeout")["user_message"], "上游模型超时")
+        download_failure = classify_generation_error(
+            "OpenAI 接口返回了图片链接但下载失败。原因: cdn.example.test/result.png: HTTP 403"
+        )
+        self.assertEqual(download_failure["category"], "network")
+        self.assertTrue(download_failure["retryable"])
+        download_timeout = classify_generation_error(
+            "OpenAI 接口返回了图片链接但下载失败。原因: cdn.example.test/result.png: 下载超时（45s）"
+        )
+        self.assertEqual(download_timeout["category"], "timeout")
         self.assertEqual(classify_generation_error("生图全局超时（280秒），最后错误: x")["user_message"], "生图超时（280s）")
         self.assertEqual(classify_generation_error("该模型超时，已改试下一个")["user_message"], "模型超时（180s）")
         self.assertTrue(is_non_retryable_generation_error("HTTP 404 model_not_found"))
@@ -2900,6 +2909,19 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def _openai_response_sequence_session(self, responses, *, get_data: bytes = b""):
+        class SequencedSession(FakeSession):
+            def __init__(self):
+                super().__init__(get_data=get_data)
+                self.responses = iter(responses)
+
+            async def post(self, url: str, **kwargs):
+                self.requests.append({"method": "POST", "url": url, **kwargs})
+                data, status = next(self.responses)
+                return FakeResponse(data, status)
+
+        return SequencedSession()
+
     def test_openai_payload_builder_keeps_gpt_image_response_format_out(self) -> None:
         adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-1"), FakeSession())
 
@@ -2923,6 +2945,63 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session.requests), 1)
         self.assertEqual(session.requests[0]["url"], "https://example.test/v1/images/generations")
         self.assertEqual(session.requests[0]["json"]["prompt"], "cat")
+
+    async def test_openai_generate_retries_url_only_response_format_and_downloads_image(self) -> None:
+        session = self._openai_response_sequence_session(
+            [
+                ({"error": {"message": "站点用户 API 目前仅支持 response_format=url"}}, 400),
+                ({"data": [{"url": "https://cdn.example.test/generated.png"}]}, 200),
+            ],
+            get_data=PNG_BYTES,
+        )
+        adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        post_requests = [request for request in session.requests if request["method"] == "POST"]
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(len(post_requests), 2)
+        self.assertNotIn("response_format", post_requests[0]["json"])
+        self.assertEqual(post_requests[1]["json"]["response_format"], "url")
+        self.assertEqual(session.requests[-1]["method"], "GET")
+
+    async def test_openai_generate_does_not_retry_url_format_when_compat_retry_is_disabled(self) -> None:
+        session = self._openai_response_sequence_session(
+            [({"error": {"message": "only supports response_format=url"}}, 400)]
+        )
+        adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat", allow_compat_retry=False))
+
+        self.assertIn("HTTP 400", result.error)
+        self.assertEqual(len(session.requests), 1)
+        self.assertNotIn("response_format", session.requests[0]["json"])
+
+    async def test_openai_generate_does_not_use_url_retry_for_unrelated_errors(self) -> None:
+        session = self._openai_response_sequence_session(
+            [({"error": {"message": "upstream server exploded"}}, 500)]
+        )
+        adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertIn("HTTP 500", result.error)
+        self.assertEqual(len(session.requests), 1)
+
+    async def test_openai_generate_stops_after_failed_url_format_retry(self) -> None:
+        session = self._openai_response_sequence_session(
+            [
+                ({"error": {"message": "only supports response_format=url"}}, 400),
+                ({"error": {"message": "unsupported size"}}, 400),
+            ]
+        )
+        adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertIn("HTTP 400", result.error)
+        self.assertEqual(len(session.requests), 2)
+        self.assertEqual(session.requests[1]["json"]["response_format"], "url")
 
     async def test_openai_edit_timeout_returns_model_timeout(self) -> None:
         target = make_target("openai", "gpt-image-2")
@@ -7555,7 +7634,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             "cmd_group_selfie": "自己使用当前形象",
             "cmd_persona_set": "自动 / 真人 / 动漫",
             "cmd_view_prompt": "引用一张图片",
-            "cmd_reverse_image_prompt": "当前聊天 LLM 反推",
+            "cmd_reverse_image_prompt": "所选识图模型反推",
         }
         for name, token in required.items():
             block = main_src.split(f"async def {name}", 1)[1].split("async def ", 1)[0]
@@ -9944,10 +10023,12 @@ class StudioStoreTests(unittest.TestCase):
             for marker in (
                 'data-tab="presets"',
                 'id="presetManagerList"',
-                'id="presetTransferModal"',
+                'id="presetImportBtn"',
+                'id="presetExportBtn"',
                 "/api/prompt-presets/manage",
-                "导出并复制",
-                "自动复制失败",
+                "导入文件",
+                "导出文件",
+                "selfie-image-prompt-presets",
             ):
                 self.assertIn(marker, document)
 

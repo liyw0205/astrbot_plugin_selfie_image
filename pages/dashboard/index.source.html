@@ -472,11 +472,11 @@
       <div class="between">
         <div>
           <h2>预设管理</h2>
-          <p class="muted">管理生图指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
+          <p class="muted">管理生图预设和 NAI 画师串。JSON 文件按名称合并，重名项会被覆盖。</p>
         </div>
         <div class="actions">
-          <button class="secondary" id="presetImportBtn" type="button">导入文本</button>
-          <button class="secondary" id="presetExportBtn" type="button">导出并复制</button>
+          <button class="secondary" id="presetImportBtn" type="button">导入文件</button>
+          <button class="secondary" id="presetExportBtn" type="button">导出文件</button>
         </div>
       </div>
       <div class="tabs-inline" style="margin-top:12px" role="tablist" aria-label="预设类型">
@@ -688,33 +688,46 @@
 
     <section id="audit">
       <h2>辅助功能</h2>
-      <div class="grid">
-        <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 出图前审文字</label>
-        <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 出图后审成品</label>
-        <div><label>文字审核模型</label><select id="promptAuditModel"></select></div>
-        <div><label>文字审核拒绝阈值 (%)</label><input id="promptAuditThreshold" type="number" min="0" max="100" step="1"></div>
-        <div><label>成品审核模型</label><select id="outputAuditModel"></select></div>
-        <div><label>成品审核拒绝阈值 (%)</label><input id="outputAuditThreshold" type="number" min="0" max="100" step="1"></div>
-        <div><label>图转文模型</label><select id="ocrModel"></select><div class="muted">留空时使用当前 LLM</div></div>
+      <div id="auditViewTabs" class="tabs-inline" role="tablist" aria-label="辅助功能分类">
+        <button id="auditViewTabReview" class="active" type="button" role="tab" aria-selected="true" aria-controls="auditViewReview" data-audit-view="review">审核</button>
+        <button id="auditViewTabRecognition" type="button" role="tab" aria-selected="false" aria-controls="auditViewRecognition" data-audit-view="recognition" tabindex="-1">识图</button>
+        <button id="auditViewTabTranslation" type="button" role="tab" aria-selected="false" aria-controls="auditViewTranslation" data-audit-view="translation" tabindex="-1">翻译</button>
       </div>
-      <label>文字屏蔽词</label><textarea id="blockedWords"></textarea>
-      <div class="muted">每行一个词，也可用逗号分隔；按不区分大小写的字面包含匹配，不支持正则。</div>
-      <label>文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
-      <label>成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
-      <h3 style="margin-top:18px">提示词转英文</h3>
-      <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走辅助渠道对话模型，失败则保留原文。</p>
-      <div class="grid">
-        <label class="checkline"><input id="enableImagePromptEn" type="checkbox"> 生图提示词转英文</label>
-        <div><label>翻译模式</label>
-          <select id="promptEnMode">
-            <option value="if_cjk">含中文时翻译</option>
-            <option value="always">始终翻译</option>
-          </select>
+      <div id="auditViewReview" class="selfie-view-panel" role="tabpanel" aria-labelledby="auditViewTabReview">
+        <div class="grid">
+          <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 出图前审文字</label>
+          <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 出图后审成品</label>
+          <div><label for="promptAuditModel">文字审核模型</label><select id="promptAuditModel"></select></div>
+          <div><label for="promptAuditThreshold">文字审核拒绝阈值 (%)</label><input id="promptAuditThreshold" type="number" min="0" max="100" step="1"></div>
+          <div><label for="outputAuditModel">成品审核模型</label><select id="outputAuditModel"></select></div>
+          <div><label for="outputAuditThreshold">成品审核拒绝阈值 (%)</label><input id="outputAuditThreshold" type="number" min="0" max="100" step="1"></div>
         </div>
-        <div><label>翻译模型</label><select id="promptEnModel"></select></div>
+        <label for="blockedWords">文字屏蔽词</label><textarea id="blockedWords"></textarea>
+        <div class="muted">每行一个词，也可用逗号分隔；按不区分大小写的字面包含匹配，不支持正则。</div>
+        <label for="promptAuditTemplate">文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
+        <label for="outputAuditTemplate">成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
       </div>
-      <label>生图翻译说明</label><textarea id="imagePromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
-      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核和图转文请选能看图的模型；留空时使用当前 LLM。转英文与辅助功能共用辅助渠道模型。</div>
+      <div id="auditViewRecognition" class="selfie-view-panel" role="tabpanel" aria-labelledby="auditViewTabRecognition" hidden>
+        <div class="grid">
+          <div><label for="reversePromptModel">查看生图提示词模型</label><select id="reversePromptModel"></select><div class="muted">留空时使用当前聊天 LLM</div></div>
+          <div><label for="ocrModel">形象参考图转文模型</label><select id="ocrModel"></select><div class="muted">留空时使用当前 LLM</div></div>
+        </div>
+      </div>
+      <div id="auditViewTranslation" class="selfie-view-panel" role="tabpanel" aria-labelledby="auditViewTabTranslation" hidden>
+        <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走辅助渠道对话模型，失败则保留原文。</p>
+        <div class="grid">
+          <label class="checkline"><input id="enableImagePromptEn" type="checkbox"> 生图提示词转英文</label>
+          <div><label for="promptEnMode">翻译模式</label>
+            <select id="promptEnMode">
+              <option value="if_cjk">含中文时翻译</option>
+              <option value="always">始终翻译</option>
+            </select>
+          </div>
+          <div><label for="promptEnModel">翻译模型</label><select id="promptEnModel"></select></div>
+        </div>
+        <label for="imagePromptEnTemplate">生图翻译说明</label><textarea id="imagePromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
+      </div>
+      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。识图和翻译模型均可独立选择；未选择时使用当前聊天 LLM 或辅助模型优先级。</div>
     </section>
 
     <section id="backup" class="floating-action-section">
@@ -927,26 +940,6 @@
         <div class="actions" style="margin-top:0;justify-content:flex-end">
           <button class="secondary" type="button" onclick="closePresetEditor()">取消</button>
           <button class="ok" id="presetEditorSaveBtn" type="button">保存预设</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="presetTransferModal" class="modal-mask">
-    <div class="modal">
-      <div class="between">
-        <h2 id="presetTransferTitle">预设文本</h2>
-        <button class="secondary" type="button" onclick="closePresetTransfer()">关闭</button>
-      </div>
-      <div class="modal-body">
-        <p id="presetTransferHint" class="muted">文本可以直接复制或粘贴；这里不会创建文件。</p>
-        <textarea id="presetTransferText" class="preset-transfer-text" spellcheck="false"></textarea>
-        <div id="presetTransferStatus" class="status" style="margin-top:10px"></div>
-      </div>
-      <div class="modal-footer">
-        <div class="actions" style="margin-top:0;justify-content:flex-end">
-          <button class="secondary" id="presetTransferCopyBtn" type="button">复制到剪贴板</button>
-          <button class="ok" id="presetTransferImportBtn" type="button" style="display:none">导入并合并</button>
         </div>
       </div>
     </div>

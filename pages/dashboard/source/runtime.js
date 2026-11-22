@@ -671,7 +671,6 @@
     let COS_MANAGE_ROWS = [];
     let PRESET_EDIT_ORIGINAL = '';
     let PRESET_EDIT_KIND = 'image';
-    let PRESET_TRANSFER_KIND = 'image';
     let PRESET_KIND = 'image';
     let PRESET_LOAD_SEQ = 0;
     const PRESET_MANAGER_PAGES = {image: 1, cos: 1, nai: 1};
@@ -1081,6 +1080,7 @@ Source prompt:
       img.prompt_audit_model ??= '';
       img.output_audit_model ??= '';
       img.ocr_model ??= '';
+      img.reverse_prompt_model ??= '';
       img.prompt_audit_template ??= '你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"type":"sex","percentage":0-100,"reason":"原因"}';
       img.output_audit_template ??= '你是图像安全审核员。请评估以下图片不适合普通用户的风险。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"type":"sex","percentage":0-100,"reason":"原因"}';
       if (img.prompt_audit_template === '你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{"allow":true/false,"reason":"原因"}') img.prompt_audit_template = '你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"type":"sex","percentage":0-100,"reason":"原因"}';
@@ -1214,6 +1214,7 @@ Source prompt:
       CONFIG.image.prompt_audit_model = $('promptAuditModel').value || '';
       CONFIG.image.output_audit_model = $('outputAuditModel').value || '';
       CONFIG.image.ocr_model = $('ocrModel').value || '';
+      CONFIG.image.reverse_prompt_model = $('reversePromptModel').value || '';
       delete CONFIG.image.audit_whitelist;
       CONFIG.image.blocked_words = textList('blockedWords');
       CONFIG.image.prompt_audit_template = $('promptAuditTemplate').value;

@@ -181,17 +181,32 @@ class CountedGenerationWorkflow:
         self.last_elapsed = float(result.get("elapsed_seconds") or self.last_elapsed)
         if files:
             await plugin._record_generated_images_async(self.event, 1)
+            failed_before = self.delivery_failed_shots
+            unknown_before = self.delivery_unknown_shots
             await self._deliver_files(files)
             self.all_files.extend(files)
             self.succeeded_shots += 1
         self._persist_progress(index + 1)
-        info = plugin._batch_success_text(
-            plugin._build_success_text(self.last_elapsed, len(files), self.used_model, self.event),
-            index + 1,
-            self.total,
-        )
-        if info:
-            await plugin._send_task_notification(self.task_id, self.event, info)
+        if files and self.delivery_failed_shots > failed_before:
+            await plugin._send_task_notification(
+                self.task_id,
+                self.event,
+                "图片已生成，但发送失败。可使用 /生图重发 重试发送。",
+            )
+        elif files and self.delivery_unknown_shots > unknown_before:
+            await plugin._send_task_notification(
+                self.task_id,
+                self.event,
+                "图片已生成，但消息投递结果未知。请先检查会话，避免重复发送。",
+            )
+        else:
+            info = plugin._batch_success_text(
+                plugin._build_success_text(self.last_elapsed, len(files), self.used_model, self.event),
+                index + 1,
+                self.total,
+            )
+            if info:
+                await plugin._send_task_notification(self.task_id, self.event, info)
 
     async def _deliver_files(self, files: List[str]) -> None:
         plugin = self.plugin

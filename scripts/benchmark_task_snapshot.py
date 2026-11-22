@@ -37,6 +37,7 @@ class _BenchmarkTask(WebTaskMixin):
     def __init__(self, tasks_path: Path, *, delay: float) -> None:
         self.tasks_path = str(tasks_path)
         self._web_task_lock = threading.RLock()
+        self._web_task_terminal_metrics_lock = threading.Lock()
         self._web_tasks: dict[str, dict[str, Any]] = {}
         self.WEB_TASK_SNAPSHOT_DELAY = max(0.001, float(delay))
         self.config = SimpleNamespace()
@@ -148,17 +149,27 @@ def _run_sample(task_count: int, *, terminal: bool, delay: float, timeout: float
         plugin.WEB_TASK_KEEP_LIMIT = max(plugin.WEB_TASK_KEEP_LIMIT, task_count)
         plugin._web_tasks = _task_fixture(task_count)
         errors: list[BaseException] = []
+        caller_durations_ms: list[float] = []
+        batch_started_at = [0.0]
+        batch_duration_ms: float | None = None
         if terminal:
-            barrier = threading.Barrier(task_count)
+            barrier = threading.Barrier(
+                task_count,
+                action=lambda: batch_started_at.__setitem__(0, time.perf_counter()),
+            )
 
             def finish(task_id: str) -> None:
                 try:
                     barrier.wait(timeout=timeout)
+                    caller_started_at = time.perf_counter()
                     plugin._set_web_image_task(
                         task_id,
                         status="succeeded",
                         success=True,
                         result={"success": True, "task_id": task_id},
+                    )
+                    caller_durations_ms.append(
+                        max(0.0, time.perf_counter() - caller_started_at) * 1000.0
                     )
                 except BaseException as exc:  # pragma: no cover - reported below
                     errors.append(exc)
@@ -170,6 +181,9 @@ def _run_sample(task_count: int, *, terminal: bool, delay: float, timeout: float
                 thread.join(timeout=timeout)
             if errors or any(thread.is_alive() for thread in threads):
                 raise RuntimeError(f"terminal snapshot benchmark failed: {errors!r}")
+            batch_duration_ms = max(
+                0.0, time.perf_counter() - batch_started_at[0]
+            ) * 1000.0
         else:
             for index, task_id in enumerate(plugin._web_tasks):
                 plugin._set_web_image_task(
@@ -192,6 +206,11 @@ def _run_sample(task_count: int, *, terminal: bool, delay: float, timeout: float
             "timer_flush_count": int(health["timer_flush_count"]),
             "forced_flush_count": int(health["forced_flush_count"]),
             "skipped_write_count": int(health["skipped_write_count"]),
+            "caller_completion_latency_ms": caller_durations_ms,
+            "batch_completion_ms": batch_duration_ms,
+            "terminal_update_max_concurrency": int(
+                health["terminal_update_concurrency"]["max_concurrency"]
+            ),
             "reloadable": reloadable,
             "complete_status": complete,
         }
@@ -199,6 +218,16 @@ def _run_sample(task_count: int, *, terminal: bool, delay: float, timeout: float
 
 def _aggregate(samples: list[dict[str, Any]], task_count: int, scenario: str) -> dict[str, Any]:
     durations = [duration for sample in samples for duration in sample["write_latency_ms"]]
+    caller_durations = [
+        duration
+        for sample in samples
+        for duration in sample["caller_completion_latency_ms"]
+    ]
+    batch_durations = [
+        sample["batch_completion_ms"]
+        for sample in samples
+        if sample["batch_completion_ms"] is not None
+    ]
     writes = [sample["actual_writes"] for sample in samples]
     merge_attempts = [
         sample["scheduled_flush_count"] + sample["coalesced_update_count"]
@@ -213,6 +242,11 @@ def _aggregate(samples: list[dict[str, Any]], task_count: int, scenario: str) ->
         "write_bytes_total": sum(sample["write_bytes_total"] for sample in samples),
         "final_file_size_bytes": _size_summary(sample["final_file_size_bytes"] for sample in samples),
         "write_latency_ms": _latency_summary(durations),
+        "caller_completion_latency_ms": _latency_summary(caller_durations),
+        "batch_completion_ms": _latency_summary(batch_durations),
+        "terminal_update_max_concurrency": max(
+            (sample["terminal_update_max_concurrency"] for sample in samples), default=0
+        ),
         "scheduled_flush_count": sum(sample["scheduled_flush_count"] for sample in samples),
         "coalesced_update_count": sum(merged),
         "timer_flush_count": sum(sample["timer_flush_count"] for sample in samples),

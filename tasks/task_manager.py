@@ -384,9 +384,62 @@ class WebTaskMixin:
             limit = 128
         self._web_task_snapshot_duration_samples_ms = samples[-limit:]
 
-    def _snapshot_duration_health_locked(self) -> Dict[str, Any]:
+    def _record_terminal_persist_wait_locked(self, duration_ms: float) -> None:
+        duration = self._coerce_snapshot_duration(duration_ms)
+        if not math.isfinite(duration):
+            return
+        samples = list(getattr(self, "_web_task_terminal_persist_wait_samples_ms", ()) or ())
+        samples.append(duration)
+        try:
+            limit = max(1, int(self.TASK_SNAPSHOT_DURATION_SAMPLE_LIMIT))
+        except (TypeError, ValueError, OverflowError):
+            limit = 128
+        self._web_task_terminal_persist_wait_samples_ms = samples[-limit:]
+
+    def _update_terminal_update_inflight(self, delta: int) -> int:
+        lock = getattr(self, "_web_task_terminal_metrics_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._web_task_terminal_metrics_lock = lock
+        with lock:
+            inflight = max(0, int(getattr(self, "_web_task_terminal_update_inflight", 0) or 0))
+            inflight = max(0, inflight + int(delta))
+            self._web_task_terminal_update_inflight = inflight
+            samples = list(getattr(self, "_web_task_terminal_update_concurrency_samples", ()) or ())
+            if delta > 0:
+                samples.append(inflight)
+            try:
+                limit = max(1, int(self.TASK_SNAPSHOT_DURATION_SAMPLE_LIMIT))
+            except (TypeError, ValueError, OverflowError):
+                limit = 128
+            samples = samples[-limit:]
+            self._web_task_terminal_update_concurrency_samples = samples
+            maximum = max(samples, default=0)
+            self._web_task_terminal_update_max_concurrency = maximum
+            return maximum
+
+    def _terminal_update_concurrency_health_locked(self) -> Dict[str, int]:
+        lock = getattr(self, "_web_task_terminal_metrics_lock", None)
+        if lock is None:
+            return {"inflight": 0, "max_concurrency": 0}
+        with lock:
+            return {
+                "inflight": max(0, int(getattr(self, "_web_task_terminal_update_inflight", 0) or 0)),
+                "max_concurrency": max(
+                    0, int(getattr(self, "_web_task_terminal_update_max_concurrency", 0) or 0)
+                ),
+            }
+
+    def _snapshot_duration_health_locked(
+        self, sample_values: Optional[Iterable[Any]] = None,
+    ) -> Dict[str, Any]:
         samples = []
-        for value in list(getattr(self, "_web_task_snapshot_duration_samples_ms", ()) or ()):
+        values = (
+            getattr(self, "_web_task_snapshot_duration_samples_ms", ())
+            if sample_values is None
+            else sample_values
+        )
+        for value in list(values or ()):
             try:
                 duration = float(value)
             except (TypeError, ValueError, OverflowError):
@@ -431,6 +484,10 @@ class WebTaskMixin:
                 getattr(self, "_web_task_snapshot_last_write_duration_ms", 0.0)
             ),
             "write_duration_ms": self._snapshot_duration_health_locked(),
+            "terminal_persist_wait_ms": self._snapshot_duration_health_locked(
+                getattr(self, "_web_task_terminal_persist_wait_samples_ms", ())
+            ),
+            "terminal_update_concurrency": self._terminal_update_concurrency_health_locked(),
             "last_write_at": str(getattr(self, "_web_task_snapshot_last_write_at", "") or "")[:64],
             "last_failure_reason": redact_sensitive_text(
                 str(getattr(self, "_web_task_snapshot_last_failure_reason", "") or "")
@@ -1181,6 +1238,15 @@ class WebTaskMixin:
     def _set_web_image_task(self, task_id: str, **fields: Any) -> None:
         lifecycle_event = None
         notification_event = None
+        terminal_persist_started = (
+            time.perf_counter()
+            if "status" in fields
+            and str(fields.get("status") or "").strip().lower() in self._TASK_TERMINAL_STATUSES
+            else None
+        )
+        terminal_update_tracked = terminal_persist_started is not None
+        if terminal_update_tracked:
+            self._update_terminal_update_inflight(1)
         try:
             with self._web_task_lock:
                 task = self._web_tasks.get(task_id)
@@ -1205,6 +1271,10 @@ class WebTaskMixin:
                     self._prune_web_tasks_locked()
                     if len(self._web_tasks) != task_count_before_prune:
                         self._persist_web_tasks_locked()
+                        if terminal_persist_started is not None:
+                            self._record_terminal_persist_wait_locked(
+                                (time.perf_counter() - terminal_persist_started) * 1000.0
+                            )
                         return
                     self._mark_snapshot_write_skipped_locked()
                     return
@@ -1244,9 +1314,15 @@ class WebTaskMixin:
                 durable_fields = set(fields) - self._TASK_VOLATILE_FIELDS
                 if "status" in durable_fields or task.get("status") in self._TASK_TERMINAL_STATUSES or getattr(self, "_terminating", False):
                     self._persist_web_tasks_locked()
+                    if terminal_persist_started is not None:
+                        self._record_terminal_persist_wait_locked(
+                            (time.perf_counter() - terminal_persist_started) * 1000.0
+                        )
                 elif durable_fields:
                     self._schedule_web_task_snapshot_locked()
         finally:
+            if terminal_update_tracked:
+                self._update_terminal_update_inflight(-1)
             if lifecycle_event:
                 self._log_task_lifecycle_event(*lifecycle_event)
             if notification_event:

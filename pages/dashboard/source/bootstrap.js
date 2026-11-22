@@ -58,7 +58,6 @@
       else if (mask === $('mediaSourceModal')) closeMediaSourceModal();
       else if (mask === $('mediaLightboxModal')) closeMediaLightbox();
       else if (mask === $('presetEditorModal')) closePresetEditor();
-      else if (mask === $('presetTransferModal')) closePresetTransfer();
       else if (mask === $('cosPoolModal')) closeCosPoolModal();
       else if (mask === $('studioCreateModal')) closeStudioCreateModal();
       else if (mask === $('studioConnectModal')) closeStudioConnectModal();
@@ -79,7 +78,6 @@
       if ($('channelModal')?.classList.contains('show')) { closeChannelModal(); return; }
       if ($('proxyModal')?.classList.contains('show')) { closeProxyModal(); return; }
       if ($('presetEditorModal')?.classList.contains('show')) { closePresetEditor(); return; }
-      if ($('presetTransferModal')?.classList.contains('show')) { closePresetTransfer(); return; }
       if ($('cosPoolModal')?.classList.contains('show')) { closeCosPoolModal(); return; }
       if ($('studioCreateModal')?.classList.contains('show')) { closeStudioCreateModal(); return; }
       if ($('studioConnectModal')?.classList.contains('show')) closeStudioConnectModal();
@@ -116,8 +114,6 @@
       await loadManagedPromptPresets(PRESET_KIND);
     };
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
-    $('presetTransferCopyBtn').onclick = copyPresetTransfer;
-    $('presetTransferImportBtn').onclick = importPresetTransfer;
     $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); invalidateMetricsRequests(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); await loadAssetCollections(true); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
@@ -254,6 +250,21 @@
         event.preventDefault();
         selfieViewTabs[nextIndex].focus();
         switchSelfieView(selfieViewTabs[nextIndex].dataset.selfieView);
+      });
+    });
+    const auditViewTabs = [...document.querySelectorAll('[data-audit-view]')];
+    auditViewTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => switchAuditView(tab.dataset.auditView));
+      tab.addEventListener('keydown', event => {
+        let nextIndex = index;
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % auditViewTabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (index + auditViewTabs.length - 1) % auditViewTabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = auditViewTabs.length - 1;
+        else return;
+        event.preventDefault();
+        auditViewTabs[nextIndex].focus();
+        switchAuditView(auditViewTabs[nextIndex].dataset.auditView);
       });
     });
     if ($('refreshSelfieBtn')) $('refreshSelfieBtn').onclick = () => refreshSelfie(true);

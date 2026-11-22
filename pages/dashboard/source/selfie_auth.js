@@ -171,6 +171,18 @@
         if (panel) panel.hidden = !active;
       }
     }
+    function switchAuditView(view) {
+      const availableViews = ['review', 'recognition', 'translation'];
+      if (!availableViews.includes(view)) return;
+      for (const tab of document.querySelectorAll('[data-audit-view]')) {
+        const active = tab.dataset.auditView === view;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        const panel = $(tab.getAttribute('aria-controls'));
+        if (panel) panel.hidden = !active;
+      }
+    }
     function ensureSelfieStateScope() {
       const scope = protectedMediaScope();
       if (SELFIE_STATE_SCOPE && SELFIE_STATE_SCOPE !== scope) {

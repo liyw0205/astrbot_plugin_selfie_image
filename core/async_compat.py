@@ -2,9 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Iterable
 import threading
-from typing import Any
+from typing import Any, TypeVar
 from weakref import WeakSet
+
+
+T = TypeVar("T")
+
+
+async def gather_cancel_on_error(awaitables: Iterable[Awaitable[T]]) -> list[T]:
+    """Gather one bounded batch and stop its siblings if it fails or is cancelled."""
+    tasks = []
+    try:
+        for awaitable in awaitables:
+            tasks.append(asyncio.ensure_future(awaitable))
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 _CANCEL_REQUESTED: WeakSet[Any] = WeakSet()

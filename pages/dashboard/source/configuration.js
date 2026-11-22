@@ -895,6 +895,20 @@
             ['最近快照写入', `${String(taskSnapshot.last_write_at || '-')} · ${String(taskSnapshot.last_write_duration_ms ?? 0)} ms`],
           );
         }
+        const terminalWait = taskSnapshot.terminal_persist_wait_ms || {};
+        if (Number(terminalWait.samples) > 0) {
+          healthItems.push([
+            '终态快照等待',
+            `${String(terminalWait.samples)} 个样本 · P50 ${String(terminalWait.p50 ?? 0)} ms · P95 ${String(terminalWait.p95 ?? 0)} ms · 最大 ${String(terminalWait.max ?? 0)} ms`,
+          ]);
+        }
+        const terminalConcurrency = taskSnapshot.terminal_update_concurrency || {};
+        if (Number(terminalConcurrency.max_concurrency) > 0 || Number(terminalConcurrency.inflight) > 0) {
+          healthItems.push([
+            '终态更新并发',
+            `当前 ${String(terminalConcurrency.inflight ?? 0)} · 最近样本峰值 ${String(terminalConcurrency.max_concurrency ?? 0)}`,
+          ]);
+        }
         if (taskSnapshot.max_bytes !== undefined) {
           healthItems.push(['快照占用', `${(Number(taskSnapshot.size_bytes || 0) / 1024 / 1024).toFixed(2)} / ${(Number(taskSnapshot.max_bytes || 0) / 1024 / 1024).toFixed(2)} MiB`]);
         }

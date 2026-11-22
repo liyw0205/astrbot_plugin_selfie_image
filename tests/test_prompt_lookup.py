@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from PIL import Image, ImageDraw
 
+from astrbot_plugin_selfie_image.core.models import AICatConfig
 from astrbot_plugin_selfie_image.core.providers import ImageReference
 from astrbot_plugin_selfie_image.core.utils import save_json_file, summarize_record_for_list
 from astrbot_plugin_selfie_image.generation.prompt_lookup import (
@@ -357,6 +358,48 @@ def test_reverse_codes_are_separate_persistent_and_reusable(plugin):
     del plugin._prompt_reverse_records
     assert asyncio.run(run(code)) == results
     assert plugin._reverse_image_prompt_with_llm.await_count == 1
+
+
+def test_reverse_prompt_uses_configured_auxiliary_vision_model(plugin):
+    image = sample_image()
+    plugin.config = AICatConfig.from_dict({
+        "image": {"reverse_prompt_model": "vision/qwen-vl"},
+        "audit_channels": [{
+            "name": "vision",
+            "provider_type": "openai",
+            "base_url": "https://vision.test",
+            "api_key": "sk-test",
+            "enabled_models": ["qwen-vl"],
+        }],
+    })
+    plugin._audit_chat_via_target = AsyncMock(return_value="```\n人物站在窗边，柔和自然光\n```")
+    plugin._call_text_llm = AsyncMock(return_value="unexpected chat model result")
+
+    result = asyncio.run(SelfieImagePlugin._reverse_image_prompt_with_llm(plugin, Event(), image))
+
+    assert result == "人物站在窗边，柔和自然光"
+    target, = plugin._audit_chat_via_target.await_args.args[:1]
+    assert target.label == "vision/qwen-vl"
+    assert plugin._audit_chat_via_target.await_args.kwargs["images"] == [image]
+    plugin._call_text_llm.assert_not_awaited()
+
+
+def test_reverse_prompt_without_selected_model_uses_current_chat_llm(plugin):
+    image = sample_image(7)
+    event = Event()
+    plugin.config = AICatConfig.from_dict({"image": {"reverse_prompt_model": ""}})
+    plugin._audit_chat_via_target = AsyncMock()
+    plugin._call_text_llm = AsyncMock(return_value="```\n人物穿着白衬衫\n```")
+
+    result = asyncio.run(SelfieImagePlugin._reverse_image_prompt_with_llm(plugin, event, image))
+
+    assert result == "人物穿着白衬衫"
+    call = plugin._call_text_llm.await_args
+    assert call.args[0] is event
+    assert len(call.args) == 2
+    assert "反推出一个适合图像生成模型使用的中文提示词" in call.args[1]
+    assert call.kwargs == {"timeout": 30, "images": [image]}
+    plugin._audit_chat_via_target.assert_not_awaited()
 
 
 @pytest.mark.parametrize("show_generation_info", [False, True])

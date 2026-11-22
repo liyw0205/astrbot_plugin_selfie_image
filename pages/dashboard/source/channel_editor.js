@@ -928,6 +928,7 @@
       preserveSelection('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       preserveSelection('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
       preserveSelection('ocrModel', auditLabels, CONFIG.image?.ocr_model || '');
+      preserveSelection('reversePromptModel', auditLabels, CONFIG.image?.reverse_prompt_model || '');
       preserveSelection('promptEnModel', auditLabels, CONFIG.image?.prompt_en_model || '');
       const testChannels = (CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
       const currentTestChannel = $('testChannel').value;

@@ -34,12 +34,25 @@ def test_task_snapshot_benchmark_reports_merge_and_terminal_matrix():
     assert active_one["scenario"] == "active_timer_merge"
     assert active_one["actual_writes"] == 1
     assert active_one["merge_rate"] == 0.0
+    assert active_one["caller_completion_latency_ms"]["samples"] == 0
+    assert active_one["batch_completion_ms"]["samples"] == 0
+    assert active_one["terminal_update_max_concurrency"] == 0
     assert terminal_one["scenario"] == "terminal_concurrency"
     assert terminal_one["actual_writes"] == 1
     assert terminal_one["complete_status_samples"] == 1
+    assert terminal_one["caller_completion_latency_ms"]["samples"] == 1
+    assert terminal_one["batch_completion_ms"]["samples"] == 1
+    assert terminal_one["terminal_update_max_concurrency"] == 1
     assert active_three["actual_writes"] == 1
     assert active_three["coalesced_update_count"] == 2
     assert active_three["merge_rate"] == pytest.approx(2 / 3, abs=1e-6)
+    assert active_three["caller_completion_latency_ms"]["samples"] == 0
+    assert active_three["batch_completion_ms"]["samples"] == 0
+    assert active_three["terminal_update_max_concurrency"] == 0
     assert terminal_three["actual_writes"] == 3
     assert terminal_three["forced_flush_count"] == 3
     assert terminal_three["complete_status_samples"] == 1
+    assert terminal_three["caller_completion_latency_ms"]["samples"] == 3
+    assert terminal_three["batch_completion_ms"]["samples"] == 1
+    assert terminal_three["terminal_update_max_concurrency"] >= 1
+    assert terminal_three["batch_completion_ms"]["max"] >= terminal_three["caller_completion_latency_ms"]["max"]

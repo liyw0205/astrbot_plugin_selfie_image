@@ -325,7 +325,7 @@
       const cosLabels = {cos: 'COS 套装', cos_pose: 'COS 姿势', cos_scene: 'COS 场景', cos_framing: 'COS 镜头', cos_composition: 'COS 构图', cos_view: 'COS 视角'};
       Object.entries(cosLabels).forEach(([key, label]) => add(label, r[key] || rd[key]));
       if (!rows.length) return '';
-      return `<div class="detail-title"><h3>请求参数与随机结果</h3></div><div class="grid">${rows.join('')}</div>`;
+      return `<div class="detail-title"><h3>请求参数与随机结果</h3></div><div class="record-detail-grid">${rows.join('')}</div>`;
     }
     function recordModelLabel(record) {
       return String(record.label || record.model || record.target || record.used_model || '').trim() || '未记录模型';
@@ -647,6 +647,8 @@
             ? `<div class="status" data-media-placeholder>加载缩略图…</div><img data-cache-path="${escapeHtml(media.path)}" data-cache-variant="thumbnail" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
             : '<div class="status">没有缓存媒体</div>';
           const flags = `${record.pinned ? '<span>置顶</span>' : ''}${record.favorite ? '<span>收藏</span>' : ''}`;
+          const time = String(record.time || '');
+          const model = String(record.used_model || '未记录模型');
           return `<article class="asset-card" data-record-id="${escapeHtml(id)}">
             <div class="asset-thumb">
               <input class="asset-select" type="checkbox" ${ASSET_SELECTION.has(id) ? 'checked' : ''} aria-label="选择资产" data-asset-select="${escapeHtml(id)}">
@@ -655,7 +657,10 @@
             </div>
             <div class="asset-card-body">
               <div class="asset-card-title"><b title="${escapeHtml(name)}">${escapeHtml(name)}</b><span class="pill ${lifecycle.tone}">${escapeHtml(lifecycle.label)}</span></div>
-              <div class="muted">${escapeHtml(record.time || '')} · ${escapeHtml(record.used_model || '未记录模型')}</div>
+              <div class="asset-card-context">
+                <span title="时间：${escapeHtml(time)}"><b>时间</b> ${escapeHtml(time || '未记录')}</span>
+                <span title="模型：${escapeHtml(model)}"><b>模型</b> ${escapeHtml(model)}</span>
+              </div>
               <div class="asset-card-prompt">${escapeHtml(prompt || record.note || '没有提示词或备注')}</div>
               <div class="asset-card-meta">${assetTagPills(record)}</div>
               <div class="asset-card-actions">

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -11,7 +12,13 @@ import pytest
 
 from astrbot_plugin_selfie_image.core.constants import GENERATION_TIMING_STAGES
 from astrbot_plugin_selfie_image.core.models import AICatConfig
-from astrbot_plugin_selfie_image.core.providers import ImageGenerateResult, ImageReference
+from astrbot_plugin_selfie_image.core import provider_parser
+from astrbot_plugin_selfie_image.core.providers import (
+    BaseImageAdapter,
+    ImageGenerateRequest,
+    ImageGenerateResult,
+    ImageReference,
+)
 from astrbot_plugin_selfie_image.core.utils import compact_generation_record
 from astrbot_plugin_selfie_image.features import reference_collector
 from astrbot_plugin_selfie_image.generation import image_workflow
@@ -82,6 +89,7 @@ def test_successful_workflow_keeps_stage_and_generation_durations_separate(workf
     assert result["elapsed_seconds"] == 7
     assert workflow.records[0]["stage_timings"] == {
         "reference_fetch": 1.25, "image_to_text": 2.0, "prompt_audit": 3.0, "output_audit": 4.0,
+        "image_validation": 0.0, "image_cache_write": 0.0, "image_digest": 0.0,
     }
 
 
@@ -107,6 +115,7 @@ def test_workflow_emits_bounded_stage_and_channel_attempt_events(workflow, monke
                 "retry_count": 0,
                 "retry_action": "next_key",
                 "retryable": True,
+                "stage_timings": {"result_url_download": 0.5, "secret": 99},
             },
             {
                 "attempt": 1,
@@ -118,6 +127,7 @@ def test_workflow_emits_bounded_stage_and_channel_attempt_events(workflow, monke
                 "key_index": 2,
                 "retry_count": 1,
                 "retry_action": "stop",
+                "stage_timings": {"result_url_download": 0.25, "image_base64_decode": 0.1},
             },
         ],
     )
@@ -133,16 +143,206 @@ def test_workflow_emits_bounded_stage_and_channel_attempt_events(workflow, monke
     assert stage_event["task_id"] == "web-12345678-1"
     assert stage_event["trace_id"] == "gen-12345678"
     assert stage_event["stage_timings"]["prompt_audit"] == 3.0
+    assert stage_event["stage_timings"]["provider_attempts"] == 3.75
+    assert stage_event["stage_timings"]["result_url_download"] == 0.75
     assert len(attempt_events) == 2
     assert [(event["success"], event["retry_action"]) for event in attempt_events] == [
         (False, "next_key"),
         (True, "stop"),
     ]
     assert all(event["trace_id"] == "gen-12345678" for event in attempt_events)
+    assert attempt_events[0]["stage_timings"] == {"result_url_download": 0.5}
     serialized = json.dumps(parsed)
     assert "private-channel-key" not in serialized
     assert "private prompt" not in serialized
+    assert '"secret"' not in serialized
     assert all("error" not in event for event in parsed)
+
+
+def test_adapter_reports_response_decode_and_result_download_timings(monkeypatch):
+    async def fetch(_session, _url, _timeout, **_kwargs):
+        return PNG_BYTES
+
+    monkeypatch.setattr(provider_parser, "fetch_generated_image_url", fetch)
+    adapter = BaseImageAdapter(
+        SimpleNamespace(extra={}, proxy="", timeout=1),
+        object(),
+    )
+    request = ImageGenerateRequest(prompt="test")
+
+    url_result = asyncio.run(adapter.result_from_response(
+        {"data": [{"url": "https://cdn.example.test/image.png"}]}, request, ""
+    ))
+    encoded = base64.b64encode(PNG_BYTES).decode("ascii")
+    base64_result = asyncio.run(adapter.result_from_response(
+        {"data": [{"b64_json": encoded}]}, request, ""
+    ))
+
+    assert url_result.images == [PNG_BYTES]
+    assert url_result.stage_timings["provider_response_parse"] >= 0
+    assert url_result.stage_timings["result_url_download"] >= 0
+    assert base64_result.images == [PNG_BYTES]
+    assert base64_result.stage_timings["provider_response_parse"] >= 0
+    assert base64_result.stage_timings["image_base64_decode"] >= 0
+
+
+def test_openai_fast_path_reports_base64_decode_timing(monkeypatch):
+    from astrbot_plugin_selfie_image.core.providers import OpenAIImageAdapter
+
+    encoded = base64.b64encode(PNG_BYTES).decode("ascii")
+    original_decode = provider_parser.b64_to_bytes
+
+    def slow_decode(value):
+        import time
+
+        time.sleep(0.02)
+        return original_decode(value)
+
+    monkeypatch.setattr(provider_parser, "b64_to_bytes", slow_decode)
+    adapter = OpenAIImageAdapter(
+        SimpleNamespace(extra={}, proxy="", timeout=1), object()
+    )
+    result = asyncio.run(adapter._result_from_openai_images_data(
+        {"data": [{"b64_json": encoded}]}, ImageGenerateRequest(prompt="test"), ""
+    ))
+
+    assert result.images == [PNG_BYTES]
+    assert result.stage_timings["image_base64_decode"] >= 0.02
+    assert result.stage_timings["image_response_extract"] >= result.stage_timings["image_base64_decode"]
+
+
+def test_result_url_downloads_are_bounded_ordered_and_keep_failure_diagnostics(monkeypatch):
+    active = 0
+    max_active = 0
+
+    async def fetch(_session, url, _timeout, *, diagnostics, **_kwargs):
+        nonlocal active, max_active
+        index = int(url.rsplit("/", 1)[-1].split(".", 1)[0])
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep((5 - index) * 0.002)
+            if index in {1, 3}:
+                diagnostics.append(f"failed-{index}")
+                return None
+            return b"\x89PNG\r\n\x1a\n" + str(index).encode() + b"0" * 128
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(provider_parser, "fetch_generated_image_url", fetch)
+    payload = {"data": [{"url": f"https://cdn.example.test/{index}.png"} for index in range(5)]}
+    collected = provider_parser.collect_images_from_unknown(payload)
+    expected_indexes = [
+        int(url.rsplit("/", 1)[-1].split(".", 1)[0])
+        for url in collected["urls"]
+        if int(url.rsplit("/", 1)[-1].split(".", 1)[0]) not in {1, 3}
+    ]
+    diagnostics = []
+    timings = {}
+    images = asyncio.run(provider_parser.images_from_response_unknown(
+        object(), payload, timeout=1, download_diagnostics=diagnostics,
+        collected=collected, stage_timings=timings,
+    ))
+
+    assert [int(image[8:9]) for image in images] == expected_indexes
+    expected_failures = [
+        f"failed-{url.rsplit('/', 1)[-1].split('.', 1)[0]}"
+        for url in collected["urls"]
+        if int(url.rsplit("/", 1)[-1].split(".", 1)[0]) in {1, 3}
+    ]
+    assert diagnostics == expected_failures
+    assert max_active == 3
+    assert timings["result_url_download"] >= 0
+
+
+def test_result_url_download_cancels_batch_siblings_on_unexpected_error(monkeypatch):
+    cancelled = []
+
+    async def fetch(_session, url, _timeout, **_kwargs):
+        if url.endswith("/1.png"):
+            await asyncio.sleep(0.001)
+            raise RuntimeError("broken downloader")
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(url)
+            raise
+
+    monkeypatch.setattr(provider_parser, "fetch_generated_image_url", fetch)
+    payload = {"data": [{"url": f"https://cdn.example.test/{index}.png"} for index in range(3)]}
+
+    with pytest.raises(RuntimeError, match="broken downloader"):
+        asyncio.run(provider_parser.images_from_response_unknown(object(), payload, timeout=1))
+
+    assert len(cancelled) == 2
+
+
+def test_result_url_download_waits_for_inflight_fetches_on_cancellation(monkeypatch):
+    started = asyncio.Event()
+    started_count = 0
+    cancelled = []
+
+    async def fetch(_session, url, _timeout, **_kwargs):
+        nonlocal started_count
+        started_count += 1
+        if started_count == 3:
+            started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(url)
+            raise
+
+    monkeypatch.setattr(provider_parser, "fetch_generated_image_url", fetch)
+    payload = {"data": [{"url": f"https://cdn.example.test/{index}.png"} for index in range(3)]}
+
+    async def run():
+        task = asyncio.create_task(provider_parser.images_from_response_unknown(
+            object(), payload, timeout=1
+        ))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+
+    assert started_count == 3
+    assert len(cancelled) == 3
+
+
+def test_reference_downloads_are_bounded_ordered_and_keep_failure_reasons(monkeypatch):
+    active = 0
+    max_active = 0
+
+    async def fetch(source, _session, *, failure_reasons, **_kwargs):
+        nonlocal active, max_active
+        index = int(source.rsplit("-", 1)[-1])
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep((5 - index) * 0.002)
+            if index in {1, 3}:
+                failure_reasons.append(f"failed-{index}")
+                return None
+            return b"\x89PNG\r\n\x1a\n" + str(index).encode() + b"0" * 128, "image/png"
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(reference_collector, "fetch_image_source", fetch)
+    failures = []
+    refs, failed = asyncio.run(reference_collector.download_sources_as_references(
+        [f"reference-{index}" for index in range(5)],
+        object(),
+        max_bytes=1024,
+        failure_reasons=failures,
+    ))
+
+    assert [ref.data[8:9] for ref in refs] == [b"0", b"2", b"4"]
+    assert [ref.source_url for ref in refs] == ["reference-0", "reference-2", "reference-4"]
+    assert failed == 2
+    assert failures == ["failed-1", "failed-3"]
+    assert max_active == 3
 
 
 def test_structured_log_failure_does_not_change_generation_result(workflow, monkeypatch):
@@ -206,6 +406,7 @@ def test_failed_workflow_retains_only_stages_that_ran(workflow, failure):
     if failure != "image_to_text":
         expected["prompt_audit"] = 3.0
     if failure == "output_audit":
+        expected.update({"image_validation": 0.0, "image_cache_write": 0.0, "image_digest": 0.0})
         expected["output_audit"] = 4.0
     assert workflow.records[0]["stage_timings"] == expected
 
@@ -216,7 +417,9 @@ def test_disabled_or_exempt_audit_does_not_add_zero_samples(workflow, exempt):
     workflow.plugin.config.image_enable_prompt_audit = exempt
     workflow.plugin.config.image_enable_output_audit = exempt
     assert workflow.run(refs=[], reference_selection=None)["success"] is True
-    assert "stage_timings" not in workflow.records[0]
+    assert "prompt_audit" not in workflow.records[0]["stage_timings"]
+    assert "output_audit" not in workflow.records[0]["stage_timings"]
+    assert "image_validation" in workflow.records[0]["stage_timings"]
 
 
 def test_explicit_reference_roles_receive_collection_latency_once(workflow):

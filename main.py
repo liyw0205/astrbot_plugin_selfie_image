@@ -376,6 +376,9 @@ class SelfieImagePlugin(
         self._records: List[Dict[str, Any]] = []
         self._record_seq = 0
         self._web_task_lock = threading.RLock()
+        self._web_task_terminal_metrics_lock = threading.Lock()
+        self._web_task_terminal_update_inflight = 0
+        self._web_task_terminal_update_max_concurrency = 0
         self._web_tasks: Dict[str, Dict[str, Any]] = {}
         self._web_task_seq = 0
         self._startup_load_task: Optional[asyncio.Task] = None
@@ -3745,7 +3748,7 @@ class SelfieImagePlugin(
 
     @filter.command("查看生图提示词")
     async def cmd_reverse_image_prompt(self, event: AstrMessageEvent, code: str = "") -> AsyncGenerator[Any, None]:
-        """引用图片由当前聊天 LLM 反推，或按编号取回已有反推结果。"""
+        """引用图片由所选识图模型反推（未选择时用当前聊天 LLM），或按编号取回已有结果。"""
         denied = self._permission_denied_message(event)
         if denied:
             yield event.plain_result(denied)
@@ -3986,7 +3989,14 @@ class SelfieImagePlugin(
         result = await self._await_command_image_task(task)
         files = [str(item) for item in (result.get("files") or []) if str(item).strip()]
         if files:
-            await self._send_generated_images(event, files)
+            delivery = await self._send_generated_images(event, files)
+            failed = int(getattr(delivery, "failed_count", 0) or 0)
+            unknown = int(getattr(delivery, "unknown_count", 0) or 0)
+            sent = int(delivery or 0)
+            if failed or (sent < len(files) and not unknown):
+                yield event.plain_result("图片已生成，但发送失败。可使用 /生图重发 重试发送。")
+            elif unknown:
+                yield event.plain_result("图片已生成，但消息投递结果未知。请先检查会话，避免重复发送。")
         if not result.get("success") and not files:
             yield event.plain_result(f"记录复用失败：{result.get('error') or '生成失败'}")
 

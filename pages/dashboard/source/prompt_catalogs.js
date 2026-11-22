@@ -617,8 +617,8 @@
         cosManager.style.display = isCos ? '' : 'none';
       }
       if ($('presetAddBtn')) $('presetAddBtn').style.display = isCos ? 'none' : '';
-      if ($('presetImportBtn')) $('presetImportBtn').textContent = isCos ? '导入池' : '导入文本';
-      if ($('presetExportBtn')) $('presetExportBtn').textContent = isCos ? '导出池' : '导出并复制';
+      if ($('presetImportBtn')) $('presetImportBtn').textContent = isCos ? '导入池文件' : '导入文件';
+      if ($('presetExportBtn')) $('presetExportBtn').textContent = isCos ? '导出池文件' : '导出文件';
       presetManagerStatus(isCos ? 'COS 池管理' : '正在读取预设…');
       if (isCos) await loadManagedCosPool();
       else await loadManagedPromptPresets(PRESET_KIND);
@@ -687,7 +687,7 @@
         presetManagerStatus(e.message || '删除失败', true);
       }
     }
-    function presetTransferPayload(rows = PRESET_MANAGE_ROWS, kind = PRESET_KIND) {
+    function promptPresetFilePayload(rows = PRESET_MANAGE_ROWS, kind = PRESET_KIND) {
       return {
         version: 1,
         type: 'selfie-image-prompt-presets',
@@ -711,16 +711,9 @@
         const loadStatus = Array.isArray(data) ? res.load_status : data?.load_status;
         if (loadStatus && loadStatus.ok === false) throw new Error(loadStatus.error || '预设读取失败');
         const rows = Array.isArray(data) ? data : (Array.isArray(data?.presets) ? data.presets : []);
-        $('presetTransferTitle').textContent = '导出预设文本';
-        $('presetTransferHint').textContent = '已生成 JSON 文本。系统会尝试写入剪贴板，失败时请在下方文本框中手动全选复制。';
-        $('presetTransferText').value = JSON.stringify(presetTransferPayload(rows, kind), null, 2);
-        $('presetTransferImportBtn').style.display = 'none';
-        $('presetTransferCopyBtn').style.display = '';
-        $('presetTransferStatus').textContent = '';
-        $('presetTransferModal').classList.add('show');
-        try { await copyPresetTransfer(); } catch (e) {
-          $('presetTransferStatus').textContent = e.message || '复制失败，请手动复制';
-        }
+        const label = kind === 'nai' ? 'nai-artist-presets' : 'image-presets';
+        downloadJsonFile(promptPresetFilePayload(rows, kind), `selfie-image-${label}-${new Date().toISOString().slice(0,10)}.json`);
+        showToast(`${kind === 'nai' ? 'NAI 画师串' : '生图预设'}文件已导出`, 'ok');
       } catch (e) {
         showToast(e.message || '预设导出失败', 'bad');
       }
@@ -730,56 +723,36 @@
         openCosPoolImport();
         return;
       }
-      PRESET_TRANSFER_KIND = PRESET_KIND;
-      $('presetTransferTitle').textContent = '导入预设文本';
-      $('presetTransferHint').textContent = '把导出的 JSON 粘贴到这里，导入会按名称合并，重名预设将被覆盖。';
-      $('presetTransferText').value = '';
-      $('presetTransferCopyBtn').style.display = 'none';
-      $('presetTransferImportBtn').style.display = '';
-      $('presetTransferStatus').textContent = '';
-      $('presetTransferModal').classList.add('show');
-      $('presetTransferText').focus();
+      const kind = PRESET_KIND;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/json,.json';
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          const parsed = JSON.parse(await file.text());
+          await importPromptPresetFilePayload(parsed, kind);
+        } catch (e) {
+          presetManagerStatus(e.message || '预设文件导入失败', true);
+        }
+      };
+      input.click();
     }
-    function closePresetTransfer() { $('presetTransferModal').classList.remove('show'); }
-    async function copyPresetTransfer() {
-      const text = $('presetTransferText').value || '';
-      if (!text) return;
-      try {
-        await copyTextToClipboard(text);
-        $('presetTransferStatus').textContent = '已写入剪贴板，也可以继续从上方文本框手动复制。';
-        showToast('预设 JSON 已复制', 'ok');
-      } catch (e) {
-        $('presetTransferStatus').textContent = '自动复制失败，请点击文本框后手动全选复制。';
-        $('presetTransferText').focus();
-        $('presetTransferText').select();
-      }
-    }
-    async function importPresetTransfer() {
-      const kind = PRESET_TRANSFER_KIND;
-      let parsed;
-      try { parsed = JSON.parse($('presetTransferText').value || ''); }
-      catch (_) { $('presetTransferStatus').textContent = 'JSON 格式不正确'; return; }
-      if (parsed?.type === 'selfie-image-prompt-presets' && parsed.kind && parsed.kind !== kind) {
-        $('presetTransferStatus').textContent = '预设分类不一致，请切换到对应分类后导入';
-        return;
-      }
+    async function importPromptPresetFilePayload(parsed, kind) {
+      if (parsed?.type && parsed.type !== 'selfie-image-prompt-presets') throw new Error('文件类型不是生图预设或 NAI 画师串');
+      if (parsed?.kind && parsed.kind !== kind) throw new Error('文件分类与当前选中的预设类型不一致');
       const presets = Array.isArray(parsed) ? parsed : parsed && (parsed.presets || parsed.items || parsed);
       if (!Array.isArray(presets) && (!presets || typeof presets !== 'object')) {
-        $('presetTransferStatus').textContent = '没有找到 presets 数组';
-        return;
+        throw new Error('没有找到 presets 数组');
       }
-      $('presetTransferStatus').textContent = '导入中…';
-      try {
-        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind, revision:Number(PRESET_MANAGER_REVISIONS[kind] || 0) || undefined})});
-        closePresetTransfer();
-        PRESET_MANAGER_PAGES[kind] = 1;
-        clearPickerCache(kind);
-        if (kind === 'image') await refreshPromptCatalogViews(true);
-        if (PRESET_KIND === kind) await loadManagedPromptPresets(kind);
-        showToast((res.data && res.data.message) || '预设已导入', 'ok');
-      } catch (e) {
-        $('presetTransferStatus').textContent = e.message || '导入失败';
-      }
+      const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind, revision:Number(PRESET_MANAGER_REVISIONS[kind] || 0) || undefined})});
+      PRESET_MANAGER_REVISIONS[kind] = Number(res.data?.revision || PRESET_MANAGER_REVISIONS[kind] || 0);
+      PRESET_MANAGER_PAGES[kind] = 1;
+      clearPickerCache(kind);
+      if (kind === 'image') await refreshPromptCatalogViews(true);
+      if (PRESET_KIND === kind) await loadManagedPromptPresets(kind);
+      showToast((res.data && res.data.message) || `${kind === 'nai' ? 'NAI 画师串' : '生图预设'}已导入`, 'ok');
     }
     function renderCosPanel(panelId, targetInputId, open, btnId) {
       const panel = $(panelId);
@@ -916,12 +889,15 @@
         showToast('自定义 COS 已保存', 'ok');
       } catch (e) { if (status) status.textContent = e.message || '保存失败'; }
     }
+    function downloadJsonFile(payload, filename) {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json;charset=utf-8'});
+      const url = URL.createObjectURL(blob); const link = document.createElement('a');
+      link.href = url; link.download = filename;
+      document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     function exportCosPool() {
       api('/api/cos-pools/export').then(res => {
-        const blob = new Blob([JSON.stringify(res.data || {}, null, 2)], {type:'application/json;charset=utf-8'});
-        const url = URL.createObjectURL(blob); const link = document.createElement('a');
-        link.href = url; link.download = `selfie-image-cos-pool-${new Date().toISOString().slice(0,10)}.json`;
-        document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        downloadJsonFile(res.data || {}, `selfie-image-cos-pool-${new Date().toISOString().slice(0,10)}.json`);
       }).catch(e => showToast(e.message || '导出失败', 'bad'));
     }
     function openCosPoolImport() {

@@ -155,6 +155,31 @@ class ReferenceMediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome.unknown_count, 0)
         self.assertEqual(plugin._send_failures, {"group:test": ["generated/generated.png"]})
 
+    async def test_explicit_sendmsg_failure_is_not_an_ambiguous_timeout(self) -> None:
+        from astrbot_plugin_selfie_image.features.reference_media import ReferenceMediaMixin
+
+        class Event:
+            def chain_result(self, components):
+                return components
+
+            async def send(self, _message):
+                raise RuntimeError("ActionFailed retcode=1001: NodeIKernelMsgService/sendMsg rejected")
+
+        plugin = object.__new__(ReferenceMediaMixin)
+        plugin._send_failures = {}
+        plugin._send_failures_lock = threading.RLock()
+        plugin._session_key = lambda _event: "group:test"
+        plugin._cache_relative_path = lambda path: "generated/" + Path(path).name
+        plugin._create_image_component = lambda path: path
+        plugin._record_bot_image_context = lambda *_args: None
+
+        outcome = await plugin._send_generated_images(Event(), ["/tmp/generated.png"])
+
+        self.assertEqual(int(outcome), 0)
+        self.assertEqual(outcome.failed_count, 1)
+        self.assertEqual(outcome.unknown_count, 0)
+        self.assertEqual(plugin._send_failures, {"group:test": ["generated/generated.png"]})
+
     async def test_empty_timeout_exception_is_also_unknown(self) -> None:
         from astrbot_plugin_selfie_image.features.reference_media import ReferenceMediaMixin
 

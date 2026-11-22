@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -74,6 +75,7 @@ class ImageGenerateResult:
     # as generated outputs.  Kept for task diagnostics; not a provider error by
     # itself when other generated images are present.
     reference_echo_count: int = 0
+    stage_timings: Dict[str, float] = field(default_factory=dict)
 
 
 class BaseImageAdapter:
@@ -226,8 +228,13 @@ class BaseImageAdapter:
     ) -> ImageGenerateResult:
         download_proxy = str((self.target.extra or {}).get("download_proxy") or "").strip() or str(self.target.proxy or "").strip()
         download_diagnostics: List[str] = []
+        stage_timings: Dict[str, float] = {}
+        parse_started = time.monotonic()
         collected = await asyncio.to_thread(collect_images_from_unknown, data)
         source_media = image_sources_from_response(data, base_url, collected=collected)
+        stage_timings["provider_response_parse"] = round(
+            max(0.0, min(86400.0, time.monotonic() - parse_started)), 3
+        )
         images = await images_from_response_unknown(
             self.download_session,
             data,
@@ -237,9 +244,14 @@ class BaseImageAdapter:
             base_url,
             download_diagnostics,
             collected=collected,
+            stage_timings=stage_timings,
         )
         if images:
-            return ImageGenerateResult(images=images, source_media=source_media)
+            return ImageGenerateResult(
+                images=images,
+                source_media=source_media,
+                stage_timings=stage_timings,
+            )
         preview = await asyncio.to_thread(response_preview, data)
         prefix = f"{provider_name} " if provider_name else ""
         if collected["urls"]:
@@ -250,18 +262,24 @@ class BaseImageAdapter:
             )
             if not detailed_error:
                 return ImageGenerateResult(
-                    error=f"{prefix}接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}{detail}"
+                    error=f"{prefix}接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}{detail}",
+                    stage_timings=stage_timings,
                 )
             return ImageGenerateResult(
-                error=f"{prefix}接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}{detail}；返回预览: {preview}"
+                error=f"{prefix}接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}{detail}；返回预览: {preview}",
+                stage_timings=stage_timings,
             )
         if not detailed_error:
-            return ImageGenerateResult(error="未生成任何图片")
+            return ImageGenerateResult(error="未生成任何图片", stage_timings=stage_timings)
         if collected["b64"]:
             return ImageGenerateResult(
-                error=f"{prefix}接口返回了 base64 图片但解码失败。数量: {len(collected['b64'])}；返回预览: {preview}"
+                error=f"{prefix}接口返回了 base64 图片但解码失败。数量: {len(collected['b64'])}；返回预览: {preview}",
+                stage_timings=stage_timings,
             )
-        return ImageGenerateResult(error=f"{prefix}未识别到可下载图片字段。返回预览: {preview}")
+        return ImageGenerateResult(
+            error=f"{prefix}未识别到可下载图片字段。返回预览: {preview}",
+            stage_timings=stage_timings,
+        )
 
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         """Generate an image; concrete adapters must override this method."""
@@ -398,6 +416,17 @@ def is_gpt_image_model(model: str) -> bool:
     return "gpt-image" in str(model or "").lower()
 
 
+def _looks_like_url_only_error(error: Any) -> bool:
+    text = str(error or "")
+    return bool(
+        re.search(
+            r"(?:only\s+supports?|supports?\s+only|仅支持)\s*[`\"']*response_format[`\"']*\s*[:=]\s*[`\"']*url\b",
+            text,
+            flags=re.I,
+        )
+    )
+
+
 def _gpt_image_payload_profiles(req: ImageGenerateRequest, model: str) -> List[Dict[str, Any]]:
     """Build one or two OpenAI Images payloads (standard then flexible).
 
@@ -460,6 +489,35 @@ class OpenAIImageAdapter(BaseImageAdapter):
         base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
         return f"{base}/v1/images/generations"
 
+    async def _result_from_openai_images_data(
+        self,
+        data: Any,
+        req: ImageGenerateRequest,
+        base: str,
+    ) -> ImageGenerateResult:
+        parse_started = time.monotonic()
+        extract_timings: Dict[str, float] = {}
+        images = await asyncio.to_thread(
+            extract_openai_images_data, data, req.max_image_bytes, extract_timings
+        )
+        extract_elapsed = round(max(0.0, min(86400.0, time.monotonic() - parse_started)), 3)
+        if images:
+            source_media = await asyncio.to_thread(image_sources_from_response, data, base)
+            extract_timings["image_response_extract"] = extract_elapsed
+            return ImageGenerateResult(
+                images=images,
+                source_media=source_media,
+                stage_timings=extract_timings,
+            )
+        result = await self.result_from_response(data, req, base, detailed_error=True)
+        for stage, elapsed in extract_timings.items():
+            if stage == "image_base64_decode":
+                result.stage_timings[stage] = round(
+                    min(86400.0, result.stage_timings.get(stage, 0.0) + elapsed), 3
+                )
+        result.stage_timings["image_response_extract"] = extract_elapsed
+        return result
+
     async def generate_image(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         from .error_classify import is_param_profile_switch_error
 
@@ -482,6 +540,18 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 )
             if error or data is None:
                 last_error = error or "接口未返回有效 JSON"
+                if req.allow_compat_retry and _looks_like_url_only_error(last_error):
+                    url_payload = dict(payload)
+                    url_payload["response_format"] = "url"
+                    try:
+                        url_data, url_error = await self.post_json_data_or_error(url, url_payload)
+                    except asyncio.TimeoutError:
+                        return ImageGenerateResult(
+                            error=format_timeout_user_message("local", self.target.timeout)
+                        )
+                    if url_error or url_data is None:
+                        return ImageGenerateResult(error=url_error or "接口未返回有效 JSON")
+                    return await self._result_from_openai_images_data(url_data, req, base)
                 # Switch profile only on parameter-class failures, and only once.
                 if (
                     index == 0
@@ -491,11 +561,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 ):
                     continue
                 return ImageGenerateResult(error=last_error)
-            images = await asyncio.to_thread(extract_openai_images_data, data, req.max_image_bytes)
-            if images:
-                source_media = await asyncio.to_thread(image_sources_from_response, data, base)
-                return ImageGenerateResult(images=images, source_media=source_media)
-            return await self.result_from_response(data, req, base, detailed_error=True)
+            return await self._result_from_openai_images_data(data, req, base)
         return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
 
     def _build_edit_form(
@@ -599,11 +665,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                     include_input_fidelity=include_input_fidelity,
                 )
                 if not error and data is not None:
-                    images = await asyncio.to_thread(extract_openai_images_data, data, req.max_image_bytes)
-                    if images:
-                        source_media = await asyncio.to_thread(image_sources_from_response, data, base)
-                        return ImageGenerateResult(images=images, source_media=source_media)
-                    return await self.result_from_response(data, req, base, detailed_error=True)
+                    return await self._result_from_openai_images_data(data, req, base)
                 last_error = error or "接口未返回有效 JSON"
                 # Switch profile on param/schema issues or incomplete transfer resets.
                 if index + 1 < len(profiles) and (

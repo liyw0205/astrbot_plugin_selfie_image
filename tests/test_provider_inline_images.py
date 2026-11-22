@@ -188,9 +188,9 @@ def test_openai_b64_fast_path_runs_off_event_loop(monkeypatch):
     response = {"data": [{"b64_json": encoded}]}
     original_extract = providers.extract_openai_images_data
 
-    def slow_extract(data, max_bytes):
+    def slow_extract(data, max_bytes, stage_timings=None):
         time.sleep(0.08)
-        return original_extract(data, max_bytes)
+        return original_extract(data, max_bytes, stage_timings)
 
     monkeypatch.setattr(providers, "extract_openai_images_data", slow_extract)
 

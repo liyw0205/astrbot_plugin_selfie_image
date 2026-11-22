@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from ..core.async_compat import gather_cancel_on_error
+from ..core.constants import IMAGE_DOWNLOAD_CONCURRENCY
 from ..core.providers import ImageReference
 from ..core.utils import (
     detect_mime_by_bytes,
@@ -704,38 +706,48 @@ async def download_sources_as_references(
     refs: List[ImageReference] = []
     failed = 0
     seen: Set[str] = set()
-    for source in sources:
+
+    async def fetch_one(source: str) -> tuple[Optional[Tuple[bytes, str]], List[str]]:
+        local_failure_reasons: List[str] = []
         fetched = await fetch_image_source(
             source,
             session,
             max_bytes=max_bytes,
-            failure_reasons=failure_reasons,
+            failure_reasons=local_failure_reasons,
             max_dimension=max_dimension,
             max_pixels=max_pixels,
             max_frames=max_frames,
         )
-        if not fetched:
-            failed += 1
-            continue
-        data, mime = fetched
-        if not data:
-            failed += 1
-            continue
-        digest = content_digest(data)
-        if digest in seen:
-            continue
-        seen.add(digest)
-        # Keep the original source for local persona files as well as remote
-        # URLs.  The cache layer uses stable local sources to avoid copying a
-        # configured identity image into the generation cache.
-        source_url = str(source or "").strip()
-        refs.append(
-            ImageReference(
-                data=data,
-                mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data)),
-                source_url=source_url,
+        return fetched, local_failure_reasons
+
+    for offset in range(0, len(sources), IMAGE_DOWNLOAD_CONCURRENCY):
+        batch = sources[offset:offset + IMAGE_DOWNLOAD_CONCURRENCY]
+        results = await gather_cancel_on_error(fetch_one(source) for source in batch)
+        for source, (fetched, source_failures) in zip(batch, results):
+            if failure_reasons is not None:
+                for reason in source_failures:
+                    if reason not in failure_reasons:
+                        failure_reasons.append(reason)
+            if not fetched:
+                failed += 1
+                continue
+            data, mime = fetched
+            if not data:
+                failed += 1
+                continue
+            digest = content_digest(data)
+            if digest in seen:
+                continue
+            seen.add(digest)
+            # Keep the original source for local persona files as well as remote
+            # URLs. The cache layer avoids recopying configured identity images.
+            refs.append(
+                ImageReference(
+                    data=data,
+                    mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data)),
+                    source_url=str(source or "").strip(),
+                )
             )
-        )
     return refs, failed
 
 

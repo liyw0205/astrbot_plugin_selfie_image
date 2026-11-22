@@ -6,6 +6,7 @@ import json
 import re
 import base64
 import asyncio
+import time
 from collections.abc import Sequence
 from itertools import islice
 from typing import Any, Dict, List, Optional, Set
@@ -13,6 +14,8 @@ from urllib.parse import urljoin, urlsplit
 
 import aiohttp
 
+from .async_compat import gather_cancel_on_error
+from .constants import IMAGE_DOWNLOAD_CONCURRENCY
 from .models import normalize_provider_type
 from .proxy import IMAGE_DOWNLOAD_WAIT_SECONDS, http_proxy_url, image_download_timeout
 from .utils import (
@@ -151,7 +154,11 @@ def b64_to_bytes(value: str) -> bytes:
     return decode_base64_payload(value)
 
 
-def extract_openai_images_data(data: Any, max_bytes: int = 25 * 1024 * 1024) -> List[bytes]:
+def extract_openai_images_data(
+    data: Any,
+    max_bytes: int = 25 * 1024 * 1024,
+    stage_timings: Optional[Dict[str, float]] = None,
+) -> List[bytes]:
     """Extract image bytes from a standard OpenAI Images API response.
 
     NewAPI / OpenAI-compatible relays typically return:
@@ -161,14 +168,33 @@ def extract_openai_images_data(data: Any, max_bytes: int = 25 * 1024 * 1024) -> 
     base64 strings, which can stall the AstrBot event loop and leave web tests
     stuck in ``running`` even after the upstream already succeeded.
     """
+    decode_elapsed = 0.0
+    decode_count = 0
+
+    def decode_payload(value: str) -> bytes:
+        nonlocal decode_elapsed, decode_count
+        decode_started = time.monotonic()
+        try:
+            return b64_to_bytes(value)
+        finally:
+            decode_count += 1
+            decode_elapsed += time.monotonic() - decode_started
+
+    def record_decode_timing() -> None:
+        if stage_timings is not None and decode_count:
+            stage_timings["image_base64_decode"] = round(
+                max(0.0, min(86400.0, decode_elapsed)), 3
+            )
+
     if isinstance(data, (bytes, bytearray)) and looks_like_binary_image(bytes(data)):
         image = bytes(data)
         return [image] if len(image) <= max_bytes else []
     if isinstance(data, str) and looks_like_raw_base64_image(data):
         try:
-            image = b64_to_bytes(data)
+            image = decode_payload(data)
         except Exception:
             image = b""
+        record_decode_timing()
         if image and len(image) <= max_bytes and looks_like_binary_image(image):
             return [image]
         return []
@@ -186,7 +212,7 @@ def extract_openai_images_data(data: Any, max_bytes: int = 25 * 1024 * 1024) -> 
         raw_b64 = item.get("b64_json") or item.get("b64") or item.get("base64")
         if isinstance(raw_b64, str) and raw_b64.strip():
             try:
-                image = b64_to_bytes(raw_b64)
+                image = decode_payload(raw_b64)
             except Exception:
                 image = b""
             if image and len(image) <= max_bytes and looks_like_binary_image(image):
@@ -196,6 +222,7 @@ def extract_openai_images_data(data: Any, max_bytes: int = 25 * 1024 * 1024) -> 
                     seen.add(key)
                 continue
         # URL-only items are handled by the generic path (needs async download).
+    record_decode_timing()
     return images
 
 
@@ -863,10 +890,16 @@ async def images_from_response_unknown(
     base_url: str = "",
     download_diagnostics: Optional[List[str]] = None,
     collected: Optional[Dict[str, List[str]]] = None,
+    stage_timings: Optional[Dict[str, float]] = None,
 ) -> List[bytes]:
     if not isinstance(collected, dict):
         collected = await asyncio.to_thread(collect_images_from_unknown, data)
+    decode_started = time.monotonic()
     images = await asyncio.to_thread(_decode_collected_base64_images, collected, max_bytes)
+    if stage_timings is not None and collected.get("b64"):
+        stage_timings["image_base64_decode"] = round(
+            max(0.0, min(86400.0, time.monotonic() - decode_started)), 3
+        )
     seen = {(len(image), image[:32]) for image in images}
 
     download_urls: List[str] = []
@@ -883,19 +916,36 @@ async def images_from_response_unknown(
                 download_urls.append(url)
                 seen_urls.add(url)
 
-    for item in download_urls:
-        image = await fetch_generated_image_url(
-            session,
-            item,
-            timeout,
-            max_bytes=max_bytes,
-            proxy=proxy,
-            diagnostics=download_diagnostics,
-        )
-        key = (len(image or b""), (image or b"")[:32])
-        if image and key not in seen:
-            images.append(image)
-            seen.add(key)
+    if download_urls:
+        download_started = time.monotonic()
+        try:
+            async def download_one(url: str) -> tuple[Optional[bytes], List[str]]:
+                diagnostics: List[str] = []
+                image = await fetch_generated_image_url(
+                    session,
+                    url,
+                    timeout,
+                    max_bytes=max_bytes,
+                    proxy=proxy,
+                    diagnostics=diagnostics,
+                )
+                return image, diagnostics
+
+            for offset in range(0, len(download_urls), IMAGE_DOWNLOAD_CONCURRENCY):
+                batch = download_urls[offset:offset + IMAGE_DOWNLOAD_CONCURRENCY]
+                results = await gather_cancel_on_error(download_one(url) for url in batch)
+                for image, diagnostics in results:
+                    if download_diagnostics is not None:
+                        download_diagnostics.extend(diagnostics)
+                    key = (len(image or b""), (image or b"")[:32])
+                    if image and key not in seen:
+                        images.append(image)
+                        seen.add(key)
+        finally:
+            if stage_timings is not None:
+                stage_timings["result_url_download"] = round(
+                    max(0.0, min(86400.0, time.monotonic() - download_started)), 3
+                )
 
     return images
 

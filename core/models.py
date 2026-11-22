@@ -91,6 +91,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "prompt_audit_model": "",
         "output_audit_model": "",
         "ocr_model": "",
+        "reverse_prompt_model": "",
         "prompt_audit_template": "你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{\"allow\":true/false,\"type\":\"sex\",\"percentage\":0-100,\"reason\":\"原因\"}",
         "output_audit_template": "你是图像安全审核员。请评估以下图片不适合普通用户的风险。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{\"allow\":true/false,\"type\":\"sex\",\"percentage\":0-100,\"reason\":\"原因\"}",
         # 无形象参考图时：true=回退 logo 图；false=仅用人设文案生成（不注图）
@@ -331,6 +332,7 @@ class AICatConfig:
     image_prompt_audit_model: str
     image_output_audit_model: str
     image_ocr_model: str
+    image_reverse_prompt_model: str
     image_prompt_audit_template: str
     image_output_audit_template: str
     image_use_logo_when_no_persona: bool
@@ -552,6 +554,7 @@ class AICatConfig:
             image_prompt_audit_model=str(image.get("prompt_audit_model") or "").strip(),
             image_output_audit_model=str(image.get("output_audit_model") or "").strip(),
             image_ocr_model=str(image.get("ocr_model") or "").strip(),
+            image_reverse_prompt_model=str(image.get("reverse_prompt_model") or image.get("reversePromptModel") or "").strip(),
             image_prompt_audit_template=str(image.get("prompt_audit_template") or DEFAULT_CONFIG["image"]["prompt_audit_template"]),
             image_output_audit_template=str(image.get("output_audit_template") or DEFAULT_CONFIG["image"]["output_audit_template"]),
             image_use_logo_when_no_persona=to_bool(image.get("use_logo_when_no_persona"), True),

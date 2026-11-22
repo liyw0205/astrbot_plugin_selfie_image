@@ -67,7 +67,6 @@ def _image_delivery_is_ambiguous(error: BaseException) -> bool:
             "timeout",
             "timed out",
             "retcode=1200",
-            "sendmsg",
             "onmsginfolistupdate",
         )
     )

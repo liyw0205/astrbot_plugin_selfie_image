@@ -430,7 +430,7 @@
       prefetchRecordMediaSources();
       $('recordDetailBody').innerHTML = `
         <div class="detail-title"><h3 class="mono">${escapeHtml(r.image_code || '')}</h3><div class="actions"><button class="secondary mini" type="button" onclick="copyRecordField('image_code')">复制编号</button><button class="secondary mini" type="button" onclick="copyRecordDiagnostics()">复制排查信息</button></div></div>
-        <div class="grid">
+        <div class="record-detail-grid">
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>
           <div><label>来源</label><div class="status">${escapeHtml(displaySourceLabel(r))}</div></div>
           <div><label>状态</label><div class="status">${escapeHtml(recordLifecycleStatus(r).label)}</div></div>
@@ -453,7 +453,7 @@
         ${r.final_prompt || r.request_data?.request_prompt_en ? promptDetailBlock('最终实际提示词（发送给模型）', 'final_prompt', r.final_prompt || r.request_data?.request_prompt_en || '') : ''}
         ${r.request_data?.request_prompt_en ? promptDetailBlock('英文请求提示词', 'request_prompt_en', r.request_data.request_prompt_en) : ''}
         <div class="detail-title"><h3>资产标记</h3></div>
-        <div class="grid">
+        <div class="record-detail-grid">
           <label class="checkline"><input id="recordFavorite" type="checkbox" ${r.favorite ? 'checked' : ''}> 收藏</label>
           <label class="checkline"><input id="recordPinned" type="checkbox" ${r.pinned ? 'checked' : ''}> 置顶</label>
           <div><label>标签</label><input id="recordTags" value="${escapeHtml((r.tags || []).join(', '))}" placeholder="多个标签用逗号分隔"></div>

@@ -99,3 +99,40 @@ def test_selfie_management_is_split_into_appearance_schedule_and_wardrobe_tabs()
     assert "tab.setAttribute('aria-selected', String(active));" in selfie_source
     assert "event.key === 'ArrowRight'" in bootstrap
 
+
+def test_auxiliary_settings_are_tabbed_and_save_reverse_prompt_model():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "pages/dashboard/index.source.html").read_text(encoding="utf-8")
+    channel_source = (root / "pages/dashboard/source/channel_editor.js").read_text(encoding="utf-8")
+    runtime = (root / "pages/dashboard/source/runtime.js").read_text(encoding="utf-8")
+    bootstrap = (root / "pages/dashboard/source/bootstrap.js").read_text(encoding="utf-8")
+    switcher = (root / "pages/dashboard/source/selfie_auth.js").read_text(encoding="utf-8")
+
+    for view in ("review", "recognition", "translation"):
+        assert f'data-audit-view="{view}"' in template
+    assert 'id="reversePromptModel"' in template
+    assert "CONFIG.image.reverse_prompt_model = $('reversePromptModel').value || '';" in runtime
+    assert "img.reverse_prompt_model ??= '';" in runtime
+    assert "preserveSelection('reversePromptModel', auditLabels, CONFIG.image?.reverse_prompt_model || '');" in channel_source
+    assert "function switchAuditView(view)" in switcher
+    assert "[data-audit-view]" in bootstrap
+
+
+def test_prompt_preset_and_nai_transfer_use_json_files_like_cos_pool():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "pages/dashboard/index.source.html").read_text(encoding="utf-8")
+    catalog_source = (root / "pages/dashboard/source/prompt_catalogs.js").read_text(encoding="utf-8")
+    bootstrap = (root / "pages/dashboard/source/bootstrap.js").read_text(encoding="utf-8")
+
+    assert "导入文件" in template
+    assert "导出文件" in template
+    assert "function promptPresetFilePayload" in catalog_source
+    assert "function downloadJsonFile" in catalog_source
+    assert "application/json,.json" in catalog_source
+    assert "importPromptPresetFilePayload(parsed, kind)" in catalog_source
+    assert "parsed.kind !== kind" in catalog_source
+    assert "nai-artist-presets" in catalog_source
+    assert "image-presets" in catalog_source
+    assert "/api/prompt-presets/manage/import" in catalog_source
+    assert "presetTransferModal" not in template + bootstrap + catalog_source
+

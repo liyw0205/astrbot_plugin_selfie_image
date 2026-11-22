@@ -153,6 +153,15 @@ def _emit_generation_observability(
         duration = _safe_log_duration(attempt.get("elapsed_seconds"))
         if duration is not None:
             event["elapsed_seconds"] = duration
+        attempt_timings = attempt.get("stage_timings")
+        if isinstance(attempt_timings, Mapping):
+            safe_attempt_timings = {}
+            for stage in GENERATION_TIMING_STAGES:
+                duration = _safe_log_duration(attempt_timings.get(stage))
+                if duration is not None:
+                    safe_attempt_timings[stage] = duration
+            if safe_attempt_timings:
+                event["stage_timings"] = safe_attempt_timings
         try:
             logger.info("[SelfieImage] " + json.dumps(event, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
         except Exception:
@@ -734,6 +743,30 @@ async def run_image_generation_workflow(
     )
     if cooldown_attempts:
         result.attempts = [*cooldown_attempts, *(result.attempts or [])]
+    attempt_durations = []
+    attempt_stage_totals: Dict[str, float] = {}
+    for attempt in result.attempts or []:
+        if not isinstance(attempt, Mapping):
+            continue
+        duration = _safe_log_duration(attempt.get("elapsed_seconds"))
+        if duration is not None:
+            attempt_durations.append(duration)
+        timings = attempt.get("stage_timings")
+        if not isinstance(timings, Mapping):
+            continue
+        for stage in (
+            "provider_response_parse",
+            "image_response_extract",
+            "image_base64_decode",
+            "result_url_download",
+        ):
+            duration = _safe_log_duration(timings.get(stage))
+            if duration is not None:
+                attempt_stage_totals[stage] = attempt_stage_totals.get(stage, 0.0) + duration
+    if attempt_durations:
+        stage_timings["provider_attempts"] = round(min(86400.0, sum(attempt_durations)), 3)
+    for stage, duration in attempt_stage_totals.items():
+        stage_timings[stage] = round(min(86400.0, duration), 3)
     elapsed = time.monotonic() - started
     if trace_id:
         for attempt in result.attempts or []:
@@ -823,16 +856,20 @@ async def run_image_generation_workflow(
     generated_images = [image for image in result.images if image]
     max_dimension, max_pixels, max_frames = image_validation_limits(getattr(self, "config", None))
     geometry_error = ""
-    for image in generated_images:
-        geometry_error = await asyncio.to_thread(
-            image_geometry_error,
-            image,
-            max_dimension=max_dimension,
-            max_pixels=max_pixels,
-            max_frames=max_frames,
-        )
-        if geometry_error:
-            break
+    validation_started = time.monotonic()
+    try:
+        for image in generated_images:
+            geometry_error = await asyncio.to_thread(
+                image_geometry_error,
+                image,
+                max_dimension=max_dimension,
+                max_pixels=max_pixels,
+                max_frames=max_frames,
+            )
+            if geometry_error:
+                break
+    finally:
+        finish_stage("image_validation", validation_started)
     if geometry_error:
         error = "上游返回的图片尺寸、像素或动画帧数超过限制"
         response_data = {
@@ -879,14 +916,22 @@ async def run_image_generation_workflow(
             "request_image_paths": request_image_paths,
             "attempts": result.attempts,
         }
-    generated_image_paths = await asyncio.gather(*(
-        asyncio.to_thread(self._save_cache_image, image, "generated", detect_mime_by_bytes(image))
-        for image in generated_images
-    ))
-    generated_image_md5s = await asyncio.gather(*(
-        asyncio.to_thread(lambda data=image: hashlib.md5(data).hexdigest())
-        for image in generated_images
-    ))
+    cache_write_started = time.monotonic()
+    try:
+        generated_image_paths = await asyncio.gather(*(
+            asyncio.to_thread(self._save_cache_image, image, "generated", detect_mime_by_bytes(image))
+            for image in generated_images
+        ))
+    finally:
+        finish_stage("image_cache_write", cache_write_started)
+    digest_started = time.monotonic()
+    try:
+        generated_image_md5s = await asyncio.gather(*(
+            asyncio.to_thread(lambda data=image: hashlib.md5(data).hexdigest())
+            for image in generated_images
+        ))
+    finally:
+        finish_stage("image_digest", digest_started)
     files = [self._cache_absolute_path(path) for path in generated_image_paths]
     self._set_generation_stage(
         record_context,

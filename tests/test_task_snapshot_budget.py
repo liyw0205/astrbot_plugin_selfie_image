@@ -21,6 +21,7 @@ def snapshot_plugin(root: Path, *, max_bytes: int = 4096) -> WebTaskMixin:
     plugin = WebTaskMixin()
     plugin.tasks_path = str(root / "tasks.json")
     plugin._web_task_lock = threading.RLock()
+    plugin._web_task_terminal_metrics_lock = threading.Lock()
     plugin._web_tasks = {}
     plugin.WEB_TASK_SNAPSHOT_MAX_BYTES = max_bytes
     plugin.config = SimpleNamespace()
@@ -408,6 +409,8 @@ def test_snapshot_health_tracks_merge_bytes_and_flush_duration(tmp_path):
     assert health["write_bytes_total"] == health["size_bytes"]
     assert health["write_duration_ms"]["samples"] == 1
     assert health["write_duration_ms"]["p95"] >= health["write_duration_ms"]["p50"]
+    assert health["terminal_persist_wait_ms"]["samples"] == 0
+    assert health["terminal_update_concurrency"] == {"inflight": 0, "max_concurrency": 0}
 
     plugin._set_web_image_task("task", status="succeeded", success=True)
     health = plugin.get_task_snapshot_health()
@@ -415,6 +418,9 @@ def test_snapshot_health_tracks_merge_bytes_and_flush_duration(tmp_path):
     assert health["forced_flush_count"] == 1
     assert health["write_bytes_total"] > health["size_bytes"]
     assert health["write_duration_ms"]["samples"] == 2
+    assert health["terminal_persist_wait_ms"]["samples"] == 1
+    assert health["terminal_persist_wait_ms"]["p95"] >= health["last_write_duration_ms"]
+    assert health["terminal_update_concurrency"] == {"inflight": 0, "max_concurrency": 1}
     persisted = load_json_file(plugin.tasks_path)
     assert persisted["snapshot"]["write_bytes_total"] == health["write_bytes_total"]
     assert persisted["snapshot"]["timer_flush_count"] == 1

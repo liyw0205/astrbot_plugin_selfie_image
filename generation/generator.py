@@ -290,6 +290,9 @@ async def generate_image_with_fallback(
             wall = time.monotonic() - started
             elapsed = round(min(wall, float(budget)), 2)
             attempt_info["elapsed_seconds"] = elapsed
+            result_timings = getattr(result, "stage_timings", None)
+            if isinstance(result_timings, dict) and result_timings:
+                attempt_info["stage_timings"] = dict(result_timings)
 
             reference_echo_count = _remove_reference_echoes(result, req.images)
             if reference_echo_count:

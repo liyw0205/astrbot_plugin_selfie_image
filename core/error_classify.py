@@ -97,6 +97,11 @@ UPSTREAM_FAILURE_PATTERNS = (
     r"图片请求(?:无法|未能)完成",
 )
 
+IMAGE_DOWNLOAD_FAILURE_PATTERNS = (
+    r"图片链接但下载失败",
+    r"generated image url download failed",
+)
+
 # Parameter / schema issues: may switch payload profile once, but should not loop forever.
 PARAM_ERROR_PATTERNS = (
     r"\binvalid[_\s-]?(?:param|parameter|request|value|json|body|field|size|aspect)\b",
@@ -288,6 +293,23 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
             "retryable": False,
             "http_status": status,
             "user_message": "上游未能完成图片请求，请检查渠道用量或服务状态",
+            "raw": text,
+        }
+
+    if _matches_error_patterns(text, IMAGE_DOWNLOAD_FAILURE_PATTERNS):
+        if re.search(r"timeout|超时|timed?\s*out", lowered):
+            return {
+                "category": "timeout",
+                "retryable": False,
+                "http_status": status,
+                "user_message": format_timeout_user_message("upstream"),
+                "raw": text,
+            }
+        return {
+            "category": "network",
+            "retryable": True,
+            "http_status": status,
+            "user_message": "生成图片下载失败，请检查下载地址或代理后重试",
             "raw": text,
         }
 

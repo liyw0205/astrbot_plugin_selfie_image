@@ -481,7 +481,10 @@
     .asset-toolbar .actions { margin-top: 0; }
     .asset-bulk-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; width: 100%; }
     .asset-bulk-form input { flex: 1 1 180px; min-width: 140px; padding: 6px 8px; font-size: 12px; }
-    .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-top: 14px; }
+    .record-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px 12px; }
+    .record-detail-grid > div { min-width: 0; }
+    .record-detail-grid .status { margin-top: 4px; }
+    .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 12px; margin-top: 14px; }
     .asset-collection-panel { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-soft); }
     .asset-collection-panel h3 { margin: 0; }
     .asset-collection-form { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(160px, 1fr) auto minmax(160px, .9fr) auto auto; gap: 6px; align-items: center; margin-top: 10px; }
@@ -495,9 +498,9 @@
     .asset-collection-card-actions button { padding: 4px 7px; font-size: 11px; }
     @media (max-width: 980px) { .asset-collection-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .asset-collection-form button { width: 100%; } }
     @media (max-width: 560px) { .asset-collection-form { grid-template-columns: minmax(0, 1fr); } }
-    .asset-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
+    .asset-card { display: grid; grid-template-columns: minmax(112px, 34%) minmax(0, 1fr); min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
     .asset-card:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); transform: translateY(-1px); box-shadow: 0 12px 26px rgba(27,28,29,.1); }
-    .asset-thumb { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f1f4f7; }
+    .asset-thumb { position: relative; min-height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f1f4f7; }
     .asset-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; background: #111; }
     .asset-thumb .status { width: 100%; min-height: 0; padding: 10px; border: 0; border-radius: 0; background: transparent; text-align: center; }
     .media-retry { display:inline-flex; align-items:center; justify-content:center; gap:4px; margin-left:5px; padding:4px 6px; }
@@ -505,10 +508,14 @@
     .asset-select { position: absolute; z-index: 2; top: 8px; left: 8px; width: 20px; height: 20px; margin: 0; accent-color: var(--primary); }
     .asset-flag { position: absolute; z-index: 2; top: 8px; right: 8px; display: flex; gap: 4px; }
     .asset-flag span { padding: 3px 6px; border-radius: 6px; color: #fff; background: rgba(27,28,29,.72); font-size: 11px; font-weight: 650; }
-    .asset-card-body { display: grid; gap: 6px; padding: 10px; }
+    .asset-card-body { display: grid; align-content: center; gap: 8px; min-width: 0; padding: 12px; }
     .asset-card-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
     .asset-card-title b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+    .asset-card-context { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.2fr); gap: 10px; min-width: 0; color: var(--text-secondary); font-size: 12px; }
+    .asset-card-context span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .asset-card-context b { color: var(--muted); font-size: 11px; font-weight: 650; }
     .asset-card-meta { display: flex; gap: 5px; flex-wrap: wrap; min-height: 20px; }
+    .asset-card-meta:empty { display: none; }
     .asset-card-meta .pill { padding: 3px 7px; font-size: 11px; }
     .asset-card-prompt { min-height: 34px; color: var(--text-secondary); font-size: 12px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .asset-card-actions { display: flex; gap: 5px; justify-content: flex-end; }
@@ -518,8 +525,8 @@
     .asset-card-actions .asset-action svg { width: 14px; height: 14px; }
     .asset-empty { grid-column: 1 / -1; padding: 28px 10px; text-align: center; }
     @media (max-width: 760px) {
-      .asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-      .asset-card-body { padding: 8px; }
+      .asset-grid { gap: 10px; }
+      .asset-card-body { padding: 10px; }
     }
     .test-panel { display: none; margin-top: 12px; }
     .test-panel.active { display: block; }
@@ -690,7 +697,6 @@
     .preset-manager-meta { display:flex; gap:6px; flex-wrap:wrap; margin-top:5px; }
     .preset-manager-prompt { min-width:0; color:var(--text-secondary); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.55; max-height:92px; overflow:auto; }
     .preset-manager-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
-    .preset-transfer-text { min-height:360px; width:100%; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; }
     @media (max-width: 760px) {
       .preset-manager-row { grid-template-columns:minmax(0,1fr); }
       .preset-manager-actions { justify-content:flex-start; }
@@ -1617,11 +1623,11 @@
       <div class="between">
         <div>
           <h2>预设管理</h2>
-          <p class="muted">管理生图指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
+          <p class="muted">管理生图预设和 NAI 画师串。JSON 文件按名称合并，重名项会被覆盖。</p>
         </div>
         <div class="actions">
-          <button class="secondary" id="presetImportBtn" type="button">导入文本</button>
-          <button class="secondary" id="presetExportBtn" type="button">导出并复制</button>
+          <button class="secondary" id="presetImportBtn" type="button">导入文件</button>
+          <button class="secondary" id="presetExportBtn" type="button">导出文件</button>
         </div>
       </div>
       <div class="tabs-inline" style="margin-top:12px" role="tablist" aria-label="预设类型">
@@ -1833,33 +1839,46 @@
 
     <section id="audit">
       <h2>辅助功能</h2>
-      <div class="grid">
-        <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 出图前审文字</label>
-        <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 出图后审成品</label>
-        <div><label>文字审核模型</label><select id="promptAuditModel"></select></div>
-        <div><label>文字审核拒绝阈值 (%)</label><input id="promptAuditThreshold" type="number" min="0" max="100" step="1"></div>
-        <div><label>成品审核模型</label><select id="outputAuditModel"></select></div>
-        <div><label>成品审核拒绝阈值 (%)</label><input id="outputAuditThreshold" type="number" min="0" max="100" step="1"></div>
-        <div><label>图转文模型</label><select id="ocrModel"></select><div class="muted">留空时使用当前 LLM</div></div>
+      <div id="auditViewTabs" class="tabs-inline" role="tablist" aria-label="辅助功能分类">
+        <button id="auditViewTabReview" class="active" type="button" role="tab" aria-selected="true" aria-controls="auditViewReview" data-audit-view="review">审核</button>
+        <button id="auditViewTabRecognition" type="button" role="tab" aria-selected="false" aria-controls="auditViewRecognition" data-audit-view="recognition" tabindex="-1">识图</button>
+        <button id="auditViewTabTranslation" type="button" role="tab" aria-selected="false" aria-controls="auditViewTranslation" data-audit-view="translation" tabindex="-1">翻译</button>
       </div>
-      <label>文字屏蔽词</label><textarea id="blockedWords"></textarea>
-      <div class="muted">每行一个词，也可用逗号分隔；按不区分大小写的字面包含匹配，不支持正则。</div>
-      <label>文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
-      <label>成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
-      <h3 style="margin-top:18px">提示词转英文</h3>
-      <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走辅助渠道对话模型，失败则保留原文。</p>
-      <div class="grid">
-        <label class="checkline"><input id="enableImagePromptEn" type="checkbox"> 生图提示词转英文</label>
-        <div><label>翻译模式</label>
-          <select id="promptEnMode">
-            <option value="if_cjk">含中文时翻译</option>
-            <option value="always">始终翻译</option>
-          </select>
+      <div id="auditViewReview" class="selfie-view-panel" role="tabpanel" aria-labelledby="auditViewTabReview">
+        <div class="grid">
+          <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 出图前审文字</label>
+          <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 出图后审成品</label>
+          <div><label for="promptAuditModel">文字审核模型</label><select id="promptAuditModel"></select></div>
+          <div><label for="promptAuditThreshold">文字审核拒绝阈值 (%)</label><input id="promptAuditThreshold" type="number" min="0" max="100" step="1"></div>
+          <div><label for="outputAuditModel">成品审核模型</label><select id="outputAuditModel"></select></div>
+          <div><label for="outputAuditThreshold">成品审核拒绝阈值 (%)</label><input id="outputAuditThreshold" type="number" min="0" max="100" step="1"></div>
         </div>
-        <div><label>翻译模型</label><select id="promptEnModel"></select></div>
+        <label for="blockedWords">文字屏蔽词</label><textarea id="blockedWords"></textarea>
+        <div class="muted">每行一个词，也可用逗号分隔；按不区分大小写的字面包含匹配，不支持正则。</div>
+        <label for="promptAuditTemplate">文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
+        <label for="outputAuditTemplate">成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
       </div>
-      <label>生图翻译说明</label><textarea id="imagePromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
-      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核和图转文请选能看图的模型；留空时使用当前 LLM。转英文与辅助功能共用辅助渠道模型。</div>
+      <div id="auditViewRecognition" class="selfie-view-panel" role="tabpanel" aria-labelledby="auditViewTabRecognition" hidden>
+        <div class="grid">
+          <div><label for="reversePromptModel">查看生图提示词模型</label><select id="reversePromptModel"></select><div class="muted">留空时使用当前聊天 LLM</div></div>
+          <div><label for="ocrModel">形象参考图转文模型</label><select id="ocrModel"></select><div class="muted">留空时使用当前 LLM</div></div>
+        </div>
+      </div>
+      <div id="auditViewTranslation" class="selfie-view-panel" role="tabpanel" aria-labelledby="auditViewTabTranslation" hidden>
+        <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走辅助渠道对话模型，失败则保留原文。</p>
+        <div class="grid">
+          <label class="checkline"><input id="enableImagePromptEn" type="checkbox"> 生图提示词转英文</label>
+          <div><label for="promptEnMode">翻译模式</label>
+            <select id="promptEnMode">
+              <option value="if_cjk">含中文时翻译</option>
+              <option value="always">始终翻译</option>
+            </select>
+          </div>
+          <div><label for="promptEnModel">翻译模型</label><select id="promptEnModel"></select></div>
+        </div>
+        <label for="imagePromptEnTemplate">生图翻译说明</label><textarea id="imagePromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
+      </div>
+      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。识图和翻译模型均可独立选择；未选择时使用当前聊天 LLM 或辅助模型优先级。</div>
     </section>
 
     <section id="backup" class="floating-action-section">
@@ -2072,26 +2091,6 @@
         <div class="actions" style="margin-top:0;justify-content:flex-end">
           <button class="secondary" type="button" onclick="closePresetEditor()">取消</button>
           <button class="ok" id="presetEditorSaveBtn" type="button">保存预设</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="presetTransferModal" class="modal-mask">
-    <div class="modal">
-      <div class="between">
-        <h2 id="presetTransferTitle">预设文本</h2>
-        <button class="secondary" type="button" onclick="closePresetTransfer()">关闭</button>
-      </div>
-      <div class="modal-body">
-        <p id="presetTransferHint" class="muted">文本可以直接复制或粘贴；这里不会创建文件。</p>
-        <textarea id="presetTransferText" class="preset-transfer-text" spellcheck="false"></textarea>
-        <div id="presetTransferStatus" class="status" style="margin-top:10px"></div>
-      </div>
-      <div class="modal-footer">
-        <div class="actions" style="margin-top:0;justify-content:flex-end">
-          <button class="secondary" id="presetTransferCopyBtn" type="button">复制到剪贴板</button>
-          <button class="ok" id="presetTransferImportBtn" type="button" style="display:none">导入并合并</button>
         </div>
       </div>
     </div>
@@ -2922,7 +2921,6 @@
     let COS_MANAGE_ROWS = [];
     let PRESET_EDIT_ORIGINAL = '';
     let PRESET_EDIT_KIND = 'image';
-    let PRESET_TRANSFER_KIND = 'image';
     let PRESET_KIND = 'image';
     let PRESET_LOAD_SEQ = 0;
     const PRESET_MANAGER_PAGES = {image: 1, cos: 1, nai: 1};
@@ -3332,6 +3330,7 @@ Source prompt:
       img.prompt_audit_model ??= '';
       img.output_audit_model ??= '';
       img.ocr_model ??= '';
+      img.reverse_prompt_model ??= '';
       img.prompt_audit_template ??= '你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"type":"sex","percentage":0-100,"reason":"原因"}';
       img.output_audit_template ??= '你是图像安全审核员。请评估以下图片不适合普通用户的风险。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"type":"sex","percentage":0-100,"reason":"原因"}';
       if (img.prompt_audit_template === '你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{"allow":true/false,"reason":"原因"}') img.prompt_audit_template = '你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"type":"sex","percentage":0-100,"reason":"原因"}';
@@ -3465,6 +3464,7 @@ Source prompt:
       CONFIG.image.prompt_audit_model = $('promptAuditModel').value || '';
       CONFIG.image.output_audit_model = $('outputAuditModel').value || '';
       CONFIG.image.ocr_model = $('ocrModel').value || '';
+      CONFIG.image.reverse_prompt_model = $('reversePromptModel').value || '';
       delete CONFIG.image.audit_whitelist;
       CONFIG.image.blocked_words = textList('blockedWords');
       CONFIG.image.prompt_audit_template = $('promptAuditTemplate').value;
@@ -4410,6 +4410,7 @@ Source prompt:
       preserveSelection('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       preserveSelection('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
       preserveSelection('ocrModel', auditLabels, CONFIG.image?.ocr_model || '');
+      preserveSelection('reversePromptModel', auditLabels, CONFIG.image?.reverse_prompt_model || '');
       preserveSelection('promptEnModel', auditLabels, CONFIG.image?.prompt_en_model || '');
       const testChannels = (CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
       const currentTestChannel = $('testChannel').value;
@@ -5441,6 +5442,20 @@ Source prompt:
             ['最近快照写入', `${String(taskSnapshot.last_write_at || '-')} · ${String(taskSnapshot.last_write_duration_ms ?? 0)} ms`],
           );
         }
+        const terminalWait = taskSnapshot.terminal_persist_wait_ms || {};
+        if (Number(terminalWait.samples) > 0) {
+          healthItems.push([
+            '终态快照等待',
+            `${String(terminalWait.samples)} 个样本 · P50 ${String(terminalWait.p50 ?? 0)} ms · P95 ${String(terminalWait.p95 ?? 0)} ms · 最大 ${String(terminalWait.max ?? 0)} ms`,
+          ]);
+        }
+        const terminalConcurrency = taskSnapshot.terminal_update_concurrency || {};
+        if (Number(terminalConcurrency.max_concurrency) > 0 || Number(terminalConcurrency.inflight) > 0) {
+          healthItems.push([
+            '终态更新并发',
+            `当前 ${String(terminalConcurrency.inflight ?? 0)} · 最近样本峰值 ${String(terminalConcurrency.max_concurrency ?? 0)}`,
+          ]);
+        }
         if (taskSnapshot.max_bytes !== undefined) {
           healthItems.push(['快照占用', `${(Number(taskSnapshot.size_bytes || 0) / 1024 / 1024).toFixed(2)} / ${(Number(taskSnapshot.max_bytes || 0) / 1024 / 1024).toFixed(2)} MiB`]);
         }
@@ -6445,7 +6460,7 @@ Source prompt:
       const cosLabels = {cos: 'COS 套装', cos_pose: 'COS 姿势', cos_scene: 'COS 场景', cos_framing: 'COS 镜头', cos_composition: 'COS 构图', cos_view: 'COS 视角'};
       Object.entries(cosLabels).forEach(([key, label]) => add(label, r[key] || rd[key]));
       if (!rows.length) return '';
-      return `<div class="detail-title"><h3>请求参数与随机结果</h3></div><div class="grid">${rows.join('')}</div>`;
+      return `<div class="detail-title"><h3>请求参数与随机结果</h3></div><div class="record-detail-grid">${rows.join('')}</div>`;
     }
     function recordModelLabel(record) {
       return String(record.label || record.model || record.target || record.used_model || '').trim() || '未记录模型';
@@ -6767,6 +6782,8 @@ Source prompt:
             ? `<div class="status" data-media-placeholder>加载缩略图…</div><img data-cache-path="${escapeHtml(media.path)}" data-cache-variant="thumbnail" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
             : '<div class="status">没有缓存媒体</div>';
           const flags = `${record.pinned ? '<span>置顶</span>' : ''}${record.favorite ? '<span>收藏</span>' : ''}`;
+          const time = String(record.time || '');
+          const model = String(record.used_model || '未记录模型');
           return `<article class="asset-card" data-record-id="${escapeHtml(id)}">
             <div class="asset-thumb">
               <input class="asset-select" type="checkbox" ${ASSET_SELECTION.has(id) ? 'checked' : ''} aria-label="选择资产" data-asset-select="${escapeHtml(id)}">
@@ -6775,7 +6792,10 @@ Source prompt:
             </div>
             <div class="asset-card-body">
               <div class="asset-card-title"><b title="${escapeHtml(name)}">${escapeHtml(name)}</b><span class="pill ${lifecycle.tone}">${escapeHtml(lifecycle.label)}</span></div>
-              <div class="muted">${escapeHtml(record.time || '')} · ${escapeHtml(record.used_model || '未记录模型')}</div>
+              <div class="asset-card-context">
+                <span title="时间：${escapeHtml(time)}"><b>时间</b> ${escapeHtml(time || '未记录')}</span>
+                <span title="模型：${escapeHtml(model)}"><b>模型</b> ${escapeHtml(model)}</span>
+              </div>
               <div class="asset-card-prompt">${escapeHtml(prompt || record.note || '没有提示词或备注')}</div>
               <div class="asset-card-meta">${assetTagPills(record)}</div>
               <div class="asset-card-actions">
@@ -8438,7 +8458,7 @@ Source prompt:
       prefetchRecordMediaSources();
       $('recordDetailBody').innerHTML = `
         <div class="detail-title"><h3 class="mono">${escapeHtml(r.image_code || '')}</h3><div class="actions"><button class="secondary mini" type="button" onclick="copyRecordField('image_code')">复制编号</button><button class="secondary mini" type="button" onclick="copyRecordDiagnostics()">复制排查信息</button></div></div>
-        <div class="grid">
+        <div class="record-detail-grid">
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>
           <div><label>来源</label><div class="status">${escapeHtml(displaySourceLabel(r))}</div></div>
           <div><label>状态</label><div class="status">${escapeHtml(recordLifecycleStatus(r).label)}</div></div>
@@ -8461,7 +8481,7 @@ Source prompt:
         ${r.final_prompt || r.request_data?.request_prompt_en ? promptDetailBlock('最终实际提示词（发送给模型）', 'final_prompt', r.final_prompt || r.request_data?.request_prompt_en || '') : ''}
         ${r.request_data?.request_prompt_en ? promptDetailBlock('英文请求提示词', 'request_prompt_en', r.request_data.request_prompt_en) : ''}
         <div class="detail-title"><h3>资产标记</h3></div>
-        <div class="grid">
+        <div class="record-detail-grid">
           <label class="checkline"><input id="recordFavorite" type="checkbox" ${r.favorite ? 'checked' : ''}> 收藏</label>
           <label class="checkline"><input id="recordPinned" type="checkbox" ${r.pinned ? 'checked' : ''}> 置顶</label>
           <div><label>标签</label><input id="recordTags" value="${escapeHtml((r.tags || []).join(', '))}" placeholder="多个标签用逗号分隔"></div>
@@ -9148,6 +9168,18 @@ Source prompt:
       if (!availableViews.includes(view)) return;
       for (const tab of document.querySelectorAll('[data-selfie-view]')) {
         const active = tab.dataset.selfieView === view;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        const panel = $(tab.getAttribute('aria-controls'));
+        if (panel) panel.hidden = !active;
+      }
+    }
+    function switchAuditView(view) {
+      const availableViews = ['review', 'recognition', 'translation'];
+      if (!availableViews.includes(view)) return;
+      for (const tab of document.querySelectorAll('[data-audit-view]')) {
+        const active = tab.dataset.auditView === view;
         tab.classList.toggle('active', active);
         tab.setAttribute('aria-selected', String(active));
         tab.tabIndex = active ? 0 : -1;
@@ -11046,8 +11078,8 @@ Source prompt:
         cosManager.style.display = isCos ? '' : 'none';
       }
       if ($('presetAddBtn')) $('presetAddBtn').style.display = isCos ? 'none' : '';
-      if ($('presetImportBtn')) $('presetImportBtn').textContent = isCos ? '导入池' : '导入文本';
-      if ($('presetExportBtn')) $('presetExportBtn').textContent = isCos ? '导出池' : '导出并复制';
+      if ($('presetImportBtn')) $('presetImportBtn').textContent = isCos ? '导入池文件' : '导入文件';
+      if ($('presetExportBtn')) $('presetExportBtn').textContent = isCos ? '导出池文件' : '导出文件';
       presetManagerStatus(isCos ? 'COS 池管理' : '正在读取预设…');
       if (isCos) await loadManagedCosPool();
       else await loadManagedPromptPresets(PRESET_KIND);
@@ -11116,7 +11148,7 @@ Source prompt:
         presetManagerStatus(e.message || '删除失败', true);
       }
     }
-    function presetTransferPayload(rows = PRESET_MANAGE_ROWS, kind = PRESET_KIND) {
+    function promptPresetFilePayload(rows = PRESET_MANAGE_ROWS, kind = PRESET_KIND) {
       return {
         version: 1,
         type: 'selfie-image-prompt-presets',
@@ -11140,16 +11172,9 @@ Source prompt:
         const loadStatus = Array.isArray(data) ? res.load_status : data?.load_status;
         if (loadStatus && loadStatus.ok === false) throw new Error(loadStatus.error || '预设读取失败');
         const rows = Array.isArray(data) ? data : (Array.isArray(data?.presets) ? data.presets : []);
-        $('presetTransferTitle').textContent = '导出预设文本';
-        $('presetTransferHint').textContent = '已生成 JSON 文本。系统会尝试写入剪贴板，失败时请在下方文本框中手动全选复制。';
-        $('presetTransferText').value = JSON.stringify(presetTransferPayload(rows, kind), null, 2);
-        $('presetTransferImportBtn').style.display = 'none';
-        $('presetTransferCopyBtn').style.display = '';
-        $('presetTransferStatus').textContent = '';
-        $('presetTransferModal').classList.add('show');
-        try { await copyPresetTransfer(); } catch (e) {
-          $('presetTransferStatus').textContent = e.message || '复制失败，请手动复制';
-        }
+        const label = kind === 'nai' ? 'nai-artist-presets' : 'image-presets';
+        downloadJsonFile(promptPresetFilePayload(rows, kind), `selfie-image-${label}-${new Date().toISOString().slice(0,10)}.json`);
+        showToast(`${kind === 'nai' ? 'NAI 画师串' : '生图预设'}文件已导出`, 'ok');
       } catch (e) {
         showToast(e.message || '预设导出失败', 'bad');
       }
@@ -11159,56 +11184,36 @@ Source prompt:
         openCosPoolImport();
         return;
       }
-      PRESET_TRANSFER_KIND = PRESET_KIND;
-      $('presetTransferTitle').textContent = '导入预设文本';
-      $('presetTransferHint').textContent = '把导出的 JSON 粘贴到这里，导入会按名称合并，重名预设将被覆盖。';
-      $('presetTransferText').value = '';
-      $('presetTransferCopyBtn').style.display = 'none';
-      $('presetTransferImportBtn').style.display = '';
-      $('presetTransferStatus').textContent = '';
-      $('presetTransferModal').classList.add('show');
-      $('presetTransferText').focus();
+      const kind = PRESET_KIND;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/json,.json';
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          const parsed = JSON.parse(await file.text());
+          await importPromptPresetFilePayload(parsed, kind);
+        } catch (e) {
+          presetManagerStatus(e.message || '预设文件导入失败', true);
+        }
+      };
+      input.click();
     }
-    function closePresetTransfer() { $('presetTransferModal').classList.remove('show'); }
-    async function copyPresetTransfer() {
-      const text = $('presetTransferText').value || '';
-      if (!text) return;
-      try {
-        await copyTextToClipboard(text);
-        $('presetTransferStatus').textContent = '已写入剪贴板，也可以继续从上方文本框手动复制。';
-        showToast('预设 JSON 已复制', 'ok');
-      } catch (e) {
-        $('presetTransferStatus').textContent = '自动复制失败，请点击文本框后手动全选复制。';
-        $('presetTransferText').focus();
-        $('presetTransferText').select();
-      }
-    }
-    async function importPresetTransfer() {
-      const kind = PRESET_TRANSFER_KIND;
-      let parsed;
-      try { parsed = JSON.parse($('presetTransferText').value || ''); }
-      catch (_) { $('presetTransferStatus').textContent = 'JSON 格式不正确'; return; }
-      if (parsed?.type === 'selfie-image-prompt-presets' && parsed.kind && parsed.kind !== kind) {
-        $('presetTransferStatus').textContent = '预设分类不一致，请切换到对应分类后导入';
-        return;
-      }
+    async function importPromptPresetFilePayload(parsed, kind) {
+      if (parsed?.type && parsed.type !== 'selfie-image-prompt-presets') throw new Error('文件类型不是生图预设或 NAI 画师串');
+      if (parsed?.kind && parsed.kind !== kind) throw new Error('文件分类与当前选中的预设类型不一致');
       const presets = Array.isArray(parsed) ? parsed : parsed && (parsed.presets || parsed.items || parsed);
       if (!Array.isArray(presets) && (!presets || typeof presets !== 'object')) {
-        $('presetTransferStatus').textContent = '没有找到 presets 数组';
-        return;
+        throw new Error('没有找到 presets 数组');
       }
-      $('presetTransferStatus').textContent = '导入中…';
-      try {
-        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind, revision:Number(PRESET_MANAGER_REVISIONS[kind] || 0) || undefined})});
-        closePresetTransfer();
-        PRESET_MANAGER_PAGES[kind] = 1;
-        clearPickerCache(kind);
-        if (kind === 'image') await refreshPromptCatalogViews(true);
-        if (PRESET_KIND === kind) await loadManagedPromptPresets(kind);
-        showToast((res.data && res.data.message) || '预设已导入', 'ok');
-      } catch (e) {
-        $('presetTransferStatus').textContent = e.message || '导入失败';
-      }
+      const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind, revision:Number(PRESET_MANAGER_REVISIONS[kind] || 0) || undefined})});
+      PRESET_MANAGER_REVISIONS[kind] = Number(res.data?.revision || PRESET_MANAGER_REVISIONS[kind] || 0);
+      PRESET_MANAGER_PAGES[kind] = 1;
+      clearPickerCache(kind);
+      if (kind === 'image') await refreshPromptCatalogViews(true);
+      if (PRESET_KIND === kind) await loadManagedPromptPresets(kind);
+      showToast((res.data && res.data.message) || `${kind === 'nai' ? 'NAI 画师串' : '生图预设'}已导入`, 'ok');
     }
     function renderCosPanel(panelId, targetInputId, open, btnId) {
       const panel = $(panelId);
@@ -11345,12 +11350,15 @@ Source prompt:
         showToast('自定义 COS 已保存', 'ok');
       } catch (e) { if (status) status.textContent = e.message || '保存失败'; }
     }
+    function downloadJsonFile(payload, filename) {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json;charset=utf-8'});
+      const url = URL.createObjectURL(blob); const link = document.createElement('a');
+      link.href = url; link.download = filename;
+      document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     function exportCosPool() {
       api('/api/cos-pools/export').then(res => {
-        const blob = new Blob([JSON.stringify(res.data || {}, null, 2)], {type:'application/json;charset=utf-8'});
-        const url = URL.createObjectURL(blob); const link = document.createElement('a');
-        link.href = url; link.download = `selfie-image-cos-pool-${new Date().toISOString().slice(0,10)}.json`;
-        document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        downloadJsonFile(res.data || {}, `selfie-image-cos-pool-${new Date().toISOString().slice(0,10)}.json`);
       }).catch(e => showToast(e.message || '导出失败', 'bad'));
     }
     function openCosPoolImport() {
@@ -13093,7 +13101,6 @@ Source prompt:
       else if (mask === $('mediaSourceModal')) closeMediaSourceModal();
       else if (mask === $('mediaLightboxModal')) closeMediaLightbox();
       else if (mask === $('presetEditorModal')) closePresetEditor();
-      else if (mask === $('presetTransferModal')) closePresetTransfer();
       else if (mask === $('cosPoolModal')) closeCosPoolModal();
       else if (mask === $('studioCreateModal')) closeStudioCreateModal();
       else if (mask === $('studioConnectModal')) closeStudioConnectModal();
@@ -13114,7 +13121,6 @@ Source prompt:
       if ($('channelModal')?.classList.contains('show')) { closeChannelModal(); return; }
       if ($('proxyModal')?.classList.contains('show')) { closeProxyModal(); return; }
       if ($('presetEditorModal')?.classList.contains('show')) { closePresetEditor(); return; }
-      if ($('presetTransferModal')?.classList.contains('show')) { closePresetTransfer(); return; }
       if ($('cosPoolModal')?.classList.contains('show')) { closeCosPoolModal(); return; }
       if ($('studioCreateModal')?.classList.contains('show')) { closeStudioCreateModal(); return; }
       if ($('studioConnectModal')?.classList.contains('show')) closeStudioConnectModal();
@@ -13151,8 +13157,6 @@ Source prompt:
       await loadManagedPromptPresets(PRESET_KIND);
     };
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
-    $('presetTransferCopyBtn').onclick = copyPresetTransfer;
-    $('presetTransferImportBtn').onclick = importPresetTransfer;
     $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); invalidateMetricsRequests(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); await loadAssetCollections(true); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
@@ -13289,6 +13293,21 @@ Source prompt:
         event.preventDefault();
         selfieViewTabs[nextIndex].focus();
         switchSelfieView(selfieViewTabs[nextIndex].dataset.selfieView);
+      });
+    });
+    const auditViewTabs = [...document.querySelectorAll('[data-audit-view]')];
+    auditViewTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => switchAuditView(tab.dataset.auditView));
+      tab.addEventListener('keydown', event => {
+        let nextIndex = index;
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % auditViewTabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (index + auditViewTabs.length - 1) % auditViewTabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = auditViewTabs.length - 1;
+        else return;
+        event.preventDefault();
+        auditViewTabs[nextIndex].focus();
+        switchAuditView(auditViewTabs[nextIndex].dataset.auditView);
       });
     });
     if ($('refreshSelfieBtn')) $('refreshSelfieBtn').onclick = () => refreshSelfie(true);

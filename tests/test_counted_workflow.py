@@ -81,6 +81,26 @@ def test_delivery_outcome_keeps_generation_and_receipt_separate(plugin, receipt,
             assert result["success"] is False
 
 
+@pytest.mark.parametrize(
+    "receipt,expected_text",
+    [
+        (ImageDeliveryOutcome(0, failed=1), "/生图重发"),
+        (ImageDeliveryOutcome(0, unknown=1), "投递结果未知"),
+    ],
+)
+def test_delivery_problem_sends_user_notification(plugin, receipt, expected_text):
+    plugin._send_generated_images.return_value = receipt
+    plugin._build_success_text.return_value = "生成成功"
+
+    result = run_batch(plugin, AsyncMock(return_value={"success": True, "files": ["a.png"]}))
+
+    plugin._send_task_notification.assert_awaited_once()
+    message = plugin._send_task_notification.await_args.args[2]
+    assert expected_text in message
+    assert "生成成功" not in message
+    assert result["generation_success"] is True
+
+
 @pytest.mark.parametrize("unknown", [False, True])
 def test_delivery_latency_excludes_commit_wait(plugin, monkeypatch, unknown):
     from astrbot_plugin_selfie_image.generation import counted_workflow

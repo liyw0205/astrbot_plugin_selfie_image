@@ -190,7 +190,7 @@ class AuditMixin:
         event: Optional[AstrMessageEvent],
         image: bytes,
     ) -> str:
-        """Use the current AstrBot chat LLM to reconstruct a prompt from an image."""
+        """Use the configured auxiliary vision model or current chat LLM."""
         if event is None:
             raise RuntimeError("当前会话不可用，无法调用 LLM 反推提示词。")
         instruct = (
@@ -199,7 +199,14 @@ class AuditMixin:
             "尽量描述主体、构图、视角、姿势、服装、场景、光线、风格和画面比例；"
             "看不清或无法确定的内容不要编造。"
         )
-        result = await self._call_text_llm(event, instruct, timeout=30, images=[image])
+        configured = str(getattr(self.config, "image_reverse_prompt_model", "") or "").strip()
+        target = self._find_audit_target(configured) if configured else None
+        if target is not None:
+            result = await self._call_audit_target_with_health(
+                target, instruct, images=[image], media_type="auxiliary"
+            )
+        else:
+            result = await self._call_text_llm(event, instruct, timeout=30, images=[image])
         cleaned = str(result or "").strip()
         fenced = re.match(r"^```(?:\w+)?\s*([\s\S]*?)\s*```$", cleaned)
         if fenced:
