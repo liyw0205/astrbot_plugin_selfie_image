@@ -136,3 +136,16 @@ def test_prompt_preset_and_nai_transfer_use_json_files_like_cos_pool():
     assert "/api/prompt-presets/manage/import" in catalog_source
     assert "presetTransferModal" not in template + bootstrap + catalog_source
 
+
+def test_monitor_task_and_asset_filters_share_responsive_horizontal_layout():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "pages/dashboard/index.source.html").read_text(encoding="utf-8")
+    styles = (root / "pages/dashboard/source/styles.css").read_text(encoding="utf-8")
+
+    assert template.count('class="dashboard-filter-grid"') == 3
+    assert ".dashboard-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));" in styles
+    assert ".dashboard-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
+    assert "@media (max-width: 360px)" in styles
+    assert 'id="metricAlertSettingsModal" class="modal-mask"' in template
+    assert 'id="openMetricAlertSettings"' in template
+    assert 'id="saveMetricAlertSettings"' in template

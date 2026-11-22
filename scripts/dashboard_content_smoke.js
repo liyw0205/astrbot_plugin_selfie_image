@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Render long channel/model names and task states with disposable HTTP fixtures.
+// Render dashboard settings and long content with disposable HTTP fixtures.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -36,8 +36,8 @@ const sdk = `
       pending.delete(event.data.id);
       event.data.error?item.reject(new Error(event.data.error)):item.resolve(event.data.result);
     });
-    const request=(endpoint,body)=>new Promise((resolve,reject)=>{const id=++next;pending.set(id,{resolve,reject});parent.postMessage({id,endpoint,body},'*');});
-    window.AstrBotPluginPage={ready:async()=>{},apiGet:(endpoint,body)=>request(endpoint,body)};
+    const request=(method,endpoint,body)=>new Promise((resolve,reject)=>{const id=++next;pending.set(id,{resolve,reject});parent.postMessage({id,method,endpoint,body},'*');});
+    window.AstrBotPluginPage={ready:async()=>{},apiGet:(endpoint,body)=>request('GET',endpoint,body),apiPost:(endpoint,body)=>request('POST',endpoint,body)};
   }
 `;
 const page = fs.readFileSync(path.join(ROOT,'pages/dashboard/index.source.html'),'utf8')
@@ -51,9 +51,12 @@ const host = `<!doctype html><html><head><meta name="viewport" content="width=de
   <body style="margin:0"><iframe src="/fixture" sandbox="allow-scripts" style="display:block;width:100%;height:100vh;border:0"></iframe><script>
     addEventListener('message',async event=>{
       if(event.source!==document.querySelector('iframe').contentWindow||!event.data.endpoint)return;
-      const {id,endpoint,body}=event.data;
+      const {id,method,endpoint,body}=event.data;
       try {
-        const response=await fetch('/api/'+endpoint+'?'+new URLSearchParams(body||{}));
+        const url='/api/'+endpoint;
+        const response=method==='POST'
+          ? await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+          : await fetch(url+'?'+new URLSearchParams(body||{}));
         if(!response.ok)throw new Error('fixture request failed');
         event.source.postMessage({id,result:await response.json()},'*');
       }catch(error){event.source.postMessage({id,error:error.message},'*');}
@@ -64,13 +67,25 @@ async function main() {
   fs.mkdirSync(output,{recursive:true});
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'selfie-content-browser-'));
   const failures=[];
-  const server=http.createServer((request,response)=>{
+  const configWrites=[];
+  const server=http.createServer(async (request,response)=>{
     const url=new URL(request.url,'http://fixture');
     if(url.pathname==='/fixture'||url.pathname==='/host') {
       response.setHeader('Content-Type','text/html; charset=utf-8');response.end(url.pathname==='/host'?host:page);return;
     }
     if(url.pathname==='/api/tasks/'+task.task_id) {
       response.setHeader('Content-Type','application/json');response.end(JSON.stringify({success:true,data:task}));return;
+    }
+    if(url.pathname==='/api/config'&&request.method==='POST') {
+      try {
+        const chunks=[];
+        for await(const chunk of request)chunks.push(chunk);
+        const {config:patch}=JSON.parse(Buffer.concat(chunks));
+        configWrites.push(patch);
+        response.setHeader('Content-Type','application/json');response.end(JSON.stringify({success:true,data:patch}));return;
+      } catch {
+        response.writeHead(400).end();return;
+      }
     }
     response.statusCode=404;response.end();
   });
@@ -110,6 +125,14 @@ async function main() {
       if(result!==true)failures.push({label,result});
     };
     const modalFits=id=>`(()=>{const modal=$('${id}').querySelector('.modal'),body=modal.querySelector('.modal-body'),r=modal.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1&&r.top>=0&&r.bottom<=innerHeight+1&&body.scrollWidth<=body.clientWidth+1;})()`;
+    const filtersFit=(id,columns)=>`(()=>{
+      const grid=$('${id}').closest('.dashboard-filter-grid');
+      if(getComputedStyle(grid).gridTemplateColumns.trim().split(/\\s+/).length!==${columns})return false;
+      return [...grid.querySelectorAll('input, select')].every(control=>{
+        const field=control.parentElement.getBoundingClientRect(),box=control.getBoundingClientRect();
+        return box.width>0&&box.left>=field.left&&box.right<=field.right+1&&field.right<=innerWidth+1;
+      });
+    })()`;
     for(const embedded of [false,true])for(const [width,height] of [[1280,900],[390,844],[320,568]]) {
       const label=`${embedded?'embedded':'standalone'}-${width}`;contextId=undefined;
       await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500});
@@ -136,20 +159,60 @@ async function main() {
       await check(label+' preview hiding round trip off', "CONFIG.image.enable_preview_hidden===false&&!$('enablePreviewHidden').checked");
       await screenshot(label+'-image-settings');
       await check(label+' alert thresholds have defaults after config load',`$('alertRecordSuccessRate').value==='80'&&$('alertGenerationP95').value==='60'&&$('alertCacheOrphanGrowth').value==='10'`);
+      await evaluate("navigateToTab('monitor');");
+      const filterColumns=width<=360?1:width<=760?2:width<=1100?3:4;
+      await check(label+' monitor filters fit side by side',filtersFit('monitorMedia',filterColumns));
+      await check(label+' task filters fit side by side',filtersFit('taskQueueScope',filterColumns));
+      await evaluate("$('monitorMedia').scrollIntoView({block:'start'});");
+      await screenshot(label+'-monitor-filters');
+      await evaluate("$('taskQueueScope').scrollIntoView({block:'center'});");
+      await screenshot(label+'-task-filters');
+      await evaluate("navigateToTab('assets');");
+      await check(label+' asset filters fit side by side',filtersFit('assetModel',filterColumns));
+      await evaluate("$('assetKeyword').scrollIntoView({block:'start'});");
+      await screenshot(label+'-asset-filters');
+      await evaluate("navigateToTab('monitor');");
+      await click('#openMetricAlertSettings');await until("$('metricAlertSettingsModal').classList.contains('show')");
+      await check(label+' alert settings modal fits',modalFits('metricAlertSettingsModal'));
+      await check(label+' threshold save button stays visible',`(()=>{const r=$('saveMetricAlertSettings').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()`);
+      if(width<=390) {
+        await check(label+' thresholds can scroll on mobile',`(()=>{const body=$('metricAlertSettingsModal').querySelector('.modal-body');body.scrollTop=body.scrollHeight;return body.scrollTop>0;})()`);
+        await evaluate("$('metricAlertSettingsModal').querySelector('.modal-body').scrollTop=0;");
+      }
+      await screenshot(label+'-alert-settings');
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});
+      await until("!$('metricAlertSettingsModal').classList.contains('show')");
+      await check(label+' dialog close restores launcher focus',"document.activeElement===$('openMetricAlertSettings')");
+      await click('#openMetricAlertSettings');
+      await evaluate("$('alertRecordSuccessRate').value='75';$('alertRecordSuccessRate').dispatchEvent(new Event('input'));");
+      const writesBeforeSave=configWrites.length;
+      await click('#saveMetricAlertSettings');
+      await until("!$('metricAlertSettingsModal').classList.contains('show')");
+      assert.equal(configWrites.length,writesBeforeSave+1);
+      assert.deepEqual(Object.keys(configWrites.at(-1)),['monitoring']);
+      assert.equal(configWrites.at(-1).monitoring.generation_alerts.record_success_rate_below,0.75);
       await evaluate(`CONFIG=${JSON.stringify(config)};renderAllChannelLists();navigateToTab('channels');`);
       await screenshot(label+'-channels');
+      await evaluate("switchChannelPane('image');");
+      await check(label+' channel add actions follow selected pane',"getComputedStyle(document.querySelector('[data-channel-add=\"image\"]')).display!=='none'&&getComputedStyle(document.querySelector('[data-channel-add=\"audit\"]')).display==='none'");
       await check(label+' channel titles',`[...document.querySelectorAll('.channel-row b')].every(el=>{const range=document.createRange();range.selectNodeContents(el);const box=el.parentElement.getBoundingClientRect();return [...range.getClientRects()].every(r=>r.left>=box.left-1&&r.right<=box.right+1);})`);
       await check(label+' add actions',`[...document.querySelectorAll('[data-channel-add]')].every(button=>{const b=button.getBoundingClientRect();return [...document.querySelectorAll('.channel-row b')].every(el=>{const range=document.createRange();range.selectNodeContents(el);return [...range.getClientRects()].every(r=>r.right<=b.left||r.left>=b.right||r.bottom<=b.top||r.top>=b.bottom);});})`);
       for(const kind of ['image','audit']) {
-        await click(`[data-channel-add="${kind}"]`);
+        await evaluate(`switchChannelPane(${JSON.stringify(kind)});`);
+        assert.equal(await evaluate(
+          `getComputedStyle(document.querySelector('[data-channel-add="${kind}"]')).display!=='none'&&document.querySelector('[data-channel-add="${kind==='image'?'audit':'image'}"]').hidden`),
+        true,`${kind} add action visibility`);
+        await evaluate(`document.querySelector('[data-channel-add="${kind}"]').click();`);
         await until("$('channelModal').classList.contains('show')");
-        assert.equal(await evaluate('EDITING_CHANNEL_IS_NEW && EDITING_CHANNEL_KIND === '+JSON.stringify(kind)),true);
-        await click('#channelModalCloseButton');
+        assert.equal(await evaluate(`JSON.stringify({isNew:EDITING_CHANNEL_IS_NEW,kind:EDITING_CHANNEL_KIND,modal:$('channelModal').classList.contains('show')})`),
+          JSON.stringify({isNew:true,kind,modal:true}), `channel editor did not open as new ${kind} channel`);
+        await evaluate("document.querySelector('#channelModalCloseButton').click();");
         assert.equal(await evaluate('CONFIG.image_channels.length'),2);
         assert.equal(await evaluate('CONFIG.audit_channels.length'),0);
       }
-      await click('#channelTabImage');
-      await click('#channelList [data-act="edit"]');await until("$('channelModal').classList.contains('show')");
+      await evaluate("document.querySelector('#channelTabImage').click();document.querySelector('#channelList [data-act=\"edit\"]').click();");
+      await until("$('channelModal').classList.contains('show')");
       await evaluate("$('enabledModels').scrollIntoView({block:'center'});");
       await screenshot(label+'-models');
       await check(label+' channel modal',modalFits('channelModal'));
@@ -159,8 +222,8 @@ async function main() {
       await evaluate(`setStatus('modalStatus',${JSON.stringify(longError)});`);
       await check(label+' channel status',modalFits('channelModal'));
       await check(label+' channel controls',`[...document.querySelectorAll('#channelModal .modal-footer button, #channelModal .between > button')].every(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.width>=28&&r.height>=28;})`);
-      await click('#channelModalCloseButton');await until("!$('channelModal').classList.contains('show')");
-      await click('[data-channel-add="image"]');await until("$('channelModal').classList.contains('show')");
+      await evaluate("document.querySelector('#channelModalCloseButton').click();");await until("!$('channelModal').classList.contains('show')");
+      await evaluate("document.querySelector('[data-channel-add=\"image\"]').click();");await until("$('channelModal').classList.contains('show')");
       await evaluate("$('modalProvider').value='novelai';$('modalProvider').dispatchEvent(new Event('change'));");
       assert.equal(await evaluate("$('manualFillNai').style.display !== 'none'"),true,'NovelAI fill button should be visible');
       await click('#manualFillNai');await click('#manualFillNai');
@@ -168,7 +231,7 @@ async function main() {
         ['nai-diffusion-4-5-full','nai-diffusion-5-full'],'filling twice should add each NovelAI model once');
       await evaluate("$('modalProvider').value='openai';$('modalProvider').dispatchEvent(new Event('change'));");
       assert.equal(await evaluate("$('manualFillNai').style.display === 'none'"),true,'non-NovelAI fill button should be hidden');
-      await click('#channelModalCloseButton');await until("!$('channelModal').classList.contains('show')");
+      await evaluate("document.querySelector('#channelModalCloseButton').click();");await until("!$('channelModal').classList.contains('show')");
       await evaluate(`openTaskDetail(${JSON.stringify(task.task_id)})`);
       await until("$('taskDetailBody').textContent.includes('UPSTREAM_TIMEOUT')");
       await screenshot(label+'-task');
@@ -177,7 +240,7 @@ async function main() {
       await screenshot(label+'-task-records');
       await check(label+' linked records',`[...document.querySelectorAll('.task-record-open')].every(el=>{const r=el.getBoundingClientRect(),body=$('taskModal').querySelector('.modal-body').getBoundingClientRect();return r.left>=body.left&&r.right<=body.right+1&&el.scrollWidth<=el.clientWidth+1;})`);
       await check(label+' attempt cells',`[...document.querySelectorAll('#taskDetailBody table td')].every(el=>el.scrollWidth<=el.clientWidth+1)&&document.querySelector('#taskDetailBody table td:nth-child(2)').getBoundingClientRect().width>=100`);
-      await click('#taskModal button[onclick="closeTaskDetail()"]');await until("!$('taskModal').classList.contains('show')");
+      await evaluate("document.querySelector('#taskModal button[onclick=\"closeTaskDetail()\"]').click();");await until("!$('taskModal').classList.contains('show')");
       if(embedded) {
         await evaluate("document.documentElement.classList.remove('embedded-dashboard-ready');void initializeEmbeddedDashboard();");
         await until("$('embeddedBootRetry') && !$('embeddedBootRetry').hidden");
@@ -185,7 +248,7 @@ async function main() {
         assert.equal(await evaluate("getComputedStyle($('embeddedBootPage')).display !== 'none'"),true,'embedded errors should show connection retry');
       }
       await check(label+' page width','document.documentElement.scrollWidth<=innerWidth+1');
-      console.log(`[content-smoke] ${label} ${width}x${height}: checked channels, model editor, status and task details`);
+      console.log(`[content-smoke] ${label} ${width}x${height}: checked filters, thresholds, channels, model editor and task details`);
     }
     assert.deepEqual(exceptions,[]);
     assert.deepEqual(failures,[]);

@@ -38,6 +38,15 @@
       $('alertGenerationMinRecords').value = String(settings.generation_min_records ?? 3);
       $('alertCacheOrphanGrowth').value = String(settings.cache_orphan_growth_at_least ?? 10);
     }
+    function openMetricAlertSettings() {
+      syncMetricAlertForm();
+      $('metricAlertSettingsModal')?.classList.add('show');
+      $('generationAlertsEnabled')?.focus();
+    }
+    function closeMetricAlertSettings() {
+      $('metricAlertSettingsModal')?.classList.remove('show');
+      $('openMetricAlertSettings')?.focus();
+    }
     async function saveMetricAlertSettings() {
       const root = $('metricAlertSettings');
       const button = $('saveMetricAlertSettings');
@@ -80,6 +89,7 @@
         if (root) root.dataset.dirty = '';
         syncMetricAlertForm(true);
         showToast('告警阈值已保存', 'ok');
+        closeMetricAlertSettings();
         invalidateMetricsRequests();
         await loadMetrics();
       } catch (error) {

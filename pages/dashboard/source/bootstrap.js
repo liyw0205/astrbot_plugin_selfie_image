@@ -55,6 +55,7 @@
       else if (mask === $('compareModal')) closeCompareModal();
       else if (mask === $('taskModal')) closeTaskDetail();
       else if (mask === $('metricsModal')) closeMetricsModal();
+      else if (mask === $('metricAlertSettingsModal')) closeMetricAlertSettings();
       else if (mask === $('mediaSourceModal')) closeMediaSourceModal();
       else if (mask === $('mediaLightboxModal')) closeMediaLightbox();
       else if (mask === $('presetEditorModal')) closePresetEditor();
@@ -73,6 +74,7 @@
       if ($('mediaLightboxModal')?.classList.contains('show')) { closeMediaLightbox(); return; }
       if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }
       if ($('metricsModal')?.classList.contains('show')) { closeMetricsModal(); return; }
+      if ($('metricAlertSettingsModal')?.classList.contains('show')) { closeMetricAlertSettings(); return; }
       if ($('recordModal')?.classList.contains('show')) { closeRecordDetail(); return; }
       if ($('compareModal')?.classList.contains('show')) { closeCompareModal(); return; }
       if ($('channelModal')?.classList.contains('show')) { closeChannelModal(); return; }
@@ -301,6 +303,17 @@
       if (button) openMetricsCategory(button.dataset.metricsCategory);
     });
     $('saveMetricAlertSettings')?.addEventListener('click', saveMetricAlertSettings);
+    $('openMetricAlertSettings')?.addEventListener('click', openMetricAlertSettings);
+    $('closeMetricAlertSettings')?.addEventListener('click', closeMetricAlertSettings);
+    $('metricAlertSettingsModal')?.addEventListener('keydown', event => {
+      if (event.key !== 'Tab') return;
+      const controls = event.currentTarget.querySelectorAll('button:not(:disabled), input:not(:disabled)');
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (document.activeElement !== (event.shiftKey ? first : last)) return;
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    });
     $('metricAlertSettings')?.querySelectorAll('input').forEach(input => {
       input.addEventListener('input', () => { $('metricAlertSettings').dataset.dirty = 'true'; });
       input.addEventListener('change', () => { $('metricAlertSettings').dataset.dirty = 'true'; });

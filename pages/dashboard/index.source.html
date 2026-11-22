@@ -212,48 +212,69 @@
           <button class="danger" onclick="clearRecords()">清空记录</button>
         </div>
       </div>
-      <div class="grid4">
-        <div><label>记录类型</label><select id="monitorMedia"><option value="">全部</option><option value="image">图片</option></select></div>
-        <div><label>来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="输入来源关键词"><datalist id="monitorSourceList"></datalist></div>
-        <div><label>模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
-        <div><label>状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
-        <div><label>指标窗口</label><select id="monitorMetricsWindow"><option value="all">全部保留记录</option><option value="1h">最近 1 小时</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></div>
-        <div><label>资产标记</label><select id="monitorAsset"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
-        <div><label>标签</label><input id="monitorTag" placeholder="输入标签"></div>
-        <div><label>关键词</label><input id="monitorKeyword" placeholder="编号或提示词"></div>
+      <div class="dashboard-filter-grid">
+        <div><label for="monitorMedia">记录类型</label><select id="monitorMedia"><option value="">全部</option><option value="image">图片</option></select></div>
+        <div><label for="monitorModel">模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
+        <div><label for="monitorSuccess">状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
+        <div><label for="monitorMetricsWindow">指标窗口</label><select id="monitorMetricsWindow"><option value="all">全部保留记录</option><option value="1h">最近 1 小时</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></div>
+        <div><label for="monitorAsset">资产标记</label><select id="monitorAsset"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
+        <div><label for="monitorSource">来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="来源关键词"><datalist id="monitorSourceList"></datalist></div>
+        <div><label for="monitorTag">标签</label><input id="monitorTag" placeholder="输入标签"></div>
+        <div><label for="monitorKeyword">关键词</label><input id="monitorKeyword" placeholder="编号或提示词"></div>
       </div>
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
-      <div class="metrics-launcher-header"><strong>运行概览</strong><span id="monitorMetricsWindowLabel" class="muted">统计范围：全部保留记录</span></div>
+      <div class="metrics-launcher-header">
+        <strong>运行概览</strong>
+        <div class="metrics-launcher-actions">
+          <span id="monitorMetricsWindowLabel" class="muted">统计范围：全部保留记录</span>
+          <button id="openMetricAlertSettings" class="secondary mini" type="button" aria-haspopup="dialog" aria-controls="metricAlertSettingsModal">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg>
+            设置阈值
+          </button>
+        </div>
+      </div>
       <div id="monitorMetricButtons" class="metrics-launcher-grid" aria-label="运行概览分类"></div>
-      <div id="metricAlertSettings" class="metrics-alert-settings">
-        <div class="metrics-launcher-header"><strong>运行建议阈值</strong><button id="saveMetricAlertSettings" class="secondary mini" type="button">保存阈值</button></div>
-        <div class="grid4">
-          <div class="metrics-alert-toggle"><label><input id="generationAlertsEnabled" type="checkbox"> 启用运行建议</label></div>
-          <div><label for="alertRecordSuccessRate">窗口记录成功率低于（%）</label><input id="alertRecordSuccessRate" type="number" min="0" max="100" step="0.1" required></div>
-          <div><label for="alertRecordSuccessMinRecords">成功率最少记录数</label><input id="alertRecordSuccessMinRecords" type="number" min="1" max="100000" step="1" required></div>
-          <div><label for="alertConsecutiveFailures">连续生成失败告警数</label><input id="alertConsecutiveFailures" type="number" min="1" max="100000" step="1" required></div>
-          <div><label for="alertChannelSuccessRate">渠道成功率低于（%）</label><input id="alertChannelSuccessRate" type="number" min="0" max="100" step="0.1" required></div>
-          <div><label for="alertChannelMinAttempts">渠道最少尝试数</label><input id="alertChannelMinAttempts" type="number" min="1" max="100000" step="1" required></div>
-          <div><label for="alertRateLimitRate">限流占比达到（%）</label><input id="alertRateLimitRate" type="number" min="0" max="100" step="0.1" required></div>
-          <div><label for="alertRateLimitMinAttempts">限流最少尝试数</label><input id="alertRateLimitMinAttempts" type="number" min="1" max="100000" step="1" required></div>
-          <div><label for="alertRateLimitMinFailures">限流最少失败数</label><input id="alertRateLimitMinFailures" type="number" min="1" max="100000" step="1" required></div>
-          <div><label for="alertRetryRate">重试率达到（%）</label><input id="alertRetryRate" type="number" min="0" max="100" step="0.1" required></div>
-          <div><label for="alertRetryMinRecords">重试最少记录数</label><input id="alertRetryMinRecords" type="number" min="1" max="100000" step="1" required></div>
-          <div><label for="alertGenerationP95">生成 P95 达到（秒）</label><input id="alertGenerationP95" type="number" min="0" max="86400" step="0.1" required></div>
-          <div><label for="alertGenerationMinRecords">耗时最少记录数</label><input id="alertGenerationMinRecords" type="number" min="1" max="100000" step="1" required></div>
-          <div><label for="alertCacheOrphanGrowth">缓存孤儿增长告警数</label><input id="alertCacheOrphanGrowth" type="number" min="1" max="100000" step="1" required></div>
+      <div id="metricAlertSettingsModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="metricAlertSettingsTitle">
+        <div class="modal metric-alert-dialog">
+          <div class="between">
+            <h2 id="metricAlertSettingsTitle">运行建议阈值</h2>
+            <button id="closeMetricAlertSettings" class="secondary" type="button">关闭</button>
+          </div>
+          <div class="modal-body">
+            <div id="metricAlertSettings" class="metrics-alert-settings">
+              <div class="metric-alert-grid">
+                <div class="metrics-alert-toggle"><label><input id="generationAlertsEnabled" type="checkbox"> 启用运行建议</label></div>
+                <div><label for="alertRecordSuccessRate">窗口记录成功率低于（%）</label><input id="alertRecordSuccessRate" type="number" min="0" max="100" step="0.1" required></div>
+                <div><label for="alertRecordSuccessMinRecords">成功率最少记录数</label><input id="alertRecordSuccessMinRecords" type="number" min="1" max="100000" step="1" required></div>
+                <div><label for="alertConsecutiveFailures">连续生成失败告警数</label><input id="alertConsecutiveFailures" type="number" min="1" max="100000" step="1" required></div>
+                <div><label for="alertChannelSuccessRate">渠道成功率低于（%）</label><input id="alertChannelSuccessRate" type="number" min="0" max="100" step="0.1" required></div>
+                <div><label for="alertChannelMinAttempts">渠道最少尝试数</label><input id="alertChannelMinAttempts" type="number" min="1" max="100000" step="1" required></div>
+                <div><label for="alertRateLimitRate">限流占比达到（%）</label><input id="alertRateLimitRate" type="number" min="0" max="100" step="0.1" required></div>
+                <div><label for="alertRateLimitMinAttempts">限流最少尝试数</label><input id="alertRateLimitMinAttempts" type="number" min="1" max="100000" step="1" required></div>
+                <div><label for="alertRateLimitMinFailures">限流最少失败数</label><input id="alertRateLimitMinFailures" type="number" min="1" max="100000" step="1" required></div>
+                <div><label for="alertRetryRate">重试率达到（%）</label><input id="alertRetryRate" type="number" min="0" max="100" step="0.1" required></div>
+                <div><label for="alertRetryMinRecords">重试最少记录数</label><input id="alertRetryMinRecords" type="number" min="1" max="100000" step="1" required></div>
+                <div><label for="alertGenerationP95">生成 P95 达到（秒）</label><input id="alertGenerationP95" type="number" min="0" max="86400" step="0.1" required></div>
+                <div><label for="alertGenerationMinRecords">耗时最少记录数</label><input id="alertGenerationMinRecords" type="number" min="1" max="100000" step="1" required></div>
+                <div><label for="alertCacheOrphanGrowth">缓存孤儿增长告警数</label><input id="alertCacheOrphanGrowth" type="number" min="1" max="100000" step="1" required></div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer metric-alert-footer">
+            <button id="saveMetricAlertSettings" class="ok" type="button">保存阈值</button>
+          </div>
         </div>
       </div>
       <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
-      <div class="grid" style="margin-top:8px">
-        <div><label>显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
-        <div><label>媒体类型</label><select id="taskQueueMedia" onchange="taskQueueViewChanged()"><option value="">全部</option><option value="image">图片</option></select></div>
-        <div><label>任务状态</label><select id="taskQueueStatus" onchange="taskQueueFilterChanged()"><option value="">全部</option><option value="queued">排队</option><option value="running">进行中</option><option value="succeeded">完成</option><option value="partial_success">部分完成</option><option value="failed">失败</option><option value="delivery_failed">发送失败</option><option value="cancelled">已取消</option><option value="expired">已过期</option></select></div>
-        <div><label>来源筛选</label><input id="taskQueueSource" placeholder="例如：LLM、画布、重试" oninput="taskQueueFilterChanged()"></div>
-        <div><label>模型筛选</label><input id="taskQueueModel" placeholder="输入模型名" oninput="taskQueueFilterChanged()"></div>
-        <div><label>关键词</label><input id="taskQueueKeyword" placeholder="提示词或失败原因" oninput="taskQueueFilterChanged()"></div>
-        <div><label>开始日期</label><input id="taskQueueStartDate" type="date" onchange="taskQueueFilterChanged()"></div>
-        <div><label>结束日期</label><input id="taskQueueEndDate" type="date" onchange="taskQueueFilterChanged()"></div>
+      <div class="dashboard-filter-grid" style="margin-top:8px">
+        <div><label for="taskQueueScope">显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
+        <div><label for="taskQueueMedia">媒体类型</label><select id="taskQueueMedia" onchange="taskQueueViewChanged()"><option value="">全部</option><option value="image">图片</option></select></div>
+        <div><label for="taskQueueStatus">任务状态</label><select id="taskQueueStatus" onchange="taskQueueFilterChanged()"><option value="">全部</option><option value="queued">排队</option><option value="running">进行中</option><option value="succeeded">完成</option><option value="partial_success">部分完成</option><option value="failed">失败</option><option value="delivery_failed">发送失败</option><option value="cancelled">已取消</option><option value="expired">已过期</option></select></div>
+        <div><label for="taskQueueSource">来源筛选</label><input id="taskQueueSource" placeholder="来源关键词" oninput="taskQueueFilterChanged()"></div>
+        <div><label for="taskQueueModel">模型筛选</label><input id="taskQueueModel" placeholder="输入模型名" oninput="taskQueueFilterChanged()"></div>
+        <div><label for="taskQueueKeyword">关键词</label><input id="taskQueueKeyword" placeholder="提示词或错误" oninput="taskQueueFilterChanged()"></div>
+        <div><label for="taskQueueStartDate">开始日期</label><input id="taskQueueStartDate" type="date" onchange="taskQueueFilterChanged()"></div>
+        <div><label for="taskQueueEndDate">结束日期</label><input id="taskQueueEndDate" type="date" onchange="taskQueueFilterChanged()"></div>
       </div>
       <div class="between" style="margin-top:10px;gap:8px">
         <span id="taskSelectionStatus" class="muted">未选择任务</span>
@@ -303,17 +324,17 @@
           <input id="assetImportFile" type="file" accept="application/json,.json" style="display:none">
         </div>
       </div>
-      <div class="grid4">
-        <div><label>关键词</label><input id="assetKeyword" placeholder="编号、提示词、备注、来源或模型"></div>
-        <div><label>来源</label><input id="assetSource" placeholder="来源关键词"></div>
-        <div><label>模型筛选</label><select id="assetModel"><option value="">全部</option></select></div>
-        <div><label>媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image" selected>图片</option></select></div>
-        <div><label>状态</label><select id="assetSuccess"><option value="">全部</option><option value="true" selected>成功</option><option value="false">失败</option></select></div>
-        <div><label>资产标记</label><select id="assetMark"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
-        <div><label>标签</label><input id="assetTag" list="assetTagList" placeholder="精确匹配标签"><datalist id="assetTagList"></datalist></div>
-        <div><label>排序</label><select id="assetSort"><option value="recent">最新生成</option><option value="oldest">最早生成</option><option value="priority">置顶/收藏优先</option></select></div>
-        <div><label>开始日期</label><input id="assetStartTime" type="date"></div>
-        <div><label>结束日期</label><input id="assetEndTime" type="date"></div>
+      <div class="dashboard-filter-grid">
+        <div><label for="assetKeyword">关键词</label><input id="assetKeyword" placeholder="编号、提示词等"></div>
+        <div><label for="assetSource">来源</label><input id="assetSource" placeholder="来源关键词"></div>
+        <div><label for="assetModel">模型筛选</label><select id="assetModel"><option value="">全部</option></select></div>
+        <div><label for="assetMedia">媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image" selected>图片</option></select></div>
+        <div><label for="assetSuccess">状态</label><select id="assetSuccess"><option value="">全部</option><option value="true" selected>成功</option><option value="false">失败</option></select></div>
+        <div><label for="assetMark">资产标记</label><select id="assetMark"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
+        <div><label for="assetTag">标签</label><input id="assetTag" list="assetTagList" placeholder="精确匹配标签"><datalist id="assetTagList"></datalist></div>
+        <div><label for="assetSort">排序</label><select id="assetSort"><option value="recent">最新生成</option><option value="oldest">最早生成</option><option value="priority">置顶/收藏优先</option></select></div>
+        <div><label for="assetStartTime">开始日期</label><input id="assetStartTime" type="date"></div>
+        <div><label for="assetEndTime">结束日期</label><input id="assetEndTime" type="date"></div>
       </div>
       <div id="assetStats" class="stat-grid" style="margin-top:12px"></div>
       <div class="asset-collection-panel">
