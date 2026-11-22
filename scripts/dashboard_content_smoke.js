@@ -144,7 +144,7 @@ async function main() {
         await click(`[data-channel-add="${kind}"]`);
         await until("$('channelModal').classList.contains('show')");
         assert.equal(await evaluate('EDITING_CHANNEL_IS_NEW && EDITING_CHANNEL_KIND === '+JSON.stringify(kind)),true);
-        await click('#channelModal button[onclick="closeChannelModal()"]');
+        await click('#channelModalCloseButton');
         assert.equal(await evaluate('CONFIG.image_channels.length'),2);
         assert.equal(await evaluate('CONFIG.audit_channels.length'),0);
       }
@@ -159,7 +159,7 @@ async function main() {
       await evaluate(`setStatus('modalStatus',${JSON.stringify(longError)});`);
       await check(label+' channel status',modalFits('channelModal'));
       await check(label+' channel controls',`[...document.querySelectorAll('#channelModal .modal-footer button, #channelModal .between > button')].every(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.width>=28&&r.height>=28;})`);
-      await click('#channelModal button[onclick="closeChannelModal()"]');await until("!$('channelModal').classList.contains('show')");
+      await click('#channelModalCloseButton');await until("!$('channelModal').classList.contains('show')");
       await click('[data-channel-add="image"]');await until("$('channelModal').classList.contains('show')");
       await evaluate("$('modalProvider').value='novelai';$('modalProvider').dispatchEvent(new Event('change'));");
       assert.equal(await evaluate("$('manualFillNai').style.display !== 'none'"),true,'NovelAI fill button should be visible');
@@ -168,7 +168,7 @@ async function main() {
         ['nai-diffusion-4-5-full','nai-diffusion-5-full'],'filling twice should add each NovelAI model once');
       await evaluate("$('modalProvider').value='openai';$('modalProvider').dispatchEvent(new Event('change'));");
       assert.equal(await evaluate("$('manualFillNai').style.display === 'none'"),true,'non-NovelAI fill button should be hidden');
-      await click('#channelModal button[onclick="closeChannelModal()"]');await until("!$('channelModal').classList.contains('show')");
+      await click('#channelModalCloseButton');await until("!$('channelModal').classList.contains('show')");
       await evaluate(`openTaskDetail(${JSON.stringify(task.task_id)})`);
       await until("$('taskDetailBody').textContent.includes('UPSTREAM_TIMEOUT')");
       await screenshot(label+'-task');

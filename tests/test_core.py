@@ -9592,6 +9592,8 @@ class StudioStoreTests(unittest.TestCase):
         self.assertNotIn("多人温馨", titles)  # group-only
         self.assertNotIn("精修表情", titles)  # i2i-only
         self.assertIn("捧脸", titles)
+        self.assertNotIn("惩罚揭晓抓拍", titles)
+        self.assertNotIn("床上慌忙遮掩", titles)
         globals_ = global_prompt_presets()
         gnames = {str(x.get("name")) for x in globals_}
         structure_presets = (
@@ -9692,15 +9694,24 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(ACTION_PRESET_ALIAS, "动作预设")
         self.assertEqual(UPPER_PRESET_ALIAS, "上身预设")
         self.assertEqual(LOWER_PRESET_ALIAS, "下身预设")
-        self.assertEqual(len(action_prompt_presets()), 20)
+        self.assertEqual(len(action_prompt_presets()), 24)
         action_titles = {item["title"] for item in action_prompt_presets()}
-        self.assertTrue({"捧脸", "男友视角", "咬唇回眸", "侧躺抬眼", "战后力竭", "臣服怯态"}.issubset(action_titles))
+        self.assertTrue({"捧脸", "男友视角", "战后力竭", "臣服怯态"}.issubset(action_titles))
         self.assertTrue({"夜窗近摄", "门后独照", "独唱之后"}.issubset(action_titles))
         self.assertTrue({"暗室祈祷", "床上应援", "健身后镜前检查", "豆浆恶作剧抓拍"}.issubset(action_titles))
+        self.assertTrue({"惩罚揭晓抓拍", "床上慌忙遮掩"}.issubset(action_titles))
+        extracted_titles = {
+            "赛后臀腿检查", "急救后环绕俯视", "开门展示退货", "昏暗卧室跪坐",
+            "社媒主页抓拍：抬臂遮脸", "外八字蹲姿吐舌", "漫展后伸手挡镜头",
+            "酒店房间数钱", "忏悔窗跪坐祈祷", "从电脑屏幕爬出", "社媒截图：伸手挡镜头",
+        }
+        self.assertTrue(extracted_titles.issubset(action_titles))
+        self.assertFalse({"逃脱魔术落幕后", "放映室胶片故障", "后座寻找耳饰", "闭馆展厅试戴项链"} & action_titles)
+        self.assertFalse({"耳边靠近", "牵手拉近"} & action_titles)
+        self.assertFalse({"咬唇回眸", "腰侧轻抚", "轻拉衣领", "俯身靠近", "背对回眸", "侧躺抬眼", "低头抬眼"} & action_titles)
         action_prompts = {item["title"]: item["prompt"] for item in action_prompt_presets()}
         sweat_titles = {
-            "咬唇回眸", "轻拉衣领", "腰侧轻抚", "耳边靠近", "牵手拉近",
-            "侧躺抬眼", "低头抬眼", "捧脸", "男友视角", "门后独照", "独唱之后",
+            "捧脸", "男友视角", "门后独照", "独唱之后",
         }
         for title in sweat_titles:
             if title == "男友视角":
@@ -9711,16 +9722,26 @@ class StudioStoreTests(unittest.TestCase):
             self.assertIn("大汗淋漓", action_prompts[title])
             self.assertIn("汗湿", action_prompts[title])
             self.assertIn("反光", action_prompts[title])
-        for title in ("俯身靠近", "臣服怯态", "夜窗近摄", "背对回眸", "战后力竭"):
+        for title in ("臣服怯态", "夜窗近摄", "战后力竭"):
             self.assertNotIn("大汗淋漓", action_prompts[title])
         self.assertEqual(len(upper_prompt_presets()), 20)
         self.assertEqual(len(lower_prompt_presets()), 13)
-        self.assertEqual(len(special_prompt_presets()), 53)
-        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 53)
+        self.assertEqual(len(special_prompt_presets()), 57)
+        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 57)
         self.assertIn("张开嘴并伸出舌尖", action_prompts["暗室祈祷"])
         self.assertIn("仰躺者眼睛的位置", action_prompts["床上应援"])
         self.assertIn("不是从上方俯拍", action_prompts["床上应援"])
         self.assertIn("同伴的一只手和一小截前臂", action_prompts["豆浆恶作剧抓拍"])
+        self.assertNotIn("另一只手仍拿着豆浆杯", action_prompts["豆浆恶作剧抓拍"])
+        self.assertIn("像是刚刚救起一名幸存者", action_prompts["急救后环绕俯视"])
+        self.assertNotIn("4–5", action_prompts["急救后环绕俯视"])
+        self.assertIn("门外的 POV 正在敲门", action_prompts["开门展示退货"])
+        self.assertIn("举起刚拆出的胸衣展示", action_prompts["开门展示退货"])
+        self.assertIn("双腿分开抬起", action_prompts["社媒主页抓拍：抬臂遮脸"])
+        self.assertIn("液体痕迹和玩具", action_prompts["酒店房间数钱"])
+        self.assertIn("双腿仍留在屏幕里", action_prompts["从电脑屏幕爬出"])
+        self.assertIn("成人惩罚卡", action_prompts["惩罚揭晓抓拍"])
+        self.assertIn("刚从一段私密亲热中回过神", action_prompts["床上慌忙遮掩"])
         self.assertEqual(
             {item["id"] for item in special_prompt_presets()},
             {item["id"] for item in action_prompt_presets()}
@@ -9767,18 +9788,15 @@ class StudioStoreTests(unittest.TestCase):
             group_order = [group for group in groups if group]
             self.assertEqual(group_order, sorted(group_order, key={"action": 0, "upper": 1, "lower": 2}.get))
 
-    def test_action_presets_use_deep_affection_without_rewriting_reserved_items(self) -> None:
+    def test_removed_ordinary_action_presets_are_not_seeded(self) -> None:
         from astrbot_plugin_selfie_image.studio.studio import action_prompt_presets
 
         prompts = {item["title"]: item["prompt"] for item in action_prompt_presets()}
-        changed_titles = {
-            "咬唇回眸", "轻拉衣领", "俯身靠近", "腰侧轻抚", "耳边靠近",
-            "牵手拉近", "侧躺抬眼", "背对回眸", "低头抬眼",
+        removed_titles = {
+            "咬唇回眸", "腰侧轻抚", "轻拉衣领", "俯身靠近",
+            "背对回眸", "侧躺抬眼", "低头抬眼",
         }
-        for title in changed_titles:
-            self.assertIn("深情", prompts[title])
-        for title in ("咬唇回眸", "俯身靠近", "牵手拉近", "侧躺抬眼"):
-            self.assertNotRegex(prompts[title], r"笑意|笑容|微笑|唇角微微上扬|嘴角带着")
+        self.assertFalse(removed_titles.intersection(prompts))
         self.assertIn("女孩眼神朦胧却饱含爱意", prompts["捧脸"])
         self.assertIn("her eyes are hazy but full of love", prompts["男友视角"])
 

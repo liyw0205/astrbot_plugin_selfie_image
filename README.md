@@ -3,7 +3,7 @@
 AstrBot 的生图、图生图、AI 自拍、合影与管理面板插件。
 
 - 插件名：`astrbot_plugin_selfie_image`
-- 当前稳定版：`1.8.11`
+- 当前稳定版：`1.8.12`
 - AstrBot：`>=4.13.0,<5`
 - 仓库：<https://github.com/liyw0205/astrbot_plugin_selfie_image>
 
@@ -11,7 +11,7 @@ AstrBot 的生图、图生图、AI 自拍、合影与管理面板插件。
 
 - 文生图、图生图，以及多张批量生成
 - 固定形象自拍、换装、摆姿势、他拍、合影和多人同框
-- 内置提示词预设：动作类 `捧脸`、`男友视角`、`咬唇回眸` 等，以及 `变真人`、`变动漫`、`变猫娘`、`变Q版`、`变像素`、`证件照` 等
+- 内置提示词预设分组：`特殊预设`、`动作预设`、`上身预设`、`下身预设`
 - 多渠道、多模型、模型优先级、失败回退和任务队列
 - 资产库、生成记录、收藏/置顶/标签、历史提示词、重试和画布编排
 - 独立 Flask Web 面板与 AstrBot 内嵌 Dashboard
@@ -286,11 +286,7 @@ git diff --check
 
 帮助图排版回归：`python -m pytest -q tests/test_help_poster.py`。实际渲染速查图和完整图，检查普通/放大字体、长标题、长正文与高画布下的文字边界、重叠、内容完整性，以及指令缓存读取和 README 指令覆盖。
 
-备份管理浏览器回归：`node scripts/backup_smoke.js`（需要 Chromium、Python）。使用临时数据验证独立页、当前宿主桥接和没有文件下载方法的旧桥接，在 1280×900、390×844、320×568 下的按钮点击、认证文件/分块下载、有效 ZIP、下载失败重试与延迟响应、恢复勾选、上传取消后重试、满/空列表及长文件名布局；默认将截图保存到临时目录，可用 `BACKUP_SMOKE_OUTPUT` 指定输出位置。测试使用模拟宿主桥接，不操作真实插件数据。
-
-衣橱浏览器回归：`node scripts/wardrobe_smoke.js`（需要 Chromium）。覆盖相同视口和宿主模式下的多图导入、部分失败重试、停止后续上传、轮换方式、今日选衣与日程同步；截图默认保存到临时目录，可用 `WARDROBE_SMOKE_OUTPUT` 指定输出位置，不操作真实插件数据。
-
-长文本浏览器回归：`node scripts/dashboard_content_smoke.js`（需要 Chromium）。覆盖相同视口和模拟宿主模式下的中英文长渠道名、模型名、错误状态、多条关联记录与尝试明细，验证按钮点击及布局；可用 `DASHBOARD_CONTENT_SMOKE_OUTPUT` 指定截图位置。备份脚本另覆盖无 `download` 方法但允许下载的旧桥接，检查分块偏移、版本和落盘 ZIP。
+Dashboard 浏览器回归：`node scripts/run_browser_smokes.js`（需要 Node.js、Chromium 和 Python）。顺序运行未登录移动布局、备份管理、衣橱、长文本页面和身份池场景；任一场景失败即停止。各场景使用隔离的模拟数据，不操作真实插件数据；可用 `--chromium PATH` 指定浏览器，也可直接运行 `scripts/` 下对应 smoke 脚本以便单独调试。
 
 提交前不要加入以下本地文件：
 

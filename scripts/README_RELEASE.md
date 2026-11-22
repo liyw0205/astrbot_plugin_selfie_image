@@ -96,17 +96,18 @@ locking, AstrBot startup, or the embedded Dashboard iframe on Windows. A real
 acceptance run must still record the Windows build, long-path policy, AstrBot
 version, isolated data root, and browser/iframe checks separately.
 
-The repository's local browser fixture can exercise the embedded-page contract
-without an AstrBot process:
+The repository's local browser fixtures exercise the Dashboard flows without
+an AstrBot process. Run the grouped suite with:
 
 ```sh
-node scripts/dashboard_content_smoke.js
+node scripts/run_browser_smokes.js
 ```
 
-It checks the iframe bridge path, hidden token login, bridge failure state and
-desktop/mobile layout. Because its bridge and API are fixtures, a passing run
-is only a browser regression signal; it is not evidence that an AstrBot host
-or Windows WebView accepted the page.
+The suite covers mobile layout, backup/restore, wardrobe, long content and the
+identity pool. Each scenario uses disposable fixtures and an isolated browser
+profile; a passing run is only a browser regression signal, not evidence that
+an AstrBot host or Windows WebView accepted the page. Individual `*_smoke.js`
+scripts remain available for focused debugging.
 
 ## Input Contracts
 

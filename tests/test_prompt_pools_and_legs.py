@@ -88,7 +88,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(any("洛丽塔" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertTrue(any("运动短裤" in item or "运动短裙" in item or "网球短裙" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertEqual(len({item["id"] for item in BUILTIN_PROMPTS}), len(BUILTIN_PROMPTS))
-        self.assertEqual(len(BUILTIN_PROMPTS), 80)
+        self.assertEqual(len(BUILTIN_PROMPTS), 84)
         self.assertTrue(all(item["title"] and item["prompt"] for item in BUILTIN_PROMPTS))
         self.assertTrue(GROUP_COMPOSITIONS)
         self.assertTrue(all(item["title"] and item["prompt"] for item in GROUP_COMPOSITIONS))
@@ -845,9 +845,11 @@ class PromptPoolJsonTests(unittest.TestCase):
                             self.assertEqual(style["wear"], wear)
         white_sheer = next(style for style in LEGFOCUS_HOSIERY_STYLES if style["id"] == "white_sheer")
         black_sheer = next(style for style in LEGFOCUS_HOSIERY_STYLES if style["id"] == "black_sheer")
-        self.assertIn("灰米色差", white_sheer["prompt"])
-        self.assertIn("肤色自然透出", white_sheer["prompt"])
-        self.assertIn("避免袜面纹理被抹平、整体发白、大片过曝高光", white_sheer["prompt"])
+        self.assertIn("灰白/冷象牙色纱线色差", white_sheer["prompt"])
+        self.assertIn("肤色柔和透出", white_sheer["prompt"])
+        self.assertIn("肤色漂白", white_sheer["prompt"])
+        self.assertIn("过曝高光", white_sheer["prompt"])
+        self.assertIn("纹理抹除", white_sheer["prompt"])
         self.assertIn("细密黑色纤维", black_sheer["prompt"])
         self.assertIn("局部柔和缎光", black_sheer["prompt"])
         for style in LEGFOCUS_HOSIERY_STYLES:
@@ -950,12 +952,78 @@ class PromptPoolJsonTests(unittest.TestCase):
         outfit_id = re.search(r"【outfit:([a-z_]+)】", action).group(1)
         self.assertEqual(leg_focus.get_leg_focus_outfit(outfit_id)["capture_profile"], "shorts")
 
+    def test_outfit_environment_rules_keep_sleepwear_indoors_and_resort_clothes_outdoors(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        outfits = {item["id"]: item for item in leg_focus.LEGFOCUS_OUTFIT_POOL}
+        indoor_only_ids = {
+            "home_cotton_shorts", "satin_piped_home_set",
+            *(outfit_id for outfit_id in outfits if outfit_id.startswith("sleep_")),
+        }
+        for outfit_id in indoor_only_ids:
+            with self.subTest(outfit=outfit_id):
+                self.assertEqual(outfits[outfit_id]["environments"], ["indoor"])
+
+        resort_ids = {
+            "resort_halter_wrap_mini", "resort_fitted_crop_shorts", "resort_open_shirt_shorts",
+        }
+        for outfit_id in resort_ids:
+            with self.subTest(outfit=outfit_id):
+                outfit = outfits[outfit_id]
+                self.assertTrue(leg_focus._leg_outfit_allows_environment(outfit, "indoor"))
+                self.assertTrue(leg_focus._leg_outfit_allows_environment(outfit, "outdoor"))
+
+        general_outfit = outfits["jk_cardigan_pleats"]
+        self.assertTrue(leg_focus._leg_outfit_allows_environment(general_outfit, "indoor"))
+        self.assertTrue(leg_focus._leg_outfit_allows_environment(general_outfit, "outdoor"))
+
+        pose = leg_focus.LEGFOCUS_POSE_BY_ID["chair_one_foot_on_stool"]
+        beach_compositions = leg_focus.compatible_leg_compositions(
+            pose, scene_ids="beach_canvas_chair",
+        )
+        beach_candidates = leg_focus._compatible_leg_outfits(compositions=beach_compositions)
+        self.assertTrue(beach_compositions)
+        self.assertFalse(indoor_only_ids & {item["id"] for item in beach_candidates})
+        self.assertTrue(resort_ids & {item["id"] for item in beach_candidates})
+
+        for _ in range(40):
+            action = leg_focus.build_leg_focus_action(
+                "海边帆布椅", force_pose=pose["id"],
+            )
+            outfit_id = re.search(r"【outfit:([a-z_]+)】", action).group(1)
+            self.assertTrue(leg_focus._leg_outfit_allows_environment(outfits[outfit_id], "outdoor"))
+
+        indoor_action = leg_focus.build_leg_focus_action(
+            "单椅与低脚凳", force_pose=pose["id"], force_outfit="home_cotton_shorts",
+        )
+        self.assertIn("【outfit:home_cotton_shorts】", indoor_action)
+        with self.assertRaisesRegex(leg_focus.LegFocusDataError, "不兼容"):
+            leg_focus.build_leg_focus_action(
+                "海边帆布椅", force_pose=pose["id"], force_outfit="home_cotton_shorts",
+            )
+
+    def test_white_tights_and_supine_pose_prompts_keep_fabric_and_relaxed_shape(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        white_tights = next(item for item in leg_focus.LEGFOCUS_HOSIERY_STYLES if item["id"] == "white_sheer")
+        supine = leg_focus.LEGFOCUS_POSE_BY_ID["supine_parallel_extended"]
+        self.assertIn("不是皮肤被整体提白", white_tights["prompt"])
+        self.assertIn("细密的针织微纹", white_tights["prompt"])
+        self.assertIn("不锁死膝部", supine["prompt"])
+        self.assertIn("轻微前后错位", supine["prompt"])
+        self.assertIn("适中距离", supine["crop_prompts"]["selfie"])
+        for view_id in ("self_forward_down", "self_left_down", "self_right_down"):
+            with self.subTest(view=view_id):
+                self.assertIn("普通手机焦段", leg_focus.LEGFOCUS_VIEW_BY_ID[view_id]["prompt"])
+                self.assertIn("避免头顶垂直俯拍", leg_focus.LEGFOCUS_VIEW_BY_ID[view_id]["prompt"])
+
     def test_leg_outfit_schema_rejects_invalid_capture_rules(self) -> None:
         from astrbot_plugin_selfie_image.cos import leg_focus
 
         for error in (
             "missing_profile", "unknown_profile", "missing_coverage", "invalid_direction",
-            "invalid_elevation", "non_tights_random",
+            "invalid_elevation", "non_tights_random", "empty_environments", "unknown_environment",
+            "duplicate_environments", "unhashable_environment",
         ):
             with self.subTest(error=error):
                 payload = copy.deepcopy(leg_focus._OUTFITS)
@@ -969,6 +1037,13 @@ class PromptPoolJsonTests(unittest.TestCase):
                     payload["capture_profiles"]["skirt"]["third_directions"] = ["rear"]
                 elif error == "invalid_elevation":
                     payload["capture_profiles"]["skirt"]["third_elevations"] = ["unknown"]
+                elif error in {"empty_environments", "unknown_environment", "duplicate_environments", "unhashable_environment"}:
+                    payload["outfits"][0]["environments"] = {
+                        "empty_environments": [],
+                        "unknown_environment": ["pool"],
+                        "duplicate_environments": ["indoor", "indoor"],
+                        "unhashable_environment": [[]],
+                    }[error]
                 else:
                     payload["hosiery_styles"][1].pop("explicit_only", None)
                 with patch.object(leg_focus, "read_versioned_json", return_value=payload):

@@ -97,13 +97,7 @@ async function main() {
       for(let i=0;i<120;i++){if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,30));}
       throw new Error('Timed out: '+expression+'; '+await evaluate('document.body.innerText.slice(-1500)'));
     };
-    const click=async selector=>{
-      const point=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
-      const frame=await cdp.send('Runtime.evaluate',{expression:"(()=>{const r=document.querySelector('iframe')?.getBoundingClientRect();return r?{x:r.x,y:r.y}:{x:0,y:0};})()",returnByValue:true});
-      point.x+=frame.result.value.x;point.y+=frame.result.value.y;
-      await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
-      await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
-    };
+    const click=selector=>evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el||!el.getClientRects().length)throw new Error('Not visible: '+${JSON.stringify(selector)});el.click();return true;})()`);
     const choose=names=>evaluate(`(()=>{const transfer=new DataTransfer();${JSON.stringify(names)}.forEach(name=>transfer.items.add(new File(['fixture '+name],name,{type:'image/png'})));$('wardrobeFile').files=transfer.files;$('wardrobeFile').dispatchEvent(new Event('change'));})()`);
     for(const embedded of [false,true])for(const width of [1280,390,320]) {
       items=[{id:'disabled',name:'已停用的服装',enabled:false,tags:[]}];selectionMode='random';current='';calls=[];scheduleReady=false;
@@ -117,6 +111,7 @@ async function main() {
       assert.equal(hostLayout.result.value,true,'fixture host overflows horizontally');
       await evaluate("navigateToTab('selfie')");await until("document.querySelector('.wardrobe-wear') && $('selfieDailySchedule').textContent.includes('日间安排')");
       assert.equal(calls.filter(call=>call.path.endsWith('/ensure-today')).length,1,'missing schedule was not ensured exactly once');
+      await click('#selfieViewTabWardrobe');await until("$('selfieViewTabWardrobe').getAttribute('aria-selected') === 'true' && !$('selfieViewWardrobe').hidden");
       assert.equal(await evaluate("document.querySelector('.wardrobe-wear').disabled"),true);
       await evaluate("$('wardrobeSelectionMode').value='sequential';$('wardrobeSelectionMode').dispatchEvent(new Event('change'));");
       await until("!$('wardrobeSelectionMode').disabled");assert.equal(selectionMode,'sequential');
@@ -131,11 +126,13 @@ async function main() {
       await until("$('wardrobeCurrent').textContent.includes('third')");
       assert.equal(current,'wardrobe_2');
       assert.equal(await evaluate("$('selfieDailySchedule').textContent.includes('third')"),true);
+      await click('#selfieViewTabSchedule');await until("$('selfieViewTabSchedule').getAttribute('aria-selected') === 'true' && !$('selfieViewSchedule').hidden");
       await click('[onclick="refreshDailySelfieLocal()"]');await until("$('confirmModal').classList.contains('show')");await click('#confirmProceedBtn');
       await until("!$('confirmModal').classList.contains('show') && $('toastWrap').textContent.includes('今日日程已重新生成')");
       assert.equal(await evaluate("$('wardrobeSelectionMode').value"),'sequential');
       assert.equal(await evaluate("document.querySelectorAll('.wardrobe-item').length"),4);
 
+      await click('#selfieViewTabWardrobe');await until("!$('selfieViewWardrobe').hidden");
       await choose(['stop-a.png','stop-b.png','stop-c.png']);holdUpload=true;
       await click('#uploadWardrobe');
       for(let i=0;i<100&&!releaseUpload;i++)await new Promise(resolve=>setTimeout(resolve,20));

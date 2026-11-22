@@ -93,15 +93,8 @@ SPECIAL_PRESET_GROUP_LABELS = {
 SPECIAL_PRESET_GROUP_ORDER = ("action", "upper", "lower")
 ACTION_PROMPT_PRESET_IDS = frozenset(
     {
-        "preset_bite_lip_glance",
-        "preset_collar_touch",
-        "preset_lean_close",
-        "preset_waist_touch",
-        "preset_ear_close",
-        "preset_hand_pull_close",
-        "preset_side_lift_gaze",
-        "preset_back_glance",
-        "preset_lowered_gaze",
+        "preset_punishment_reveal_snapshot",
+        "preset_bed_sheet_cover",
         "preset_post_battle_exhaustion",
         "preset_submissive_shy_pose",
         "preset_hold_face",
@@ -113,6 +106,17 @@ ACTION_PROMPT_PRESET_IDS = frozenset(
         "preset_bed_cheer_pov",
         "preset_post_workout_mirror_check",
         "preset_soymilk_prank_snapshot",
+        "preset_post_match_glute_check",
+        "preset_rescue_pov_circle",
+        "preset_package_return_bra",
+        "preset_bedroom_soymilk_pov",
+        "preset_social_bed_arms_cover",
+        "preset_wide_squat_tongue",
+        "preset_con_bed_camera_block",
+        "preset_hotel_count_cash",
+        "preset_confessional_window_prayer",
+        "preset_screen_crawl_pov",
+        "preset_social_bed_stop_camera",
     }
 )
 UPPER_PROMPT_PRESET_IDS = frozenset(

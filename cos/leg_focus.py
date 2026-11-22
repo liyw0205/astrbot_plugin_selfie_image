@@ -373,6 +373,13 @@ def _load_outfit_pool() -> Dict[str, Any]:
     for outfit in payload["outfits"]:
         if not isinstance(outfit.get("capture_profile"), str) or outfit["capture_profile"] not in capture_profiles:
             raise LegFocusDataError(f"看看腿服饰缺少有效拍摄规则: {outfit['id']}/capture_profile")
+        environments = outfit.get("environments", ["indoor", "outdoor"])
+        if (
+            not isinstance(environments, list) or not environments
+            or any(not isinstance(environment, str) or environment not in {"indoor", "outdoor"} for environment in environments)
+            or len(set(environments)) != len(environments)
+        ):
+            raise LegFocusDataError(f"看看腿服饰适用环境无效: {outfit['id']}/environments")
         allowed = outfit.get("hosiery_families")
         if not isinstance(allowed, list) or not allowed or not set(allowed) <= families:
             raise LegFocusDataError(f"看看腿服饰兼容袜装无效: {outfit['id']}")
@@ -827,6 +834,20 @@ def _leg_outfit_allows_view(outfit: Dict[str, Any], view: Dict[str, Any]) -> boo
     )
 
 
+def _leg_outfit_allows_environment(outfit: Dict[str, Any], environment: str) -> bool:
+    return environment in outfit.get("environments", ("indoor", "outdoor"))
+
+
+def _leg_outfit_allows_composition(
+    outfit: Dict[str, Any], composition: Tuple[Dict[str, Any], str, Dict[str, Any]],
+) -> bool:
+    scene, _, view = composition
+    return (
+        _leg_outfit_allows_environment(outfit, str(scene.get("environment", "indoor")))
+        and _leg_outfit_allows_view(outfit, view)
+    )
+
+
 def _compatible_leg_outfits(
     *, hosiery_family: str = "",
     compositions: List[Tuple[Dict[str, Any], str, Dict[str, Any]]] | None = None,
@@ -834,7 +855,7 @@ def _compatible_leg_outfits(
     return [
         item for item in LEGFOCUS_OUTFIT_POOL
         if (not hosiery_family or hosiery_family in item["hosiery_families"])
-        and (compositions is None or any(_leg_outfit_allows_view(item, view) for _, _, view in compositions))
+        and (compositions is None or any(_leg_outfit_allows_composition(item, composition) for composition in compositions))
     ]
 
 
@@ -1226,7 +1247,7 @@ def build_leg_focus_action(
             if outfit_source == "pool":
                 combinations = [
                     item for item in combinations
-                    if any(_leg_outfit_allows_view(outfit, item[2]) for outfit in outfit_candidates)
+                    if any(_leg_outfit_allows_composition(outfit, item) for outfit in outfit_candidates)
                 ]
             if combinations:
                 result[pose["id"]] = combinations
@@ -1298,7 +1319,7 @@ def build_leg_focus_action(
         outfit = forced_outfit or pick_leg_focus_outfit(
             hosiery_family=requested_family, compositions=combinations,
         )
-        combinations = [item for item in combinations if _leg_outfit_allows_view(outfit, item[2])]
+        combinations = [item for item in combinations if _leg_outfit_allows_composition(outfit, item)]
         if not combinations:
             raise LegFocusDataError("看看腿选定的服饰与姿势机位不兼容，请调整服饰或视角")
     camera_kinds = list(dict.fromkeys(item[2]["camera"] for item in combinations))
@@ -1483,8 +1504,8 @@ def has_leg_focus_contract(text: str) -> bool:
     )
     return any(
         selected_support == support.group(1)
-        and (not outfit or _leg_outfit_allows_view(outfit, view))
-        for _, selected_support, view in combinations
+        and (not outfit or _leg_outfit_allows_composition(outfit, (scene_obj, selected_support, view)))
+        for scene_obj, selected_support, view in combinations
     )
 
 
@@ -1609,17 +1630,27 @@ def validate_leg_focus_catalog() -> List[str]:
                 style["wear"] == wear
                 and style["family"] in outfit["hosiery_families"]
                 and style["kind"] not in set(pose.get("disallowed_hosiery_kinds") or ())
-                and _leg_outfit_allows_view(outfit, view)
-                for _, _, view in combinations
+                and _leg_outfit_allows_composition(outfit, composition)
+                for composition in combinations
                 for outfit in LEGFOCUS_OUTFIT_POOL
                 for style in random_styles
             ):
                 issues.append(f"pose {pose['id']}: no random {wear} outfit/style/view path")
 
+    all_compositions = [
+        composition
+        for pose in LEGFOCUS_POSE_POOL
+        for composition in compatible_leg_compositions(pose)
+    ]
     for outfit in LEGFOCUS_OUTFIT_POOL:
         outfit_id = str(outfit["id"])
-        if not any(_leg_outfit_allows_view(outfit, view) for view in LEGFOCUS_VIEW_POOL):
-            issues.append(f"outfit {outfit_id}: capture profile has no compatible view")
+        for environment in outfit.get("environments", ("indoor", "outdoor")):
+            if not any(
+                _leg_outfit_allows_composition(outfit, composition)
+                for composition in all_compositions
+                if str(composition[0].get("environment", "indoor")) == environment
+            ):
+                issues.append(f"outfit {outfit_id}: no compatible {environment} scene/view path")
         if re.search(r"(?:袜装|连裤袜|丝袜|过膝袜|赤足|裸足|光脚)", str(outfit["prompt"])):
             issues.append(f"outfit {outfit_id}: clothing prompt must not choose hosiery or bare feet")
         for wear in ("黑丝", "白丝"):
