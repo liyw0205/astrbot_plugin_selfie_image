@@ -9793,8 +9793,8 @@ class StudioStoreTests(unittest.TestCase):
 
         prompts = {item["title"]: item["prompt"] for item in action_prompt_presets()}
         removed_titles = {
-            "咬唇回眸", "腰侧轻抚", "轻拉衣领", "俯身靠近",
-            "背对回眸", "侧躺抬眼", "低头抬眼",
+            "背对回眸", "侧躺抬眼", "低头抬眼", "耳边靠近", "俯身靠近",
+            "牵手拉近", "轻拉衣领", "腰侧轻抚", "咬唇回眸",
         }
         self.assertFalse(removed_titles.intersection(prompts))
         self.assertIn("女孩眼神朦胧却饱含爱意", prompts["捧脸"])
@@ -9869,6 +9869,34 @@ class StudioStoreTests(unittest.TestCase):
             upgraded.add("遮脸", "我的自定义遮脸提示词")
             preserved = ImagePresetManager(tmp)
             self.assertEqual(preserved.presets["遮脸"].prompt, "我的自定义遮脸提示词")
+
+    def test_retired_builtin_action_presets_are_removed_without_deleting_custom_values(self) -> None:
+        import tempfile
+        from astrbot_plugin_selfie_image.prompts.preset import (
+            LEGACY_BUILTIN_PROMPT_REMOVALS,
+            ImagePresetManager,
+        )
+
+        retired_names = set(LEGACY_BUILTIN_PROMPT_REMOVALS)
+        custom_name = "背对回眸"
+        custom_prompt = "用户自定义的背对回眸内容"
+        stored = {
+            name: {"prompt": prompt, "description": name}
+            for name, prompt in LEGACY_BUILTIN_PROMPT_REMOVALS.items()
+        }
+        stored[custom_name]["prompt"] = custom_prompt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "image_presets.json"
+            path.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+
+            manager = ImagePresetManager(tmp)
+            remaining = {name for name, _ in manager.list() if name in retired_names}
+
+            self.assertEqual(remaining, {custom_name})
+            self.assertEqual(manager.presets[custom_name].prompt, custom_prompt)
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(set(persisted) & retired_names, {custom_name})
 
     def test_web_preset_management_round_trip_and_atomic_import(self) -> None:
         import tempfile
