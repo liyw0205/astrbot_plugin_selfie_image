@@ -1099,6 +1099,12 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
         and pose_id in COS_DEFAULT_RANDOM_POSE_IDS
         and any(pose_id in scene_poses for scene_poses in scene_pose_compatibility.values())
     ]
+    # The garment-pinch pose only randomizes for outfits with a verified loose hem.
+    if look_id not in COS_SOFT_SURFACE_RECLINE_HEM_LOOK_IDS:
+        recommended_poses = [
+            pose_id for pose_id in recommended_poses
+            if pose_id != COS_SOFT_SURFACE_RECLINE_HEM_POSE_ID
+        ]
     return {
         "variation_enabled": True,
         "pose_ids": poses,

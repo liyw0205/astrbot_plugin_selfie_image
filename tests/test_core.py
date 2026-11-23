@@ -8491,7 +8491,7 @@ class LegFocusTests(unittest.TestCase):
                 "ancient_iceblue_pink_ribbon_dress", "ancient_bluegray_flower_crown_robe",
                 "ancient_cream_gray_floral_hanfu", "ancient_iceblue_sleepwear_ruqun",
                 "ancient_lavender_gold_collar_hanfu", "ancient_palegreen_floral_embroidery",
-                "ancient_warring_states_burgundy_crown",
+                "ancient_warring_states_burgundy_crown", "ancient_cool_red_warring_robe",
             },
         )
         self.assertEqual(
@@ -9773,14 +9773,15 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(ACTION_PRESET_ALIAS, "动作预设")
         self.assertEqual(UPPER_PRESET_ALIAS, "上身预设")
         self.assertEqual(LOWER_PRESET_ALIAS, "下身预设")
-        self.assertEqual(len(action_prompt_presets()), 24)
+        self.assertEqual(len(action_prompt_presets()), 23)
         action_titles = {item["title"] for item in action_prompt_presets()}
         self.assertTrue({"捧脸", "男友视角", "战后力竭", "臣服怯态"}.issubset(action_titles))
         self.assertTrue({"夜窗近摄", "门后独照", "独唱之后"}.issubset(action_titles))
         self.assertTrue({"暗室祈祷", "床上应援", "健身后镜前检查", "豆浆恶作剧抓拍"}.issubset(action_titles))
         self.assertTrue({"惩罚揭晓抓拍", "床上慌忙遮掩"}.issubset(action_titles))
+        self.assertNotIn("赛后臀腿检查", action_titles)
         extracted_titles = {
-            "赛后臀腿检查", "急救后环绕俯视", "开门展示退货", "昏暗卧室跪坐",
+            "急救后环绕俯视", "开门展示退货", "昏暗卧室跪坐",
             "社媒主页抓拍：抬臂遮脸", "外八字蹲姿吐舌", "漫展后伸手挡镜头",
             "酒店房间数钱", "忏悔窗跪坐祈祷", "从电脑屏幕爬出", "社媒截图：伸手挡镜头",
         }
@@ -9805,8 +9806,8 @@ class StudioStoreTests(unittest.TestCase):
             self.assertNotIn("大汗淋漓", action_prompts[title])
         self.assertEqual(len(upper_prompt_presets()), 20)
         self.assertEqual(len(lower_prompt_presets()), 13)
-        self.assertEqual(len(special_prompt_presets()), 57)
-        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 57)
+        self.assertEqual(len(special_prompt_presets()), 56)
+        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 56)
         self.assertIn("张开嘴并伸出舌尖", action_prompts["暗室祈祷"])
         self.assertIn("仰躺者眼睛的位置", action_prompts["床上应援"])
         self.assertIn("不是从上方俯拍", action_prompts["床上应援"])

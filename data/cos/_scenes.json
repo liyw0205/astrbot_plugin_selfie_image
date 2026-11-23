@@ -4,7 +4,7 @@
     "夜景", "夜晚", "雨夜", "霓虹", "白天", "黄昏", "夕照", "室内", "室外", "房间", "地毯",
     "街道", "街边", "海边", "沙滩", "公园", "树林", "树下", "校园", "教室", "走廊", "车站",
     "咖啡馆", "餐厅", "雨中", "雪地", "樱花", "河边", "屋顶", "楼梯", "浴室", "温泉", "舞台",
-    "草地", "花丛", "泳池", "池边", "洗手台", "卫浴", "车内", "后排", "网约车"
+    "草地", "花丛", "泳池", "池边", "洗手台", "卫浴", "车内", "后排", "网约车", "茶室"
   ],
   "request_syntax_terms": {
     "labels": ["场景", "背景"],
@@ -61,6 +61,8 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "standing_low_angle_near",
+        "topdown_look_up_stand",
         "front_sleeve_display",
         "front_hem_display",
         "front_hem_gather",
@@ -86,7 +88,8 @@
         "soft_surface_recline_support",
         "soft_surface_recline_hem_hold",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "chair_low_seated_stretch"
       ],
       "tags": [
         "domestic",
@@ -214,6 +217,8 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "standing_low_angle_near",
+        "topdown_look_up_stand",
         "front_sleeve_display",
         "front_hem_display",
         "front_hem_gather",
@@ -224,6 +229,7 @@
         "half_turn",
         "seated_composed",
         "chair_diagonal_leg",
+        "chair_low_seated_stretch",
         "front_seated_lean",
         "leaning_rest",
         "wall_lean_curve",
@@ -264,6 +270,8 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "standing_low_angle_near",
+        "topdown_look_up_stand",
         "front_sleeve_display",
         "front_hem_display",
         "front_hem_gather",
@@ -274,6 +282,7 @@
         "half_turn",
         "seated_composed",
         "chair_diagonal_leg",
+        "chair_low_seated_stretch",
         "front_seated_lean",
         "floor_sit_side",
         "one_knee_crouch",
@@ -305,6 +314,19 @@
         "cool_matte",
         "playful_color"
       ]
+    },
+    "photo_frame_studio": {
+      "title": "白边照片布景",
+      "aliases": ["白边照片影棚", "照片边框影棚", "照片破框影棚", "白边照片", "照片框"],
+      "prompt": "浅灰或柔白无缝背景前设置一张大型竖幅白边照片，四边矩形边缘清晰，照片画面与外部空间有明确的平面层次；照片大小足以容纳人物上身和双手支撑动作，边框周围留少量干净背景。场景中只出现这一张照片，不出现镜面、额外人物或摄影设备。",
+      "style_prompt": "中性浅色背景与白色照片边框保持明度区分，人物和照片边缘清楚可辨。",
+      "lighting_ids": ["studio_side"],
+      "style_weights": {"natural_snapshot": 4, "minimal_studio": 2},
+      "style_family": "minimal_room",
+      "style_ids": ["natural_snapshot", "minimal_studio", "clean_character_film"],
+      "pose_ids": ["photo_frame_break_bottom_left", "photo_frame_break_top_bottom"],
+      "tags": ["editorial", "indoor", "neutral", "photo_frame"],
+      "makeup_ids": ["natural_clean", "cool_matte", "playful_color"]
     },
     "living_room_rug": {
       "title": "客厅地毯",
@@ -385,6 +407,7 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "topdown_look_up_stand",
         "front_sleeve_display",
         "front_hem_display",
         "front_hem_gather",
@@ -600,6 +623,7 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "topdown_look_up_stand",
         "half_turn",
         "one_knee_crouch",
         "front_lean_v_sign",
@@ -898,6 +922,7 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "topdown_look_up_stand",
         "half_turn",
         "seated_composed",
         "one_knee_crouch",
@@ -937,6 +962,7 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "topdown_look_up_stand",
         "half_turn",
         "reach_light",
         "over_shoulder",
@@ -953,6 +979,32 @@
         "fresh_luminous",
         "soft_feminine"
       ]
+    },
+    "tea_room_window": {
+      "title": "竹帘窗边茶室",
+      "aliases": ["竹帘窗边茶室", "竹帘茶室", "窗边茶室", "茶室窗前", "茶室"],
+      "prompt": "安静的浅木色茶室窗边，竹帘过滤窗外柔和天光，窗前有简洁茶案与少量陶瓷茶具；茶案、竹帘和窗格作为可辨认的环境线索，留出人物站立空间，不堆叠装饰，不出现文字、额外人物或拍摄设备。",
+      "style_prompt": "浅木色、竹帘与陶瓷保持自然的材质层次，茶案与茶具不遮挡人物和服装。",
+      "lighting_ids": ["window_lateral", "room_side_soft"],
+      "style_weights": {"natural_snapshot": 5},
+      "style_family": "traditional_lifestyle",
+      "style_ids": ["natural_snapshot", "retro_ccd_static", "cool_quiet_snapshot", "dreamcore_soft"],
+      "pose_ids": ["standing_detail", "front_sleeve_display", "front_hem_display", "half_turn", "reach_light"],
+      "tags": ["indoor", "traditional"],
+      "makeup_ids": ["ancient_elegant", "natural_clean", "cool_matte"]
+    },
+    "japanese_veranda": {
+      "title": "日式缘侧扶手",
+      "aliases": ["日式缘侧", "缘侧廊檐", "缘侧扶手", "缘侧"],
+      "prompt": "安静的日式住宅缘侧，木质廊檐下有平整的木地板、木格拉门和稳固的腰高木扶手，外侧可见少量庭院绿植。扶手位于人物身侧，留出自然站立和搭手空间；白天柔和天光照入廊下，不出现路人、文字或拍摄设备。",
+      "style_prompt": "木质扶手与拉门保持清楚的空间关系，庭院绿植作为自然背景，服装本色与环境区分。",
+      "lighting_ids": ["window_lateral", "room_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
+      "style_family": "traditional_lifestyle",
+      "style_ids": ["natural_snapshot", "retro_ccd_static", "cool_quiet_snapshot"],
+      "pose_ids": ["veranda_side_profile", "standing_detail", "half_turn"],
+      "tags": ["japanese", "traditional", "daylight"],
+      "makeup_ids": ["natural_clean", "soft_feminine", "cool_matte"]
     },
     "japanese_ink_room": {
       "title": "和风墨花室内",
@@ -1072,6 +1124,7 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "topdown_look_up_stand",
         "front_sleeve_display",
         "front_hem_display",
         "front_hem_gather",
@@ -1091,6 +1144,7 @@
         "rear_hip_shift",
         "seated_side_curve",
         "chair_diagonal_leg",
+        "chair_low_seated_stretch",
         "front_seated_lean",
         "side_profile",
         "over_shoulder",
@@ -1226,6 +1280,7 @@
       ],
       "pose_ids": [
         "standing_detail",
+        "topdown_look_up_stand",
         "half_turn",
         "wall_lean_curve",
         "rear_wall_curve",
@@ -1234,6 +1289,7 @@
         "rear_edge_curve",
         "rear_hip_shift",
         "seated_side_curve",
+        "chair_low_seated_stretch",
         "side_profile",
         "over_shoulder",
         "back_to_camera"

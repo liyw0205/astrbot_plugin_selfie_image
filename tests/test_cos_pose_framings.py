@@ -219,14 +219,11 @@ def test_shared_staging_metadata_and_curated_pairs_are_json_owned():
         for scene in COS_JSON_SCENES.values()
         for pose_id in scene["pose_ids"]
     }
-    assert set(COS_JSON_POSES) - used_poses == {
-        "veranda_side_profile",
-        "photo_frame_break_bottom_left",
-        "photo_frame_break_top_bottom",
-    }
-    assert COS_JSON_POSES["veranda_side_profile"]["explicit_only"] is True
-    assert COS_JSON_POSES["photo_frame_break_bottom_left"]["explicit_only"] is True
-    assert COS_JSON_POSES["photo_frame_break_top_bottom"]["explicit_only"] is True
+    assert set(COS_JSON_POSES) - used_poses == set()
+    assert COS_JSON_POSES["veranda_side_profile"].get("explicit_only") is not True
+    assert COS_JSON_POSES["veranda_side_profile"]["scene_ids"] == ["japanese_veranda"]
+    assert COS_JSON_POSES["photo_frame_break_bottom_left"]["scene_ids"] == ["photo_frame_studio"]
+    assert COS_JSON_POSES["photo_frame_break_top_bottom"]["scene_ids"] == ["photo_frame_studio"]
     assert set(COS_JSON_MAKEUPS) == {
         makeup_id for scene in COS_JSON_SCENES.values() for makeup_id in scene["makeup_ids"]
     }
@@ -308,14 +305,17 @@ def test_camera_and_request_vocabulary_is_json_owned():
         ("照片上沿抬臂、下沿探手", "photo_frame_break_top_bottom"),
     ],
 )
-def test_photo_frame_break_poses_are_explicit_only_and_selectable(prompt_text, pose_id):
+def test_photo_frame_break_poses_are_randomly_eligible_and_selectable(prompt_text, pose_id):
     pose = COS_JSON_POSES[pose_id]
     profile = cos_looks.cos_look_compatibility("roxy_cream")
 
     assert cos_looks._requested_cos_pose(prompt_text) == pose_id
-    assert pose["explicit_only"] is True
-    assert pose_id not in cos_looks.COS_DEFAULT_RANDOM_POSE_IDS
-    assert pose_id not in profile["recommended_pose_ids"]
+    assert pose.get("explicit_only") is not True
+    assert pose_id in cos_looks.COS_DEFAULT_RANDOM_POSE_IDS
+    assert pose_id in profile["recommended_pose_ids"]
+    assert "photo_frame_studio" in profile["recommended_scene_ids"]
+    assert pose_id in profile["scene_pose_compatibility"]["photo_frame_studio"]
+    assert pose["framing_ids"] == ["photo_frame_front_medium"]
 
     action = build_cos_look_action(
         prompt_text,
@@ -323,7 +323,76 @@ def test_photo_frame_break_poses_are_explicit_only_and_selectable(prompt_text, p
         camera="third",
     )
     assert f"【cos_pose:{pose_id}】" in action
+    assert "【cos_scene:photo_frame_studio】" in action
+    assert "【cos_framing:photo_frame_front_medium】" in action
     assert pose["prompt"] in action
+
+
+def test_veranda_side_pose_is_reachable_without_naming_the_pose():
+    pose_id = "veranda_side_profile"
+    scene_id = "japanese_veranda"
+    profile = cos_looks.cos_look_compatibility("roxy_cream")
+    variation = pick_cos_variation(
+        "roxy_cream",
+        camera="third",
+        avoid_poses=[item for item in COS_RANDOM_POSE_CLASSES if item != pose_id],
+        avoid_scenes=[item for item in COS_RANDOM_SCENE_CLASSES if item != scene_id],
+    )
+
+    assert pose_id in profile["recommended_pose_ids"]
+    assert profile["scene_pose_compatibility"][scene_id] == [pose_id, "standing_detail", "half_turn"]
+    assert variation["pose_id"] == pose_id
+    assert variation["scene_id"] == scene_id
+
+
+@pytest.mark.parametrize(
+    ("pose_id", "combination_id"),
+    [
+        ("topdown_look_up_stand", "studio_topdown_look_up"),
+        ("chair_low_seated_stretch", "atelier_chair_low_stretch"),
+        ("photo_frame_break_bottom_left", "photo_frame_bottom_left_break"),
+        ("photo_frame_break_top_bottom", "photo_frame_top_bottom_break"),
+    ],
+)
+def test_new_random_poses_are_reachable_through_curated_picker(pose_id, combination_id):
+    combo = COS_COMBINATION_PRESETS[combination_id]
+    with (
+        patch.object(cos_looks.random, "random", return_value=0.0),
+        patch.dict(cos_looks.COS_COMBINATION_PRESETS, {combination_id: combo}, clear=True),
+    ):
+        variation = pick_cos_variation(
+            "roxy_cream",
+            camera="third",
+            use_combinations=True,
+        )
+
+    assert variation["combination_id"] == combination_id
+    assert variation["pose_id"] == pose_id
+    assert variation["scene_id"] == combo["scene_id"]
+    framing = pick_cos_framing(
+        pose_id=pose_id,
+        scene_id=combo["scene_id"],
+        camera="third",
+    )
+    assert framing["prompt"]
+
+    def choose_requested_pair(values):
+        values = list(values)
+        if combo["scene_id"] in values:
+            return combo["scene_id"]
+        if pose_id in values:
+            return pose_id
+        return values[0]
+
+    with (
+        patch.object(cos_looks.random, "random", return_value=1.0),
+        patch.object(cos_looks.random, "choice", side_effect=choose_requested_pair),
+    ):
+        variation = pick_cos_variation("roxy_cream", camera="third")
+
+    assert variation["pose_id"] == pose_id
+    assert variation["scene_id"] == combo["scene_id"]
+    assert "combination_id" not in variation
 
 
 def test_generic_cos_prompt_uses_shared_json_staging_vocabularies():

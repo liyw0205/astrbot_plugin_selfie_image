@@ -3,6 +3,7 @@
   "request_aliases": {
     "kneeling_carpet": ["跪坐在柔软地毯上", "跪坐在地毯上", "跪坐在地毯", "地毯跪坐", "跪坐在", "跪坐", "跪姿", "跪着", "跪在"],
     "standing_detail": ["自然站姿", "站姿", "站立", "站着"],
+    "standing_low_angle_near": ["贴地近距仰拍站姿", "低机位近距自然站姿", "低位近距离站姿", "强仰拍自然站姿", "自然站姿低机位近拍"],
     "front_sleeve_display": ["双手展示袖口", "双手捏袖口", "肩侧展示袖口", "抬手展示袖子", "双手扶在肩侧"],
     "front_hem_display": ["双手轻提衣摆", "轻提裙摆展示", "双手提裙摆", "展示裙摆", "提衣摆姿势"],
     "front_hem_gather": ["正面折拢前裙摆", "正面收拢前裙摆", "双手收拢前裙摆", "前裙摆折拢", "卷前面的裙子到大腿上", "前裙摆卷到大腿上"],
@@ -54,7 +55,9 @@
     "car_seated_relaxed": ["后排自然靠坐", "车内自然靠坐"],
     "car_seated_hair_touch": ["后排扶发坐姿", "车内扶发", "后排扶发"],
     "photo_frame_break_bottom_left": ["破框而出", "照片边框破框", "从照片里探出来", "手扶照片边框"],
-    "photo_frame_break_top_bottom": ["照片上下沿探身", "上沿抬臂下沿搭手", "从照片上下沿探出", "照片上沿抬臂、下沿探手"]
+    "photo_frame_break_top_bottom": ["照片上下沿探身", "上沿抬臂下沿搭手", "从照片上下沿探出", "照片上沿抬臂、下沿探手"],
+    "topdown_look_up_stand": ["顶拍抬眼错胯站姿", "正上方俯拍站姿", "俯拍抬眼站姿"],
+    "chair_low_seated_stretch": ["低机位椅上舒展坐姿", "椅上舒展坐姿", "椅上伸懒腰"]
   },
   "classification_terms": {
     "edge": ["侧边", "边缘", "门框边", "门框侧", "墙角", "墙边", "柱子侧面", "柱边", "侧板"],
@@ -149,6 +152,7 @@
         "environmental",
         "eye_level_full",
         "high_angle_three_quarter",
+        "low_angle_near_standing",
         "low_angle_full",
         "low_angle_hero",
         "side_profile"
@@ -170,6 +174,15 @@
         "first",
         "selfie"
       ]
+    },
+    "standing_low_angle_near": {
+      "title": "贴地近距仰拍自然站姿",
+      "prompt": "人物保持自然站立，一侧腿自然承重，另一条腿轻轻错后或放松膝盖，肩线放松，双手自然停在衣摆或腰侧；不摆证件照式并脚站姿。镜头构图固定为贴近地面的低机位近距离强仰拍：机位明显低于膝盖并从下往上看，人物从头部拍到大腿中段且占据画面大部分，不改成平视、轻微仰拍、远景或全身照。",
+      "pose_family": "standing",
+      "random_weight": 3,
+      "framing_ids": ["low_angle_near_standing"],
+      "expression_ids": ["calm", "confident", "lively", "playful", "cool"],
+      "random_camera_ids": ["third", "first", "selfie"]
     },
     "front_sleeve_display": {
       "title": "正面肩侧展示袖口",
@@ -247,7 +260,7 @@
       "orientation": "front",
       "pose_family": "standing",
       "random_weight": 3,
-      "framing_ids": ["two_thirds", "three_quarter_front", "high_angle_three_quarter", "low_angle_hero"],
+      "framing_ids": ["two_thirds", "three_quarter_front", "high_angle_three_quarter", "low_angle_hero", "low_angle_near_standing"],
       "expression_ids": ["confident", "playful", "flirtatious", "sultry"],
       "random_camera_ids": ["third"]
     },
@@ -257,7 +270,7 @@
       "orientation": "front",
       "pose_family": "standing",
       "random_weight": 3,
-      "framing_ids": ["two_thirds", "three_quarter_front", "close_vertical_three_quarter", "high_angle_three_quarter", "low_angle_hero"],
+      "framing_ids": ["two_thirds", "three_quarter_front", "close_vertical_three_quarter", "high_angle_three_quarter", "low_angle_hero", "low_angle_near_standing"],
       "expression_ids": ["confident", "calm", "flirtatious", "sultry"],
       "random_camera_ids": ["third", "first"]
     },
@@ -277,7 +290,7 @@
       "orientation": "front",
       "pose_family": "gesture_static",
       "random_weight": 2,
-      "framing_ids": ["front_half", "two_thirds", "three_quarter_front", "high_angle_three_quarter", "face_close_portrait", "bust_close_portrait"],
+      "framing_ids": ["front_half", "two_thirds", "three_quarter_front", "high_angle_three_quarter", "low_angle_near_standing", "face_close_portrait", "bust_close_portrait"],
       "expression_ids": ["gentle", "confident", "flirtatious", "sultry"],
       "random_camera_ids": ["third", "first"]
     },
@@ -294,6 +307,7 @@
         "high_angle_three_quarter",
         "low_angle_full",
         "low_angle_hero",
+        "low_angle_near_standing",
         "face_close_portrait",
         "bust_close_portrait",
         "side_profile_close"
@@ -376,6 +390,7 @@
         "environmental",
         "eye_level_full",
         "high_angle_three_quarter",
+        "low_angle_near_standing",
         "high_angle_oblique"
       ],
       "expression_ids": [
@@ -434,6 +449,7 @@
         "environmental",
         "eye_level_full",
         "high_angle_three_quarter",
+        "low_angle_near_standing",
         "side_profile",
         "high_angle_oblique"
       ],
@@ -457,6 +473,7 @@
       "random_weight": 1,
       "framing_ids": [
         "eye_level_full",
+        "low_angle_near_standing",
         "low_angle_full"
       ],
       "expression_ids": [
@@ -969,11 +986,11 @@
     },
     "veranda_side_profile": {
       "title": "缘侧扶手侧颜",
+      "scene_ids": ["japanese_veranda"],
       "prompt": "人物站在已有的缘侧或廊檐扶手旁，面部保持自然侧颜并望向远方；一只手轻搭扶手，另一只手轻捏腰前衣料，重心偏向扶手一侧，肩腰只有轻微自然扭转，不回头或强行露出双眼。",
       "orientation": "side",
       "pose_family": "side",
-      "random_weight": 1,
-      "explicit_only": true,
+      "random_weight": 2,
       "framing_ids": [
         "side_profile",
         "side_profile_4_5",
@@ -1065,7 +1082,7 @@
       "pose_family": "low_static",
       "random_weight": 2,
       "face_visibility": "optional",
-      "framing_ids": ["low_angle_close_three_quarter", "three_quarter_front", "close_vertical_three_quarter"],
+      "framing_ids": ["low_angle_close_three_quarter", "low_angle_near_standing", "three_quarter_front", "close_vertical_three_quarter"],
       "expression_ids": ["calm", "confident", "cool", "sultry"],
       "random_camera_ids": ["third", "first", "selfie"]
     },
@@ -1102,7 +1119,7 @@
       "pose_family": "low_static",
       "random_weight": 2,
       "face_visibility": "optional",
-      "framing_ids": ["side_high_medium", "high_angle_oblique"],
+      "framing_ids": ["side_high_medium", "low_angle_near_standing", "high_angle_oblique"],
       "expression_ids": ["calm", "confident", "cool", "sultry"],
       "camera_ids": ["third"],
       "random_camera_ids": ["third"]
@@ -1171,8 +1188,7 @@
       "contact_shadow_id": "default",
       "prompt": "人物臀部落在当前场景已有且足够宽的承托面上，上身从髋部自然轻后倾，身体轴线在画面中略呈对角线。一只手放在同侧髋部后方的承托面上，手掌与肩、肘、腕形成连续自然的支撑关系；另一只手仅在当前服装本身有可活动的上衣下摆时，轻捏腰侧自由下摆，手指与布料接触清楚，衣摆只有轻微横向牵引，不大幅提起、不拉领口或改变服装。若服装没有合适的自由下摆，空闲手放松轻停腰侧或同侧髋旁，不凭空生成短上衣。头颈顺着躯干自然微抬，朝向斜前上方的镜头，不单独大幅扭头。保持静态坐靠，腰背不过度反折；画外腿部自然放松，不额外指定跪姿或伸腿动作。保留当前 COS 衣装的结构与覆盖。",
       "pose_family": "recline_support",
-      "explicit_only": true,
-      "random_weight": 1,
+      "random_weight": 2,
       "face_visibility": "optional",
       "framing_ids": ["recline_high_close"],
       "expression_ids": ["calm", "gentle", "confident"],
@@ -1181,25 +1197,66 @@
     },
     "photo_frame_break_bottom_left": {
       "title": "白边照片前倾破框",
+      "scene_ids": ["photo_frame_studio"],
       "prompt": "画面中有一张边缘清楚的白边矩形照片。人物原本位于照片画面内，上身从照片平面向镜头前倾探出，头部和肩部越过边框，腰部以下仍留在照片内部，形成明确的前后层次。一只手搭压在照片底部白边靠中间的位置，另一只手搭住左侧白边；两只手分别接触不同边缘并共同支撑前倾的上身，手腕、手指和手臂连接自然。人物面向镜头，身体保持稳定的静态支撑，不穿过边框，不把照片边框变成窗框，不增加额外肢体或摄影者的手。",
       "orientation": "front",
       "pose_family": "frame_interaction",
-      "random_weight": 1,
-      "explicit_only": true,
-      "framing_ids": ["front_half", "two_thirds"],
+      "random_weight": 3,
+      "framing_ids": ["photo_frame_front_medium"],
       "expression_ids": ["calm", "playful", "confident", "lively"],
       "camera_ids": ["third"],
       "random_camera_ids": ["third"]
     },
     "photo_frame_break_top_bottom": {
       "title": "照片上下沿探身破框",
+      "scene_ids": ["photo_frame_studio"],
       "prompt": "人物位于一张有清晰上下边缘的照片画面内，上身越过照片平面向镜头探出，腰部以下仍留在照片内部。一只手臂从肩旁抬起，手掌搭扶照片上沿；另一只手臂朝镜头前方伸出，手掌张开并搭在照片下沿，近处手掌略大但手腕和五指结构完整自然。上、下两处支撑点高低分明，共同承托前倾的肩胸，人物面向镜头并保持稳定静态姿势；不穿过边框，不把两只手放到同一边，不增加额外手臂或摄影者肢体。",
       "orientation": "front",
       "pose_family": "frame_interaction",
-      "random_weight": 1,
-      "explicit_only": true,
-      "framing_ids": ["front_half", "two_thirds"],
+      "random_weight": 3,
+      "framing_ids": ["photo_frame_front_medium"],
       "expression_ids": ["calm", "playful", "confident", "lively"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "topdown_look_up_stand": {
+      "title": "顶拍抬眼错胯站姿",
+      "scene_ids": [
+        "bedroom_carpet",
+        "bedroom_window",
+        "photo_studio",
+        "costume_atelier",
+        "theater_dressing_room",
+        "garden_walkway",
+        "greenhouse",
+        "old_town_lane",
+        "snowy_courtyard"
+      ],
+      "prompt": "人物在当前场景中自然站立，双脚前后错开并稳定承重，一侧膝部放松；肩线与髋部轻微错开，使身体形成舒展的斜向线条。一只手抬到头侧，轻触当前发型或头饰边缘，另一只手自然停在腰侧或大腿外侧；手臂彼此分开，手指和肢体连接清楚。下巴微抬并看向正上方镜头，颈部保持自然，不后仰扭转；保留当前 COS 服装、发型和配饰，不添加道具或改变穿搭。",
+      "orientation": "front",
+      "pose_family": "standing",
+      "random_weight": 2,
+      "framing_ids": ["topdown_full_body"],
+      "expression_ids": ["calm", "confident", "playful", "flirtatious", "sultry"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "chair_low_seated_stretch": {
+      "title": "椅上舒展坐姿",
+      "scene_ids": [
+        "bedroom_carpet",
+        "bedroom_window",
+        "photo_studio",
+        "costume_atelier",
+        "theater_dressing_room"
+      ],
+      "contact_shadow_id": "seated",
+      "prompt": "人物坐在当前场景已有且稳固的椅子、长凳或试衣凳上，臀部稳定落在座面前半部，上身向上舒展并轻微侧弯。一只手抬至头侧轻触发丝，另一只手臂越过头顶自然伸展，双肩保持放松，手指和手臂连接清楚；双膝自然靠近，小腿略微分开，双脚稳定落地。头部轻转看向镜头，腰背保留自然弧度，不强行后仰或扭腰；保留当前 COS 服装、发型和配饰，不拉扯衣物、不添加道具。若当前场景没有合适座椅，不使用此姿势。",
+      "orientation": "front",
+      "pose_family": "seated",
+      "random_weight": 2,
+      "framing_ids": ["chair_low_full_body"],
+      "expression_ids": ["calm", "confident", "playful", "flirtatious", "sultry"],
       "camera_ids": ["third"],
       "random_camera_ids": ["third"]
     }

@@ -34,7 +34,7 @@
     {
       "cos_type": "原创COS",
       "file": "原创COS.json",
-      "count": 56
+      "count": 59
     },
     {
       "cos_type": "原神",
@@ -49,7 +49,7 @@
     {
       "cos_type": "古风",
       "file": "古风.json",
-      "count": 28
+      "count": 29
     },
     {
       "cos_type": "和风",
@@ -144,7 +144,7 @@
     {
       "cos_type": "缘之空",
       "file": "缘之空.json",
-      "count": 6
+      "count": 7
     },
     {
       "cos_type": "平凡职业造就世界最强",
@@ -286,6 +286,7 @@
     "ancient_lavender_gold_collar_hanfu",
     "ancient_palegreen_floral_embroidery",
     "ancient_warring_states_burgundy_crown",
+    "ancient_cool_red_warring_robe",
     "original_wa_yukata_loose",
     "azur_lane_akagi",
     "azur_lane_kaga",
@@ -505,6 +506,7 @@
     "btth_nalan_yanran_yunlan",
     "btth_han_yue_ice",
     "qiong_white_gaming_room",
+    "qiong_white_black_trim_qipao_private",
     "artsee384_school_gray_013",
     "artsee384_gothic_black_white_021",
     "artsee384_school_navy_034",
@@ -826,6 +828,9 @@
     "original_veranda_green_side_profile",
     "original_vintage_wicker_sweater",
     "original_ryokan_blue_flower_yukata",
+    "original_talisman_bluegray",
+    "original_egyptian_black_gold_cat",
+    "original_egyptian_white_gold_queen",
     "rezero_emilia_spirit_gala",
     "rezero_beatrice_gothic_library",
     "rezero_crusch_military_gala",

@@ -33,6 +33,10 @@
     "library_low_gaze": {"title": "阅览室低眸静帧", "scene_id": "library_wood", "pose_id": "quiet_low_gaze", "family": "domestic_lifestyle", "weight": 4},
     "studio_gathered_front": {"title": "影棚胸前拢衣", "scene_id": "photo_studio", "pose_id": "hands_gathered_at_sternum", "family": "editorial_portrait", "weight": 4},
     "studio_forward_hands": {"title": "影棚轻微前倾", "scene_id": "photo_studio", "pose_id": "lean_forward_hands", "family": "editorial_portrait", "weight": 3},
-    "window_back_raised_arms": {"title": "窗边背影抬臂", "scene_id": "bedroom_window", "pose_id": "window_back_raised_arms", "family": "domestic_lifestyle", "weight": 4}
+    "window_back_raised_arms": {"title": "窗边背影抬臂", "scene_id": "bedroom_window", "pose_id": "window_back_raised_arms", "family": "domestic_lifestyle", "weight": 4},
+    "studio_topdown_look_up": {"title": "影棚顶拍抬眼站姿", "scene_id": "photo_studio", "pose_id": "topdown_look_up_stand", "family": "editorial_portrait", "weight": 4},
+    "atelier_chair_low_stretch": {"title": "试衣角低机位椅上舒展", "scene_id": "costume_atelier", "pose_id": "chair_low_seated_stretch", "family": "editorial_portrait", "weight": 4},
+    "photo_frame_bottom_left_break": {"title": "白边照片底边左侧破框", "scene_id": "photo_frame_studio", "pose_id": "photo_frame_break_bottom_left", "family": "editorial_portrait", "weight": 6},
+    "photo_frame_top_bottom_break": {"title": "白边照片上下沿探身", "scene_id": "photo_frame_studio", "pose_id": "photo_frame_break_top_bottom", "family": "editorial_portrait", "weight": 6}
   }
 }

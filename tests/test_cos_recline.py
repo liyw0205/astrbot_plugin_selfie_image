@@ -109,6 +109,37 @@ def test_unverified_outfit_falls_back_from_hem_pose_to_base():
     assert variation["selection_notice"]
 
 
+@pytest.mark.parametrize("look_id", HEM_LOOKS)
+def test_hem_pose_is_randomly_reachable_for_verified_outfits(look_id):
+    pose_id = "soft_surface_recline_hem_hold"
+    scene_id = "gray_rug_recline"
+    profile = cos.cos_look_compatibility(look_id)
+    variation = cos.pick_cos_variation(
+        look_id,
+        camera="third",
+        avoid_poses=[item for item in cos.COS_RANDOM_POSE_CLASSES if item != pose_id],
+        avoid_scenes=[item for item in cos.COS_RANDOM_SCENE_CLASSES if item != scene_id],
+    )
+
+    assert pose_id in profile["recommended_pose_ids"]
+    assert variation["pose_id"] == pose_id
+    assert variation["scene_id"] == scene_id
+
+
+def test_hem_pose_is_not_randomly_reachable_for_unverified_outfits():
+    pose_id = "soft_surface_recline_hem_hold"
+    profile = cos.cos_look_compatibility("roxy_cream")
+    variation = cos.pick_cos_variation(
+        "roxy_cream",
+        camera="third",
+        avoid_poses=[item for item in cos.COS_RANDOM_POSE_CLASSES if item != pose_id],
+        avoid_scenes=[item for item in cos.COS_RANDOM_SCENE_CLASSES if item != "gray_rug_recline"],
+    )
+
+    assert pose_id not in profile["recommended_pose_ids"]
+    assert variation["pose_id"] != pose_id
+
+
 def test_pose_only_request_stays_on_compatible_surfaces_after_rotation_is_exhausted():
     variation = cos.pick_cos_variation(
         "roxy_cream", extra_request="半躺后撑", camera="third",

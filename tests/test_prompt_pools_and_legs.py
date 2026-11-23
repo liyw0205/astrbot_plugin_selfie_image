@@ -88,7 +88,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(any("洛丽塔" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertTrue(any("运动短裤" in item or "运动短裙" in item or "网球短裙" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertEqual(len({item["id"] for item in BUILTIN_PROMPTS}), len(BUILTIN_PROMPTS))
-        self.assertEqual(len(BUILTIN_PROMPTS), 84)
+        self.assertEqual(len(BUILTIN_PROMPTS), 85)
         self.assertTrue(all(item["title"] and item["prompt"] for item in BUILTIN_PROMPTS))
         self.assertTrue(GROUP_COMPOSITIONS)
         self.assertTrue(all(item["title"] and item["prompt"] for item in GROUP_COMPOSITIONS))

@@ -106,7 +106,6 @@ ACTION_PROMPT_PRESET_IDS = frozenset(
         "preset_bed_cheer_pov",
         "preset_post_workout_mirror_check",
         "preset_soymilk_prank_snapshot",
-        "preset_post_match_glute_check",
         "preset_rescue_pov_circle",
         "preset_package_return_bra",
         "preset_bedroom_soymilk_pov",

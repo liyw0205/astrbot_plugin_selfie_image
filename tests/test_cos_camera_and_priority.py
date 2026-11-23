@@ -746,6 +746,56 @@ def test_face_cropping_framing_is_explicit_only():
     assert explicit_framing["view_id"] == "user"
 
 
+def test_dedicated_low_angle_near_standing_pose_keeps_existing_standing_contract():
+    from astrbot_plugin_selfie_image.cos.cos_looks_loader import COS_JSON_POSES
+
+    action = build_cos_look_action(
+        "贴地近距仰拍站姿",
+        force_id="roxy_cream",
+        camera="third",
+    )
+
+    assert "【cos_pose:standing_low_angle_near】" in action
+    assert "【cos_framing:low_angle_near_standing】" in action
+    assert "机位明显低于人物膝盖" in action
+    assert "人物占据画面大部分" in action
+    assert COS_JSON_POSES["standing_low_angle_near"].get("explicit_only") is not True
+    for pose_id in ("standing_detail", "front_raised_arm", "front_waist_shift", "front_hand_near_face", "half_turn"):
+        assert "low_angle_near_standing" in COS_JSON_POSES[pose_id]["framing_ids"]
+
+
+def test_low_angle_near_framing_can_randomly_pair_with_kneeling_poses():
+    framing_id = "low_angle_near_standing"
+    pose_ids = (
+        "kneeling_carpet",
+        "one_knee_crouch",
+        "low_kneel_open",
+        "kneeling_side_raised_arm",
+        "kneeling_back_support",
+    )
+    for pose_id in pose_ids:
+        scene_id = next(
+            scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+            if pose_id in scene["pose_ids"]
+        )
+        variation = pick_cos_variation(
+            "roxy_cream",
+            camera="third",
+            avoid_poses=[item for item in COS_RANDOM_POSE_CLASSES if item != pose_id],
+            avoid_scenes=[item for item in COS_RANDOM_SCENE_CLASSES if item != scene_id],
+        )
+        framing = pick_cos_framing(
+            pose_id=pose_id,
+            scene_id=scene_id,
+            camera="third",
+            avoid_framings=[item for item in COS_FRAMING_CLASSES if item != framing_id],
+        )
+
+        assert variation["pose_id"] == pose_id
+        assert variation["scene_id"] == scene_id
+        assert framing["view_id"] == framing_id
+
+
 def test_random_cos_composition_respects_pose_scene_and_camera_constraints():
     profile = cos_look_compatibility("test")
     with patch(
