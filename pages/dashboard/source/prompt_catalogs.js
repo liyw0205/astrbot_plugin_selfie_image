@@ -220,8 +220,9 @@
       await ensureDashboardPersistentCachesHydrated();
       const normalizedQuery = String(searchQuery || '').trim();
       const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
+      const normalizedSeries = normalizedKind === 'cos' ? String(PRESET_MANAGER_FILTERS.cos || '').trim() : '';
       const query = normalizedQuery;
-      const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
+      const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${page}`;
       const requestGenerations = MANAGED_PAGE_REQUEST_GENERATIONS;
       let cached = MANAGED_PAGE_CACHE.get(key);
       if (force) {
@@ -246,6 +247,7 @@
         offset: String(Math.max(0, (page - 1) * PICKER_PAGE_SIZE)),
         search:query,
       });
+      if (normalizedSeries) params.set('series', normalizedSeries);
       if (normalizedKind !== 'cos') params.set('kind', normalizedKind);
       const endpoint = normalizedKind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets/manage?';
       const request = (async () => {
@@ -271,14 +273,21 @@
             items = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
           } else {
             const rows = flattenCosPickerPayload(data);
-            const filtered = rows.filter(item => !normalizedQuery || `${item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
+            const filtered = rows.filter(item => {
+              const itemSeries = String(item.cos_type || item.series || '').trim();
+              return (!normalizedSeries || itemSeries.toLocaleLowerCase() === normalizedSeries.toLocaleLowerCase())
+                && (!normalizedQuery || `${item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
+            });
             total = filtered.length;
             items = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
           }
         }
         if (normalizedKind === 'image') items = mergePromptPresets(items);
         const value = {items, total, offset: (page - 1) * PICKER_PAGE_SIZE, limit: PICKER_PAGE_SIZE, revision: Number(data.revision || 0)};
-        if (normalizedKind === 'cos') updateCosPoolRevision(value);
+        if (normalizedKind === 'cos') {
+          value.series_options = Array.isArray(data.series_options) ? data.series_options : [];
+          updateCosPoolRevision(value);
+        }
         if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
           MANAGED_PAGE_CACHE.set(key, {data: value, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('managed-page', key, value);
@@ -439,13 +448,23 @@
       el.textContent = text || '';
       el.className = 'status' + (bad ? ' bad' : '');
     }
+    function renderCosManagerSeriesFilter() {
+      const select = $('presetCosManagerSeries');
+      if (!select) return;
+      const selected = PRESET_MANAGER_FILTERS.cos || '';
+      select.innerHTML = '<option value="">全部系列</option>' + COS_MANAGER_SERIES_OPTIONS
+        .map(series => `<option value="${escapeHtml(series)}">${escapeHtml(series)}</option>`).join('');
+      select.value = selected;
+    }
     function renderManagedCosPool() {
       const wrap = $('presetCosManagerList');
+      renderCosManagerSeriesFilter();
       if (!wrap) return;
       const rows = COS_MANAGE_ROWS;
       const query = String(PRESET_MANAGER_QUERIES.cos || '').trim();
+      const seriesFilter = String(PRESET_MANAGER_FILTERS.cos || '').trim();
       if (!rows.length) {
-        wrap.innerHTML = `<div class="status">${query ? '没有匹配的 COS 池项目。' : '暂无 COS 池项目，点击“维护 COS 池”添加自定义项目。'}</div>`;
+        wrap.innerHTML = `<div class="status">${query || seriesFilter ? '没有匹配的 COS 池项目。' : '暂无 COS 池项目，点击“维护 COS 池”添加自定义项目。'}</div>`;
         renderPresetManagerPager('cos');
         return;
       }
@@ -453,9 +472,10 @@
         const title = escapeHtml(item.title || item.id || '未命名套装');
         const prompt = escapeHtml(item.prompt || '');
         const source = item.source === 'custom' ? '自定义' : '内置';
+        const series = escapeHtml(item.cos_type || item.series || '');
         const tags = Array.isArray(item.tags) ? item.tags.filter(Boolean).join('、') : '';
         return `<article class="preset-manager-row">
-          <div><div class="preset-manager-name">${title}</div><div class="preset-manager-meta"><span class="pill">${source}</span>${item.favorite ? '<span class="pill green">已收藏</span>' : ''}${tags ? `<span class="pill">${escapeHtml(tags)}</span>` : ''}</div></div>
+          <div><div class="preset-manager-name">${title}</div><div class="preset-manager-meta"><span class="pill">${source}</span>${series ? `<span class="pill">${series}</span>` : ''}${item.favorite ? '<span class="pill green">已收藏</span>' : ''}${tags ? `<span class="pill">${escapeHtml(tags)}</span>` : ''}</div></div>
           <div class="preset-manager-prompt">${prompt}</div>
           <div class="preset-manager-actions"><button class="secondary mini" type="button" data-cos-manager-favorite="${idx}">${item.favorite ? '取消收藏' : '收藏'}</button>${item.source === 'custom' ? `<button class="danger mini" type="button" data-cos-manager-delete="${idx}">删除</button>` : ''}</div>
         </article>`;
@@ -491,9 +511,16 @@
       const loadSeq = ++PRESET_LOAD_SEQ;
       const page = PRESET_MANAGER_PAGES.cos;
       const query = String(PRESET_MANAGER_QUERIES.cos || '').trim();
+      const seriesFilter = String(PRESET_MANAGER_FILTERS.cos || '').trim();
       try {
         const data = await fetchManagedCatalogPage('cos', query, page, force);
         if (loadSeq !== PRESET_LOAD_SEQ || PRESET_KIND !== 'cos') return;
+        COS_MANAGER_SERIES_OPTIONS = Array.isArray(data.series_options) ? data.series_options : [];
+        if (seriesFilter && Array.isArray(data.series_options) && !COS_MANAGER_SERIES_OPTIONS.includes(seriesFilter)) {
+          PRESET_MANAGER_FILTERS.cos = '';
+          PRESET_MANAGER_PAGES.cos = 1;
+          return loadManagedCosPool(force);
+        }
         COS_MANAGE_ROWS = data.items;
         PRESET_MANAGER_REVISIONS.cos = Number(data.revision || 0);
         PRESET_MANAGER_TOTALS.cos = Number(data.total || 0);

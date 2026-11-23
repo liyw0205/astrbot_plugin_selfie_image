@@ -2896,13 +2896,13 @@ def test_cos_pools_paginated_rows_are_deduplicated_and_stably_sorted(http, monke
     source = {
         "favorites": [],
         "builtin": [
-            {"id": "b-2", "title": "Zulu", "prompt": "z", "favorite": False, "source": "builtin"},
-            {"id": "shared", "title": "Delta", "prompt": "canonical", "tags": ["portrait"], "favorite": True, "source": "builtin"},
-            {"id": "b-1", "title": "Alpha", "prompt": "a", "favorite": False, "source": "builtin"},
+            {"id": "b-2", "title": "Zulu", "prompt": "z", "cos_type": "Fate", "favorite": False, "source": "builtin"},
+            {"id": "shared", "title": "Delta", "prompt": "canonical", "cos_type": "Fate", "tags": ["portrait"], "favorite": True, "source": "builtin"},
+            {"id": "b-1", "title": "Alpha", "prompt": "a", "cos_type": "原神", "favorite": False, "source": "builtin"},
         ],
         "custom": [
-            {"id": "c-2", "title": "Beta", "prompt": "b", "favorite": True, "source": "custom"},
-            {"id": "c-1", "title": "Alpha", "prompt": "a", "favorite": True, "source": "custom"},
+            {"id": "c-2", "title": "Beta", "prompt": "b", "cos_type": "Fate", "favorite": True, "source": "custom"},
+            {"id": "c-1", "title": "Alpha", "prompt": "a", "series": "Arknights", "favorite": True, "source": "custom"},
             {"id": "c-3", "title": "Aardvark", "prompt": "a", "tags": ["portrait"], "favorite": False, "source": "custom"},
             {"id": "shared", "title": "Shadow", "prompt": "duplicate", "favorite": False, "source": "custom"},
             {"id": "missing-prompt", "title": "Ignored", "favorite": True, "source": "custom"},
@@ -2916,9 +2916,14 @@ def test_cos_pools_paginated_rows_are_deduplicated_and_stably_sorted(http, monke
     assert [row["id"] for row in data["items"]] == ["c-1", "c-2", "shared", "c-3", "b-1", "b-2"]
     assert data["items"][2]["prompt"] == "canonical"
     assert data["total"] == 6
+    assert data["series_options"] == ["Arknights", "Fate", "原神"]
     filtered = http.call("/api/cos-pools?limit=1&offset=1&search=portrait")
     assert [row["id"] for row in assert_success(filtered)["items"]] == ["c-3"]
     assert filtered.envelope["count"] == 2
+    by_series = assert_success(http.call("/api/cos-pools?limit=1&offset=1&series=Fate"))
+    assert [row["id"] for row in by_series["items"]] == ["shared"]
+    assert by_series["total"] == 3
+    assert by_series["series_options"] == ["Arknights", "Fate", "原神"]
     legacy = http.call("/api/cos-pools?search=does-not-match")
     assert assert_success(legacy) == source
     assert "count" not in legacy.envelope

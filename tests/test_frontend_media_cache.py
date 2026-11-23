@@ -91,6 +91,14 @@ def test_preset_manager_supports_fuzzy_name_and_prompt_search_for_all_kinds():
     assert "renderManagedCosPool();" in PAGE
 
 
+def test_cos_pool_manager_exposes_series_filter_and_keeps_pagination_scoped():
+    assert 'id="presetCosManagerSeries"' in PAGE
+    assert "function renderCosManagerSeriesFilter()" in PAGE
+    assert "PRESET_MANAGER_FILTERS.cos = String(event.target.value || '')" in PAGE
+    assert "if (normalizedSeries) params.set('series', normalizedSeries);" in PAGE
+    assert "${normalizedSeries.toLocaleLowerCase()}:${page}" in PAGE
+
+
 def test_creative_canvas_hides_rerun_until_a_successful_result():
     assert "const hasSuccess = String(last.status || '').toLowerCase() === 'succeeded'" in PAGE
     assert "$('creativeCanvasRerunBtn').hidden = !hasSuccess;" in PAGE

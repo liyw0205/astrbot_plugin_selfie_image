@@ -140,13 +140,31 @@ class PromptCatalogController:
         )
         offset = parse_bounded_int(query, "offset", 0, 0, 1_000_000)
         try:
+            rows = flatten_cos_pool_rows(data)
+            series_options = sorted(
+                {
+                    value
+                    for row in rows
+                    if (value := str(row.get("cos_type") or row.get("series") or "").strip())
+                },
+                key=str.casefold,
+            )
+            selected_series = str(query_value(query, "series") or "").strip().casefold()
+            if selected_series:
+                rows = [
+                    row
+                    for row in rows
+                    if str(row.get("cos_type") or row.get("series") or "").strip().casefold()
+                    == selected_series
+                ]
             page = paginate_catalog_rows(
-                flatten_cos_pool_rows(data),
+                rows,
                 offset=offset,
                 limit=limit,
                 query=query_value(query, "search"),
-                fields=("title", "id", "prompt", "tags"),
+                fields=("title", "id", "prompt", "tags", "cos_type", "series"),
             )
+            page["series_options"] = series_options
         except Exception as exc:
             raise WebContractError(str(exc), 500) from exc
         if isinstance(data, Mapping):

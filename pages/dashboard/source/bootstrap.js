@@ -106,6 +106,11 @@
     $('presetCosManagerSearch').oninput = event => {
       schedulePresetManagerSearch('cos', event.target.value);
     };
+    $('presetCosManagerSeries').onchange = event => {
+      PRESET_MANAGER_FILTERS.cos = String(event.target.value || '');
+      PRESET_MANAGER_PAGES.cos = 1;
+      void loadManagedCosPool();
+    };
     $('presetImportBtn').onclick = openPresetImport;
     $('presetExportBtn').onclick = openPresetExport;
     $('presetCosMaintainBtn').onclick = openCosPoolModal;
