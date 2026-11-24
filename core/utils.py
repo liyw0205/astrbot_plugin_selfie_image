@@ -926,9 +926,9 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
     value = str(out.get("md5") or "").strip().lower()
     # Keep the key present so older records render an explicit empty value.
     out["md5"] = value if re.fullmatch(r"[0-9a-f]{32}", value) else ""
-    for key in ("prompt", "original_prompt", "request_prompt", "error", "failure_reason"):
+    for key in ("prompt", "request_prompt", "error", "failure_reason"):
         if key in out:
-            lim = 6000 if key in {"prompt", "original_prompt", "request_prompt"} else 800
+            lim = 6000 if key in {"prompt", "request_prompt"} else 800
             out[key] = _truncate_text(out.get(key), lim)
 
     rd = out.get("request_data")
@@ -1020,6 +1020,10 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             # passes through the normal redaction step above.
             "audit_prompt",
             "request_prompt_en",
+            "final_prompt",
+            "requested_model",
+            "resolved_model",
+            "model_match_mode",
             "cos",
             "cos_pose",
             "cos_scene",
@@ -1030,7 +1034,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
         ):
             value = rd.get(key)
             if isinstance(value, (str, int, float, bool)):
-                if isinstance(value, str) and key in {"audit_prompt", "request_prompt_en"}:
+                if isinstance(value, str) and key == "audit_prompt":
                     value = _truncate_text(value, 6000)
                 slim_rd[key] = value
         image_to_text = rd.get("image_to_text")
@@ -1170,7 +1174,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
     if not final_prompt:
         final_prompt = out.get("prompt") or out.get("request_prompt")
     if final_prompt:
-        out["final_prompt"] = _truncate_text(final_prompt, 6000)
+        out["final_prompt"] = str(final_prompt)
 
     # COS randomization is encoded in action markers.  Promote the markers to
     # compact scalar fields so records remain searchable/reproducible even

@@ -111,6 +111,8 @@ def _load_pool() -> Dict[str, Any]:
             or posture not in {"seated", "reclined", "lying", "side_lying", "prone", "kneeling", "standing"}
             or type(raw.get("weight")) is not int
             or int(raw.get("weight") or 0) < 1
+            or not isinstance(raw.get("risk", "normal"), str)
+            or raw.get("risk", "normal") not in {"normal", "high"}
             or not isinstance(camera_views, Mapping) or not camera_views
             or not set(camera_views) <= {"selfie", "third"}
             or any(
@@ -166,6 +168,8 @@ def _load_pool() -> Dict[str, Any]:
                 not re.fullmatch(r"[a-z_]+", detail_id) or detail_id in detail_ids
                 or not str(variant.get("prompt") or "").strip()
                 or type(variant.get("weight")) is not int or variant["weight"] < 1
+                or not isinstance(variant.get("risk", "normal"), str)
+                or variant.get("risk", "normal") not in {"normal", "high"}
                 or not isinstance(detail_cameras, list) or not detail_cameras
                 or any(camera not in {"selfie", "third"} for camera in detail_cameras)
                 or len(set(detail_cameras)) != len(detail_cameras)
@@ -180,9 +184,11 @@ def _load_pool() -> Dict[str, Any]:
     if legacy_ids & pose_ids:
         raise LegFocusDataError("看看腿旧姿势 id 与当前 id 冲突")
 
-    for key in ("framing", "anatomy_rule", "full_framing", "scene_rule"):
+    for key in ("framing", "anatomy_rule", "hosiery_rule", "full_framing", "scene_rule"):
         if not str(payload.get(key) or "").strip():
             raise LegFocusDataError(f"看看腿提示词池缺少字段: {key}")
+    if len(str(payload["anatomy_rule"])) > 60:
+        raise LegFocusDataError("看看腿结构约束 anatomy_rule 不得超过 60 字")
     for key, required in (
         ("camera_framings", {"selfie", "third", "mirror"}),
         ("reference_rules", {"zh", "en"}),
@@ -405,6 +411,7 @@ LEGFOCUS_RANDOM_LEG_DETAILS: List[Dict[str, Any]] = [
 ]
 LEGFOCUS_FRAMING = str(_POOL["framing"])
 LEGFOCUS_ANATOMY_RULE = str(_POOL["anatomy_rule"])
+LEGFOCUS_HOSIERY_RULE = str(_POOL["hosiery_rule"])
 LEGFOCUS_CAMERA_FRAMINGS = dict(_POOL["camera_framings"])
 LEGFOCUS_FULL_FRAMING = str(_POOL["full_framing"])
 LEGFOCUS_REFERENCE_RULES = dict(_POOL["reference_rules"])
@@ -747,7 +754,11 @@ def compatible_leg_compositions(
 
 
 def _weighted_pose_choice(pool: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return dict(random.choices(pool, weights=[int(item["weight"]) for item in pool], k=1)[0])
+    weights = [
+        int(item["weight"]) * (0.1 if item.get("risk") == "high" else 1)
+        for item in pool
+    ]
+    return dict(random.choices(pool, weights=weights, k=1)[0])
 
 
 def _weighted_pose_detail_choice(
@@ -767,7 +778,11 @@ def _weighted_pose_detail_choice(
         if (pose_id, str(item["id"])) not in (avoid_pose_details or set())
     ]
     choices = unused or variants
-    return dict(random.choices(choices, weights=[int(item["weight"]) for item in choices], k=1)[0])
+    weights = [
+        int(item["weight"]) * (0.1 if item.get("risk") == "high" else 1)
+        for item in choices
+    ]
+    return dict(random.choices(choices, weights=weights, k=1)[0])
 
 
 def _compatible_capture_styles(
@@ -1414,8 +1429,11 @@ def build_leg_focus_action(
         str(pose["crop_prompts"][framing_key]),
     ]
     base = "\n".join(line for line in (
-        *framing_lines,
         LEGFOCUS_ANATOMY_RULE,
+        *framing_lines,
+        "人物皮肤保持其本人自然肤色，脸部、手部、腿部肤色一致；"
+        + ("白色只属于袜料纤维，不覆盖皮肤。" if wear == "白丝" else "袜装颜色只属于织物，不覆盖皮肤。"),
+        LEGFOCUS_HOSIERY_RULE,
         str(view["prompt"]),
         str(pose["prompt"]),
         str(pose_detail.get("prompt") or ""),

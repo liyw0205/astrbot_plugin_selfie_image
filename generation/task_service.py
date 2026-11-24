@@ -489,7 +489,12 @@ class GenerationTaskService:
             source = str(task_meta.get("source") or "command-task")
             summary = task_meta.get("request_data") or task_meta.get("summary") or {}
             summary = summary if isinstance(summary, dict) else {}
-            prompt = str(summary.get("prompt") or summary.get("action") or "")
+            prompt = str(
+                summary.get("prompt")
+                or summary.get("action")
+                or summary.get("original_prompt")
+                or ""
+            )
             await plugin._ensure_task_failure_record(
                 task_id,
                 error=error,
@@ -497,7 +502,7 @@ class GenerationTaskService:
                 stage="cancelled" if cancelled else "task_exception",
                 media_type="image",
                 source=source,
-                prompt=prompt,
+                prompt=str(summary.get("raw_original_prompt") or prompt),
                 request_data=summary,
             )
             plugin._set_web_image_task(

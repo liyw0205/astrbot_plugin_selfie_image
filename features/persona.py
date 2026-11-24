@@ -2772,8 +2772,7 @@ class PersonaManager(IdentityPoolMixin):
                     "正面合影时同框角色得体成年、互动自然并默认看向镜头；选定侧身或背面构图时保持身体与头部朝向连贯，不强迫回头。"
                 )
         elif intent.is_legs_only:
-            # The mode lines above already define the requested framing and outfit.
-            output_lines = []
+            output_lines = list(anatomy_constraint_lines(style="legs"))
         else:
             output_lines = [
                 (

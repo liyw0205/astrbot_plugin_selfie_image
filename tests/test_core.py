@@ -7708,6 +7708,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("幽灵手", selfie)
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿 【wear:white】", "小助", "温柔", True, 0)
+            for line in anatomy_constraint_lines(style="legs"):
+                self.assertIn(line, legs)
             self.assertIn("【看看腿 / 单一室内构图】", legs)
             self.assertIn("允许上身、肩颈和头脸入画", legs)
             self.assertIn("保留自然体态与比例", legs)
@@ -9773,7 +9775,7 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(ACTION_PRESET_ALIAS, "动作预设")
         self.assertEqual(UPPER_PRESET_ALIAS, "上身预设")
         self.assertEqual(LOWER_PRESET_ALIAS, "下身预设")
-        self.assertEqual(len(action_prompt_presets()), 23)
+        self.assertEqual(len(action_prompt_presets()), 26)
         action_titles = {item["title"] for item in action_prompt_presets()}
         self.assertTrue({"捧脸", "男友视角", "战后力竭", "臣服怯态"}.issubset(action_titles))
         self.assertTrue({"夜窗近摄", "门后独照", "独唱之后"}.issubset(action_titles))
@@ -9806,8 +9808,8 @@ class StudioStoreTests(unittest.TestCase):
             self.assertNotIn("大汗淋漓", action_prompts[title])
         self.assertEqual(len(upper_prompt_presets()), 20)
         self.assertEqual(len(lower_prompt_presets()), 13)
-        self.assertEqual(len(special_prompt_presets()), 56)
-        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 56)
+        self.assertEqual(len(special_prompt_presets()), 59)
+        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 59)
         self.assertIn("张开嘴并伸出舌尖", action_prompts["暗室祈祷"])
         self.assertIn("仰躺者眼睛的位置", action_prompts["床上应援"])
         self.assertIn("不是从上方俯拍", action_prompts["床上应援"])
@@ -11217,12 +11219,14 @@ class StudioStoreTests(unittest.TestCase):
 
         first = asyncio.run(run(Event(quoted_a)))
         second = asyncio.run(run(Event(quoted_b)))
-        self.assertEqual(len(first), 2)
-        self.assertEqual(len(second), 2)
+        self.assertEqual(len(first), 4)
+        self.assertEqual(len(second), 4)
         self.assertIn("ABC234", first[0])
         self.assertIn("DEF567", second[0])
-        self.assertEqual(first[1], "prompt for quoted A")
-        self.assertEqual(second[1], "prompt for quoted B")
+        self.assertEqual(first[1], "原始提示词：\nprompt for quoted A")
+        self.assertEqual(second[1], "原始提示词：\nprompt for quoted B")
+        self.assertEqual(first[2], "实际发送提示词：\nprompt for quoted A")
+        self.assertEqual(second[2], "实际发送提示词：\nprompt for quoted B")
         self.assertEqual(len(collected_kwargs), 2)
         for kwargs in collected_kwargs:
             self.assertTrue(kwargs["include_image_alternates"])
@@ -11851,7 +11855,8 @@ class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(result["success"])
-        self.assertEqual(delegated[-1], "gpt-image-2")
+        self.assertEqual(delegated[-2], "gpt-image-2")
+        self.assertEqual(delegated[-1], "【自拍 / 看看模式】自拍")
 
     async def test_selfie_batches_apply_low_fidelity_only_for_viewpoint_changes(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin

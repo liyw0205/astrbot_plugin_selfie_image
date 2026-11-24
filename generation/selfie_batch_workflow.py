@@ -40,6 +40,7 @@ class SelfieBatchWorkflow:
         cos_selection: Optional[CosReferenceSelection] = None,
         reference_selection: Optional[Mapping[str, Any]] = None,
         model_request: str = "",
+        original_prompt: str = "",
     ) -> None:
         self.plugin = plugin
         self.task_id = task_id
@@ -57,6 +58,7 @@ class SelfieBatchWorkflow:
         self.cos_selection = cos_selection
         self.reference_selection = reference_selection
         self.model_request = model_request
+        self.original_prompt = original_prompt or action
 
     async def run(self) -> Dict[str, Any]:
         self._prepare_rebuild()
@@ -249,26 +251,43 @@ class SelfieBatchWorkflow:
                 self.event, action, self.extra_refs, cos_selection=self.cos_selection,
             )
         reference_fidelity = "low" if refs and has_viewpoint_change_request(action) else ""
+        route_context = {
+            "requested_model": str(self.model_request or "").strip(),
+        }
+        route_context_builder = getattr(plugin, "_model_request_record_context", None)
+        target_pool = (
+            plugin._resolve_generation_targets(self.event)
+            if str(self.model_request or "").strip()
+            else []
+        )
+        routed_targets, _, _ = plugin._resolve_model_request_targets(
+            target_pool, self.model_request
+        )
+        if callable(route_context_builder):
+            route_context.update(route_context_builder(
+                self.task_id,
+                self.total,
+                self.model_request,
+                self.event,
+                target_pool,
+            ))
         return await plugin._run_image_generation(
             prompt,
             self.aspect,
             self.resolution,
             refs,
-            targets=(
-                plugin._prioritize_targets_by_model_request(plugin._resolve_generation_targets(self.event), self.model_request)
-                if str(self.model_request or "").strip()
-                else None
-            ),
+            targets=routed_targets if str(self.model_request or "").strip() else None,
             source=self.source,
             audit_user_id=event_user_id(self.event),
             event=self.event,
-            original_prompt=action,
+            original_prompt=self.original_prompt,
             prompt_en_meta=prompt_en_meta,
             record_context={
                 "task_id": self.task_id,
                 "requested_count": self.total,
                 "raw_reference_image_count": len(self.extra_refs),
                 "reference_fidelity": reference_fidelity,
+                **route_context,
             },
             reference_selection=self.reference_selection or (self.cos_selection.summary() if self.cos_selection else None),
             reference_fidelity=reference_fidelity,

@@ -407,6 +407,9 @@ async def run_image_generation_workflow(
             "task_id",
             "requested_count",
             "raw_reference_image_count",
+            "requested_model",
+            "resolved_model",
+            "model_match_mode",
         ):
             value = record_context.get(key)
             if isinstance(value, (str, int, float, bool)):
@@ -558,6 +561,9 @@ async def run_image_generation_workflow(
             "task_id",
             "requested_count",
             "raw_reference_image_count",
+            "requested_model",
+            "resolved_model",
+            "model_match_mode",
         ):
             value = record_context.get(key)
             if isinstance(value, (str, int, float, bool)):
@@ -803,6 +809,11 @@ async def run_image_generation_workflow(
                 plain_request_prompt, source, aspect_ratio, resolution, len(refs)
             )
 
+    final_prompt = request_prompt
+    if not result.error and result.images and used_target is not None:
+        final_prompt = request_for_target(used_target).prompt
+        request_data["final_prompt"] = final_prompt
+
     if result.error or not result.images:
         response_data = {
             "success": False,
@@ -842,7 +853,7 @@ async def run_image_generation_workflow(
             "success": False,
             "error": result.error or "未生成任何图片",
             "original_prompt": original_prompt,
-            "final_prompt": request_prompt,
+            "final_prompt": final_prompt,
             "elapsed_seconds": elapsed,
             "used_model": result.used_model,
             "request_data": request_data,
@@ -908,7 +919,7 @@ async def run_image_generation_workflow(
             "success": False,
             "error": error,
             "original_prompt": original_prompt,
-            "final_prompt": request_prompt,
+            "final_prompt": final_prompt,
             "elapsed_seconds": elapsed,
             "used_model": result.used_model,
             "request_data": request_data,
@@ -971,7 +982,7 @@ async def run_image_generation_workflow(
                 "prompt": request_prompt,
                 "original_prompt": original_prompt,
                 "request_prompt": request_prompt,
-                "final_prompt": request_prompt,
+                "final_prompt": final_prompt,
                 "used_model": result.used_model,
                 "elapsed_seconds": round(elapsed, 2),
                 "reference_images": len(refs),
@@ -989,7 +1000,7 @@ async def run_image_generation_workflow(
             "success": False,
             "error": f"图片内容审核未通过：{output_reason}",
             "original_prompt": original_prompt,
-            "final_prompt": request_prompt,
+            "final_prompt": final_prompt,
             "elapsed_seconds": elapsed,
             "used_model": result.used_model,
             "image_paths": generated_image_paths,
@@ -1023,7 +1034,7 @@ async def run_image_generation_workflow(
             "prompt": request_prompt,
             "original_prompt": original_prompt,
             "request_prompt": request_prompt,
-            "final_prompt": request_prompt,
+            "final_prompt": final_prompt,
             "used_model": result.used_model,
             "elapsed_seconds": round(elapsed, 2),
             "reference_images": len(refs),
@@ -1041,7 +1052,7 @@ async def run_image_generation_workflow(
     return {
         "success": True,
         "original_prompt": original_prompt,
-        "final_prompt": request_prompt,
+        "final_prompt": final_prompt,
         "files": files,
         "image_paths": generated_image_paths,
         "elapsed_seconds": elapsed,

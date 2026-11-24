@@ -17,6 +17,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
 )
 from astrbot_plugin_selfie_image.cos.leg_focus import (
     LEGFOCUS_HOSIERY_STYLES,
+    LEGFOCUS_HOSIERY_RULE,
     LEGFOCUS_OUTFIT_POOL,
     LEGFOCUS_POOL_REFERENCE_PROMPTS,
     LEGFOCUS_ANATOMY_RULE,
@@ -785,8 +786,15 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
         assert f"【leg_support:{support_id}】" in prompt
         assert prompt.count("左右均指人物自身") == 1
         assert prompt.count(LEGFOCUS_ANATOMY_RULE) == 1
+        assert prompt.count(LEGFOCUS_HOSIERY_RULE) == 1
+        assert prompt.index(LEGFOCUS_ANATOMY_RULE) < prompt.index(LEGFOCUS_FRAMING)
         assert "实际可见部位为画面主体" in prompt
-        assert "可见脚与同侧小腿自然衔接" in prompt
+        assert "双腿各自沿同侧髋、膝、踝连续" in prompt
+        from astrbot_plugin_selfie_image.features.persona import anatomy_constraint_lines
+        for line in anatomy_constraint_lines(style="legs"):
+            assert line in prompt
+        assert prompt.index(LEGFOCUS_ANATOMY_RULE) < prompt.index("人物皮肤保持其本人自然肤色")
+        assert prompt.index("人物皮肤保持其本人自然肤色") < prompt.index(LEGFOCUS_HOSIERY_RULE)
         assert not re.search(r"腿部近照|取至小腿或脚端|脚端随(?:画幅|构图)|取至屈膝与部分小腿", prompt)
         framing_key = "mirror" if view.get("capture_mode") == "mirror" else view["camera"]
         for selected in (
@@ -1239,7 +1247,7 @@ def test_lying_and_kneeling_keep_support_projection_and_crop_in_final_prompt(
     if pose_id.startswith("kneeling_"):
         assert "【leg_support:kneeling_surface】" in prompt
     if pose_id == "kneeling_sit_back":
-        assert "小腿与脚处在身后画外" in prompt
+        assert "小腿与脚自然位于身后画外" in prompt
 
 
 @pytest.mark.parametrize("pose_id", [
@@ -1284,7 +1292,7 @@ def test_suspended_knees_use_front_view_and_avoid_random_stirrup_socks():
     action = build_leg_focus_action(
         "黑丝", force_pose=pose_id, force_view="third_front_low",
     )
-    assert "彼此分开，不交叉、不扭转" in action
+    assert "双脚离地后自然放松、彼此分开" in action
     assert not any(
         style["kind"] == "stirrup" and style["prompt"] in action
         for style in LEGFOCUS_HOSIERY_STYLES

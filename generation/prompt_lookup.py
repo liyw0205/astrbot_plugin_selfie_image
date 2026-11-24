@@ -74,7 +74,14 @@ def record_final_prompt(record: Mapping[str, Any]) -> str:
     request = record.get("request_data") or {}
     if not isinstance(request, Mapping):
         request = {}
-    return str(record.get("final_prompt") or request.get("request_prompt_en") or record.get("request_prompt") or record.get("prompt") or record.get("original_prompt") or "").strip()
+    return str(
+        record.get("original_prompt")
+        or request.get("original_prompt")
+        or record.get("request_prompt")
+        or record.get("final_prompt")
+        or record.get("prompt")
+        or ""
+    )
 
 
 class PromptLookupMixin:

@@ -20,6 +20,7 @@ class ImageCommandService:
         fallback = " ".join(item for item in fallback_parts if item).strip()
         message = extract_command_message(event, ("画", "生图"), fallback, include_quote_text=True)
         message, requested_count = plugin._extract_command_count(message, allow_trailing=True)
+        original_prompt = message
         message, template_values, template_randomize, _ = plugin._render_command_template(message)
         error = plugin._quota_error_message(event, requested_count) or plugin._rate_limit_error_message(event)
         if error:
@@ -79,6 +80,7 @@ class ImageCommandService:
                 requested_count,
                 passthrough=True,
                 special_preset_variants=rendered_special_variants,
+                original_prompt=original_prompt,
             )
 
         plugin.start_command_image_task(
@@ -86,6 +88,7 @@ class ImageCommandService:
             source="command-draw",
             summary={
                 "original_prompt": prompt,
+                "raw_original_prompt": original_prompt,
                 "aspect_ratio": aspect,
                 "resolution": resolution,
                 "requested_count": requested_count,
@@ -108,6 +111,7 @@ class ImageCommandService:
         fallback = " ".join(item for item in fallback_parts if item).strip()
         message = extract_command_message(event, "文生图", fallback, include_quote_text=True)
         message, requested_count = plugin._extract_command_count(message, allow_trailing=True)
+        original_prompt = message
         message, template_values, template_randomize, _ = plugin._render_command_template(message)
         error = plugin._quota_error_message(event, requested_count) or plugin._rate_limit_error_message(event)
         if error:
@@ -152,6 +156,7 @@ class ImageCommandService:
                 requested_count,
                 passthrough=True,
                 special_preset_variants=rendered_special_variants,
+                original_prompt=original_prompt,
             )
 
         plugin.start_command_image_task(
@@ -159,6 +164,7 @@ class ImageCommandService:
             source="command-raw-text-to-image",
             summary={
                 "original_prompt": prompt,
+                "raw_original_prompt": original_prompt,
                 "aspect_ratio": aspect,
                 "resolution": resolution,
                 "requested_count": requested_count,
@@ -179,6 +185,7 @@ class ImageCommandService:
         fallback = " ".join(item for item in fallback_parts if item).strip()
         message = extract_command_message(event, "图生图", fallback, include_quote_text=True)
         message, requested_count = plugin._extract_command_count(message, allow_trailing=True)
+        original_prompt = message
         error = plugin._quota_error_message(event, requested_count) or plugin._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
@@ -223,6 +230,7 @@ class ImageCommandService:
                 requested_count,
                 passthrough=True,
                 special_preset_variants=special_variants,
+                original_prompt=original_prompt,
             )
 
         plugin.start_command_image_task(
@@ -230,6 +238,7 @@ class ImageCommandService:
             source="command-raw-image-to-image",
             summary={
                 "original_prompt": prompt,
+                "raw_original_prompt": original_prompt,
                 "aspect_ratio": aspect,
                 "resolution": resolution,
                 "requested_count": requested_count,

@@ -71,6 +71,63 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertIn("双手轻搭大腿外侧", action)
         self.assertNotIn("手持", action)
 
+    def test_leg_pose_risk_gating_and_positive_language(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        high_risk_ids = {
+            "chair_thigh_cross_slant",
+            "seated_ankles_softly_crossed",
+            "mirror_side_sit_shins_overlap",
+            "mirror_seated_knees_apart_feet_together",
+            "standing_ankles_cross",
+            "supine_ankles_cross",
+            "side_lying_top_knee_forward",
+            "kneeling_side_sit",
+        }
+        self.assertEqual(
+            {pose["id"] for pose in leg_focus.LEGFOCUS_POSE_POOL if pose.get("risk") == "high"},
+            high_risk_ids,
+        )
+        for pose_id in high_risk_ids:
+            action = leg_focus.build_leg_focus_action(force_pose=pose_id)
+            self.assertIn(f"【pose:{pose_id}】", action)
+
+        pose_choices = [
+            {"id": "ordinary", "weight": 2},
+            {"id": "risky", "weight": 1, "risk": "high"},
+        ]
+        with patch.object(leg_focus.random, "choices", return_value=[pose_choices[0]]) as choose:
+            leg_focus._weighted_pose_choice(pose_choices)
+        self.assertEqual(choose.call_args.kwargs["weights"], [2, 0.1])
+
+        pose = leg_focus.LEGFOCUS_POSE_BY_ID["edge_knees_together_dangle"]
+        with patch.object(leg_focus.random, "choices", return_value=[pose["detail_variants"][0]]) as choose:
+            leg_focus._weighted_pose_detail_choice(pose, camera="third", capture_mode="direct")
+        self.assertEqual(choose.call_args.kwargs["weights"], [2, 0.1])
+
+        forbidden_pose_negations = re.compile(
+            r"(?:不|别|避免|不要|不得|禁止)[^，。；]{0,8}"
+            r"(?:扭转|翻折|翻转|交叉|交叠|交缠|缠绕|悬空|绷直|勾起|劈叉|反弓)"
+        )
+        for pose in leg_focus.LEGFOCUS_POSE_POOL:
+            text = " ".join((
+                pose["prompt"], *pose["crop_prompts"].values(),
+                *(variant["prompt"] for variant in pose.get("detail_variants", [])),
+            ))
+            self.assertIsNone(forbidden_pose_negations.search(text), pose["id"])
+
+        white_action = leg_focus.build_leg_focus_action("白丝 全身", force_pose="seated_knees_offset")
+        self.assertIn("双腿各自沿同侧髋、膝、踝连续", white_action)
+        self.assertLess(white_action.index(leg_focus.LEGFOCUS_ANATOMY_RULE), white_action.index(leg_focus.LEGFOCUS_HOSIERY_RULE))
+        self.assertIn("脸部、手部、腿部肤色一致", white_action)
+        self.assertIn("白色只属于袜料纤维，不覆盖皮肤", white_action)
+        self.assertNotRegex(leg_focus.LEGFOCUS_WEAR_PROMPTS["白丝"], r"漂白|提白")
+        white_sheer = next(item for item in leg_focus.LEGFOCUS_HOSIERY_STYLES if item["id"] == "white_sheer")
+        self.assertNotRegex(white_sheer["prompt"], r"漂白|提白")
+        for pose in leg_focus.LEGFOCUS_POSE_POOL:
+            for prompt in pose.get("hand_prompts", {}).values():
+                self.assertNotRegex(prompt, r"颜色|肤色|白色|黑色|红色|灰色|冷调")
+
     def test_daily_and_builtin_pools_load_complete_versioned_records(self) -> None:
         from astrbot_plugin_selfie_image.features.daily_prompt_pools import (
             DAILY_FALLBACK_SEASONAL_LAYERS,
@@ -88,7 +145,15 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(any("洛丽塔" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertTrue(any("运动短裤" in item or "运动短裙" in item or "网球短裙" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertEqual(len({item["id"] for item in BUILTIN_PROMPTS}), len(BUILTIN_PROMPTS))
-        self.assertEqual(len(BUILTIN_PROMPTS), 85)
+        self.assertEqual(len(BUILTIN_PROMPTS), 88)
+        from astrbot_plugin_selfie_image.studio.studio import ACTION_PROMPT_PRESET_IDS
+        for preset_id in (
+            "preset_social_hotel_breakfast",
+            "preset_social_elevator_lipstick",
+            "preset_social_movie_night",
+        ):
+            self.assertIn(preset_id, ACTION_PROMPT_PRESET_IDS)
+            self.assertTrue(any(item["id"] == preset_id for item in BUILTIN_PROMPTS))
         self.assertTrue(all(item["title"] and item["prompt"] for item in BUILTIN_PROMPTS))
         self.assertTrue(GROUP_COMPOSITIONS)
         self.assertTrue(all(item["title"] and item["prompt"] for item in GROUP_COMPOSITIONS))
@@ -424,6 +489,28 @@ class PromptPoolJsonTests(unittest.TestCase):
                         with self.assertRaisesRegex(leg_focus.LegFocusDataError, field):
                             leg_focus._load_pool()
 
+        for field, value, message in (
+            ("hosiery_rule", "", "hosiery_rule"),
+            ("anatomy_rule", "x" * 61, "60 字"),
+        ):
+            payload = dict(leg_focus._POOL)
+            payload[field] = value
+            with patch.object(
+                leg_focus, "read_versioned_json",
+                side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL},
+            ):
+                with self.assertRaisesRegex(leg_focus.LegFocusDataError, message):
+                    leg_focus._load_pool()
+
+        payload = copy.deepcopy(leg_focus._POOL)
+        payload["poses"][0]["risk"] = []
+        with patch.object(
+            leg_focus, "read_versioned_json",
+            side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL},
+        ):
+            with self.assertRaisesRegex(leg_focus.LegFocusDataError, "字段不完整或引用无效"):
+                leg_focus._load_pool()
+
         for probability in (None, True, -0.1, 1.1):
             with self.subTest(scene_state_probability=probability):
                 payload = dict(leg_focus._POOL)
@@ -746,14 +833,14 @@ class PromptPoolJsonTests(unittest.TestCase):
             resolution="1K", fail_label="失败", rebuild_extra_request=request,
         ))
         self.assertTrue(result["success"])
-        requests = [call.kwargs["original_prompt"] for call in plugin._run_image_generation.await_args_list]
+        requests = [call.args[0] for call in plugin._run_image_generation.await_args_list]
         self.assertEqual(len(requests), count)
         self.assertEqual(len({re.search(r"【leg_view:([a-z_]+)】", prompt).group(1) for prompt in requests}), count)
         for prompt in requests:
             self.assertIn("【pose:chair_thigh_cross_slant】", prompt)
             self.assertIn("【leg_scene:gaming_chair】", prompt)
         for call in plugin._run_image_generation.await_args_list:
-            self.assertEqual(call.args[0], call.kwargs["original_prompt"])
+            self.assertEqual(call.kwargs["original_prompt"], action)
 
     def test_leg_legacy_contract_is_rebuilt_without_repeating_its_old_furniture_or_camera(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
@@ -847,9 +934,8 @@ class PromptPoolJsonTests(unittest.TestCase):
         black_sheer = next(style for style in LEGFOCUS_HOSIERY_STYLES if style["id"] == "black_sheer")
         self.assertIn("灰白/冷象牙色纱线色差", white_sheer["prompt"])
         self.assertIn("肤色柔和透出", white_sheer["prompt"])
-        self.assertIn("肤色漂白", white_sheer["prompt"])
-        self.assertIn("过曝高光", white_sheer["prompt"])
-        self.assertIn("纹理抹除", white_sheer["prompt"])
+        self.assertIn("皮肤保持自然肤色对比", white_sheer["prompt"])
+        self.assertNotRegex(white_sheer["prompt"], r"漂白|提白")
         self.assertIn("细密黑色纤维", black_sheer["prompt"])
         self.assertIn("局部柔和缎光", black_sheer["prompt"])
         for style in LEGFOCUS_HOSIERY_STYLES:
@@ -1007,9 +1093,9 @@ class PromptPoolJsonTests(unittest.TestCase):
 
         white_tights = next(item for item in leg_focus.LEGFOCUS_HOSIERY_STYLES if item["id"] == "white_sheer")
         supine = leg_focus.LEGFOCUS_POSE_BY_ID["supine_parallel_extended"]
-        self.assertIn("不是皮肤被整体提白", white_tights["prompt"])
+        self.assertIn("皮肤保持自然肤色对比", white_tights["prompt"])
         self.assertIn("细密的针织微纹", white_tights["prompt"])
-        self.assertIn("不锁死膝部", supine["prompt"])
+        self.assertIn("双膝保持放松", supine["prompt"])
         self.assertIn("轻微前后错位", supine["prompt"])
         self.assertIn("适中距离", supine["crop_prompts"]["selfie"])
         for view_id in ("self_forward_down", "self_left_down", "self_right_down"):
