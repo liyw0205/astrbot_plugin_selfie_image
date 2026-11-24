@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "cos_type": "刀剑神域",
+  "items": [
+    {
+      "id": "sao_alice_underworld_travel",
+      "title": "爱丽丝 · War of Underworld 故乡旅行装",
+      "prompt": "以输入形象中的 coser 为主体，换装为《刀剑神域 Alicization War of Underworld》爱丽丝故乡旅行装：金色长直发垂至腰部，额前侧分长刘海遮住一侧眼睛并戴深色眼罩；身穿深蓝色高领长裙，外搭浅米色长款直身外套，外套有大圆形浅色纽扣与翻折领口；下配深色长裤和棕灰色系带高筒靴。以官方图中的旅行服为准，不加金木樨骑士盔甲、剑、文字或水印。",
+      "cos_type": "刀剑神域"
+    },
+    {
+      "id": "sao_asuna_stacia",
+      "title": "結城明日奈 · War of Underworld 创世神 Stacia",
+      "prompt": "以输入形象中的 coser 为主体，换装为《刀剑神域 Alicization War of Underworld》明日奈创世神 Stacia 造型：橙棕色长直发垂至腰下，头侧佩白色羽片状发饰；穿白色高领无袖长礼服，胸前和腰腹有浅灰白分片护衣结构，沿前襟、腰线与裙片用淡粉紫色细线勾边，肩头覆白色羽形短披片；裙摆分层向两侧展开，搭配白色手套和浅色短靴。保持轻甲与礼裙结合的结构，不添加武器、光效、文字或水印。",
+      "cos_type": "刀剑神域"
+    },
+    {
+      "id": "sao_sinon_alo",
+      "title": "朝田诗乃 · 绿色披肩与白灰胸衣（ALO）",
+      "prompt": "以输入形象中的 coser 为主体，换装为《刀剑神域 Alicization War of Underworld》诗乃 ALO 造型：浅蓝短发，佩蓝绿色精灵耳饰；上身为白灰胸衣，外披绿色长款不对称披肩，边缘以金色窄线装饰；腰间系浅色宽腰带，下配深色短裤、腿部绑带和深色长靴。按官方 ALO 图还原，不混入 Solus 版本，不加武器、文字或水印。",
+      "cos_type": "刀剑神域"
+    },
+    {
+      "id": "sao_suguha_fairy_school",
+      "title": "桐谷直叶 · 妖精之舞篇现实校服",
+      "prompt": "以输入形象中的 coser 为主体，换装为《刀剑神域》妖精之舞篇桐谷直叶现实校服：黑色短发、齐刘海；穿灰色长袖水手领针织上衣，领口系浅黄绿色领巾，下搭深灰百褶短裙，配黑色及膝袜和棕色便鞋。保持现实校服剪裁，不加精灵耳、翅膀或剑。",
+      "cos_type": "刀剑神域"
+    },
+    {
+      "id": "sao_leafa_alo",
+      "title": "莉法 · 绿白分片短裙与棕色长靴",
+      "prompt": "以输入形象中的 coser 为主体，换装为《刀剑神域》妖精之舞篇莉法 ALO 西尔芙造型：金色长发束成侧高马尾，佩浅绿叶形饰与精灵耳；上身穿绿色短袖衣，胸前为白色交叉衣片，腰间系棕色宽腰带；下搭绿白分片短裙，配白色大腿袜和棕色长靴。按官方妖精之舞图还原，不混入 Alicization 的地神 Terraria 版本。",
+      "cos_type": "刀剑神域"
+    },
+    {
+      "id": "sao_lisbeth_underworld",
+      "title": "篠崎里香 · Alicization War of Underworld ALO 转换装",
+      "prompt": "以输入形象中的 coser 为主体，换装为《刀剑神域 Alicization War of Underworld》篠崎里香 ALO 转换装：粉色短发，侧边别小发夹；穿红色长袖上衣，胸前覆灰白胸甲，一侧肩部有金属肩甲；腰间系棕色腰带，下搭红白分片长裙甲与深色长袜、棕色鞋。不可混入SAO锻造店围裙或添加锤子。",
+      "cos_type": "刀剑神域"
+    },
+    {
+      "id": "sao_silica_underworld",
+      "title": "绫野珪子 · Alicization War of Underworld ALO 转换装",
+      "prompt": "以输入形象中的 coser 为主体，换装为《刀剑神域 Alicization War of Underworld》绫野珪子 ALO 转换装：浅棕色双侧短马尾，头顶有长尖兽耳并系红色发带；穿蓝色高领长袖上衣，衣襟、袖口与长下摆用金色线条镶边，胸前覆浅灰护甲，腰间系浅色腰封；下搭黑色短裙/紧身层、深色长袜与蓝金短靴。按官方全身图分层，不添加宠物或武器。",
+      "cos_type": "刀剑神域"
+    },
+    {
+      "id": "sao_yuuki_mothers_rosario",
+      "title": "绀野木绵季 · Mother's Rosario 篇 ALO 绝剑装",
+      "prompt": "以输入形象中的 coser 为主体，换装为《刀剑神域》Mother's Rosario 篇绀野木绵季“绝剑”ALO 造型：紫色长发配红色头带；穿露肩紫色束身上衣，衣身与袖片有金色细边；腰部系红色交叉腰带，下搭紫色长裙，裙侧拼红色几何面片和金色边线，配紫色长手套、长袜与短靴。保持官方全身图的服装结构，不添加剑或光效。",
+      "cos_type": "刀剑神域"
+    }
+  ]
+}

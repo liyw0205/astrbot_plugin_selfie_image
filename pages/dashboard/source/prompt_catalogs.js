@@ -221,8 +221,11 @@
       const normalizedQuery = String(searchQuery || '').trim();
       const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
       const normalizedSeries = normalizedKind === 'cos' ? String(PRESET_MANAGER_FILTERS.cos || '').trim() : '';
+      const normalizedPresetFilter = normalizedKind === 'image' ? String(PRESET_MANAGER_FILTERS.image || '').trim() : '';
       const query = normalizedQuery;
-      const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${page}`;
+      const key = normalizedKind === 'image'
+        ? `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${normalizedPresetFilter}:${page}`
+        : `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${page}`;
       const requestGenerations = MANAGED_PAGE_REQUEST_GENERATIONS;
       let cached = MANAGED_PAGE_CACHE.get(key);
       if (force) {
@@ -248,6 +251,7 @@
         search:query,
       });
       if (normalizedSeries) params.set('series', normalizedSeries);
+      if (normalizedPresetFilter) params.set('preset_filter', normalizedPresetFilter);
       if (normalizedKind !== 'cos') params.set('kind', normalizedKind);
       const endpoint = normalizedKind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets/manage?';
       const request = (async () => {
@@ -632,6 +636,11 @@
       $('presetManagerSearch').value = PRESET_MANAGER_QUERIES[PRESET_KIND] || '';
       $('presetManagerSearch').placeholder = PRESET_KIND === 'nai' ? '搜索画师名或画师串' : '搜索预设名或提示词';
       $('presetManagerSearch').setAttribute('aria-label', $('presetManagerSearch').placeholder);
+      const imageFilterWrap = $('presetManagerFilterWrap');
+      if (imageFilterWrap) imageFilterWrap.style.display = PRESET_KIND === 'image' ? '' : 'none';
+      if (PRESET_KIND === 'image' && $('presetManagerFilter')) {
+        $('presetManagerFilter').value = PRESET_MANAGER_FILTERS.image || '';
+      }
       const isCos = PRESET_KIND === 'cos';
       const promptManager = $('presetPromptManager');
       const cosManager = $('presetCosManager');

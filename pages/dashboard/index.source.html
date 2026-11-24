@@ -512,6 +512,19 @@
       <div id="presetManagerViews" class="preset-manager-views">
         <div id="presetPromptManager" class="preset-manager-view">
           <input id="presetManagerSearch" type="search" placeholder="搜索预设名或提示词" aria-label="搜索预设名或提示词">
+          <div id="presetManagerFilterWrap">
+            <label for="presetManagerFilter">预设分类</label>
+            <select id="presetManagerFilter" aria-label="筛选生图预设">
+              <option value="">全部</option>
+              <option value="custom">自定义</option>
+              <option value="builtin">内置</option>
+              <option value="ordinary">普通预设</option>
+              <option value="special">特殊预设</option>
+              <option value="action">动作预设</option>
+              <option value="upper">上身预设</option>
+              <option value="lower">下身预设</option>
+            </select>
+          </div>
           <div id="presetManagerList" class="preset-manager-list"></div>
           <div id="presetManagerPager" class="catalog-pager"></div>
         </div>

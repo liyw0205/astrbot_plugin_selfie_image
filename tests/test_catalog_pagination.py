@@ -3,6 +3,7 @@ import types
 
 import astrbot_plugin_selfie_image.webui.dashboard_api as dashboard_api
 from astrbot_plugin_selfie_image.webui.dashboard_api import SelfieImageDashboardAPI
+from astrbot_plugin_selfie_image.webui.prompt_controller import PromptCatalogController
 from astrbot_plugin_selfie_image.webui.services import flatten_cos_pool_rows, paginate_catalog_rows
 
 
@@ -24,6 +25,49 @@ def test_catalog_page_filters_before_slicing_and_caps_payload_size():
     assert page["offset"] == 30
     assert len(page["items"]) == 7
     assert all("portrait" in row["prompt"] for row in page["items"])
+
+
+def test_managed_image_preset_filters_apply_before_search_and_pagination():
+    class Plugin:
+        def list_managed_prompt_presets_for_web(self, _kind):
+            return [
+                {"name": "内置普通", "prompt": "plain", "source": "builtin"},
+                {"name": "用户普通", "prompt": "plain", "source": "user"},
+                {"name": "内置动作", "prompt": "action", "source": "builtin", "preset_group": "action"},
+                {"name": "用户动作 A", "prompt": "action alpha", "source": "user", "special_group": "action"},
+                {"name": "用户动作 B", "prompt": "action beta", "source": "user", "preset_group": "action"},
+                {"name": "用户上身", "prompt": "upper", "source": "user", "preset_group": "upper"},
+                {"name": "用户下身", "prompt": "lower", "source": "user", "preset_group": "lower"},
+            ]
+
+    controller = PromptCatalogController(Plugin())
+
+    def filtered(preset_filter, *, search="", offset="0", limit="30"):
+        result = controller.list_presets(
+            {
+                "kind": "image",
+                "preset_filter": preset_filter,
+                "search": search,
+                "offset": offset,
+                "limit": limit,
+            },
+            managed=True,
+        )
+        return result.data
+
+    assert filtered("custom")["total"] == 5
+    assert filtered("builtin")["total"] == 2
+    assert filtered("ordinary")["total"] == 2
+    assert filtered("special")["total"] == 5
+    assert filtered("action")["total"] == 3
+    assert filtered("upper")["items"][0]["name"] == "用户上身"
+    assert filtered("lower")["items"][0]["name"] == "用户下身"
+    action_page = filtered("action", search="alpha", limit="1")
+    assert action_page["total"] == 1
+    assert [row["name"] for row in action_page["items"]] == ["用户动作 A"]
+    second_page = filtered("action", limit="1", offset="1")
+    assert second_page["total"] == 3
+    assert len(second_page["items"]) == 1
 
 
 def test_cos_catalog_flattening_deduplicates_builtin_ids_and_sorts_favorites_first():

@@ -677,7 +677,7 @@
     const PRESET_MANAGER_TOTALS = {image: 0, cos: 0, nai: 0};
     const PRESET_MANAGER_SEARCH_TIMERS = {image: null, cos: null, nai: null};
     const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};
-    const PRESET_MANAGER_FILTERS = {cos: ''};
+    const PRESET_MANAGER_FILTERS = {image: '', cos: ''};
     let COS_MANAGER_SERIES_OPTIONS = [];
     const PRESET_MANAGER_REVISIONS = {image: 0, cos: 0, nai: 0};
     let COS_POOL_REVISION = 0;

@@ -190,6 +190,61 @@
       "cos_type": "火影忍者",
       "file": "火影忍者.json",
       "count": 12
+    },
+    {
+      "cos_type": "约会大作战",
+      "file": "约会大作战.json",
+      "count": 9
+    },
+    {
+      "cos_type": "葬送的芙莉莲",
+      "file": "葬送的芙莉莲.json",
+      "count": 8
+    },
+    {
+      "cos_type": "药师少女的独语",
+      "file": "药师少女的独语.json",
+      "count": 2
+    },
+    {
+      "cos_type": "我推的孩子",
+      "file": "我推的孩子.json",
+      "count": 5
+    },
+    {
+      "cos_type": "咒术回战",
+      "file": "咒术回战.json",
+      "count": 2
+    },
+    {
+      "cos_type": "刀剑神域",
+      "file": "刀剑神域.json",
+      "count": 8
+    },
+    {
+      "cos_type": "更衣人偶坠入爱河",
+      "file": "更衣人偶坠入爱河.json",
+      "count": 3
+    },
+    {
+      "cos_type": "魔法少女小圆",
+      "file": "魔法少女小圆.json",
+      "count": 6
+    },
+    {
+      "cos_type": "Lycoris Recoil",
+      "file": "Lycoris Recoil.json",
+      "count": 7
+    },
+    {
+      "cos_type": "间谍过家家",
+      "file": "间谍过家家.json",
+      "count": 4
+    },
+    {
+      "cos_type": "物语系列",
+      "file": "物语系列.json",
+      "count": 6
     }
   ],
   "order": [
@@ -1026,6 +1081,66 @@
     "naruto_konan_private_paper_blue_dress",
     "naruto_kurenai_private_wrap_dress",
     "naruto_anko_private_mesh_bodysuit",
-    "naruto_samui_private_gray_vest_set"
+    "naruto_samui_private_gray_vest_set",
+    "datealive_tohka_spirit_v",
+    "datealive_kurumi_black_red",
+    "frieren_travel_white_gold",
+    "frieren_fern_travel",
+    "kusuri_maomao_jade_palace",
+    "kusuri_gyokuyo_palace_gown",
+    "oshinoko_ruby_youtou_uniform",
+    "oshinoko_kana_youtou_uniform",
+    "jjk_maki_culling_uniform",
+    "jjk_yuki_casual",
+    "sao_alice_underworld_travel",
+    "sao_asuna_stacia",
+    "bisque_marin_school_uniform",
+    "bisque_sajuna_shizuku_cos",
+    "madoka_magical_girl_tv",
+    "madoka_homura_school_uniform",
+    "lyco_chisato_da_uniform",
+    "lyco_takina_cafe_uniform",
+    "spy_yor_thorn_princess",
+    "spy_fiona_wise_coat",
+    "monogatari_hitagi_school",
+    "monogatari_shinobu_golden_hair",
+    "datealive_origami_angel",
+    "datealive_kotori_commander",
+    "datealive_yoshino_spirit",
+    "datealive_nia_dark_dress",
+    "datealive_miku_angel",
+    "datealive_mukuro_spirit",
+    "datealive_mio_white_dress",
+    "frieren_ubel",
+    "frieren_serie",
+    "frieren_flamme",
+    "frieren_aura",
+    "frieren_lawine",
+    "frieren_methode",
+    "oshinoko_ai_bkomachi_stage",
+    "oshinoko_akane_stage_play",
+    "oshinoko_memcho_official",
+    "sao_sinon_alo",
+    "sao_suguha_fairy_school",
+    "sao_leafa_alo",
+    "sao_lisbeth_underworld",
+    "sao_silica_underworld",
+    "sao_yuuki_mothers_rosario",
+    "bisque_shinju_daily",
+    "madoka_sayaka_rebellion_casual",
+    "madoka_mami_rebellion_casual",
+    "madoka_kyoko_rebellion_casual",
+    "madoka_nagisa_rebellion_casual",
+    "lyco_kurumi_official_cafe",
+    "lyco_mizuki_official_cafe",
+    "lyco_fuki_da_uniform",
+    "lyco_sakura_da_uniform",
+    "lyco_kusunoki_da_commander",
+    "spy_sylvia_official",
+    "spy_becky_official",
+    "monogatari_nadeko_second_season",
+    "monogatari_mayoi_second_season",
+    "monogatari_karen_second_season",
+    "monogatari_tsukihi_second_season"
   ]
 }

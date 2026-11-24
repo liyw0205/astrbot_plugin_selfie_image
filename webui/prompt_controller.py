@@ -27,6 +27,10 @@ class PromptCatalogControllerResult:
 class PromptCatalogController:
     """Shared prompt preset, COS catalog and creative prompt operations."""
 
+    _MANAGED_IMAGE_FILTERS = frozenset(
+        {"custom", "builtin", "ordinary", "special", "action", "upper", "lower"}
+    )
+
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
 
@@ -58,6 +62,18 @@ class PromptCatalogController:
             raise WebContractError(str(exc), 500) from exc
 
         extra: dict[str, Any] = {"load_status": status}
+        rows = data
+        preset_filter = (
+            query_value(query, "preset_filter").strip().casefold()
+            if managed and kind != "nai"
+            else ""
+        )
+        if preset_filter in self._MANAGED_IMAGE_FILTERS:
+            rows = [
+                row
+                for row in (data if isinstance(data, (list, tuple)) else [])
+                if self._managed_image_preset_matches(row, preset_filter)
+            ]
         if catalog_pagination_requested(query):
             limit = parse_bounded_int(
                 query, "limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE
@@ -65,7 +81,7 @@ class PromptCatalogController:
             offset = parse_bounded_int(query, "offset", 0, 0, 1_000_000)
             try:
                 page = paginate_catalog_rows(
-                    data,
+                    rows,
                     offset=offset,
                     limit=limit,
                     query=query_value(query, "search"),
@@ -81,10 +97,25 @@ class PromptCatalogController:
 
         if not managed:
             try:
-                extra["count"] = len(data)
+                extra["count"] = len(rows)
             except Exception as exc:
                 raise WebContractError(str(exc), 500) from exc
-        return PromptCatalogControllerResult(data, extra)
+        return PromptCatalogControllerResult(rows, extra)
+
+    @staticmethod
+    def _managed_image_preset_matches(row: Any, preset_filter: str) -> bool:
+        if not isinstance(row, Mapping):
+            return False
+        group = str(row.get("preset_group") or row.get("special_group") or "").strip().casefold()
+        if preset_filter == "custom":
+            return str(row.get("source") or "").strip().casefold() != "builtin"
+        if preset_filter == "builtin":
+            return str(row.get("source") or "").strip().casefold() == "builtin"
+        if preset_filter == "ordinary":
+            return not group
+        if preset_filter == "special":
+            return bool(group)
+        return group == preset_filter
 
     def save_preset(self, payload: Any) -> PromptCatalogControllerResult:
         try:

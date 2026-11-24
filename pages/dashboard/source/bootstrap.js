@@ -103,6 +103,11 @@
     $('presetManagerSearch').oninput = event => {
       schedulePresetManagerSearch(PRESET_KIND === 'nai' ? 'nai' : 'image', event.target.value);
     };
+    $('presetManagerFilter').onchange = event => {
+      PRESET_MANAGER_FILTERS.image = String(event.target.value || '');
+      PRESET_MANAGER_PAGES.image = 1;
+      void loadManagedPromptPresets('image');
+    };
     $('presetCosManagerSearch').oninput = event => {
       schedulePresetManagerSearch('cos', event.target.value);
     };

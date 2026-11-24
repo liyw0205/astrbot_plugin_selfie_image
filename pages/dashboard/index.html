@@ -1686,6 +1686,19 @@
       <div id="presetManagerViews" class="preset-manager-views">
         <div id="presetPromptManager" class="preset-manager-view">
           <input id="presetManagerSearch" type="search" placeholder="搜索预设名或提示词" aria-label="搜索预设名或提示词">
+          <div id="presetManagerFilterWrap">
+            <label for="presetManagerFilter">预设分类</label>
+            <select id="presetManagerFilter" aria-label="筛选生图预设">
+              <option value="">全部</option>
+              <option value="custom">自定义</option>
+              <option value="builtin">内置</option>
+              <option value="ordinary">普通预设</option>
+              <option value="special">特殊预设</option>
+              <option value="action">动作预设</option>
+              <option value="upper">上身预设</option>
+              <option value="lower">下身预设</option>
+            </select>
+          </div>
           <div id="presetManagerList" class="preset-manager-list"></div>
           <div id="presetManagerPager" class="catalog-pager"></div>
         </div>
@@ -2973,7 +2986,7 @@
     const PRESET_MANAGER_TOTALS = {image: 0, cos: 0, nai: 0};
     const PRESET_MANAGER_SEARCH_TIMERS = {image: null, cos: null, nai: null};
     const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};
-    const PRESET_MANAGER_FILTERS = {cos: ''};
+    const PRESET_MANAGER_FILTERS = {image: '', cos: ''};
     let COS_MANAGER_SERIES_OPTIONS = [];
     const PRESET_MANAGER_REVISIONS = {image: 0, cos: 0, nai: 0};
     let COS_POOL_REVISION = 0;
@@ -10740,8 +10753,11 @@ Source prompt:
       const normalizedQuery = String(searchQuery || '').trim();
       const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
       const normalizedSeries = normalizedKind === 'cos' ? String(PRESET_MANAGER_FILTERS.cos || '').trim() : '';
+      const normalizedPresetFilter = normalizedKind === 'image' ? String(PRESET_MANAGER_FILTERS.image || '').trim() : '';
       const query = normalizedQuery;
-      const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${page}`;
+      const key = normalizedKind === 'image'
+        ? `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${normalizedPresetFilter}:${page}`
+        : `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${page}`;
       const requestGenerations = MANAGED_PAGE_REQUEST_GENERATIONS;
       let cached = MANAGED_PAGE_CACHE.get(key);
       if (force) {
@@ -10767,6 +10783,7 @@ Source prompt:
         search:query,
       });
       if (normalizedSeries) params.set('series', normalizedSeries);
+      if (normalizedPresetFilter) params.set('preset_filter', normalizedPresetFilter);
       if (normalizedKind !== 'cos') params.set('kind', normalizedKind);
       const endpoint = normalizedKind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets/manage?';
       const request = (async () => {
@@ -11151,6 +11168,11 @@ Source prompt:
       $('presetManagerSearch').value = PRESET_MANAGER_QUERIES[PRESET_KIND] || '';
       $('presetManagerSearch').placeholder = PRESET_KIND === 'nai' ? '搜索画师名或画师串' : '搜索预设名或提示词';
       $('presetManagerSearch').setAttribute('aria-label', $('presetManagerSearch').placeholder);
+      const imageFilterWrap = $('presetManagerFilterWrap');
+      if (imageFilterWrap) imageFilterWrap.style.display = PRESET_KIND === 'image' ? '' : 'none';
+      if (PRESET_KIND === 'image' && $('presetManagerFilter')) {
+        $('presetManagerFilter').value = PRESET_MANAGER_FILTERS.image || '';
+      }
       const isCos = PRESET_KIND === 'cos';
       const promptManager = $('presetPromptManager');
       const cosManager = $('presetCosManager');
@@ -13230,6 +13252,11 @@ Source prompt:
     $('presetKindNai').onclick = () => switchPresetKind('nai');
     $('presetManagerSearch').oninput = event => {
       schedulePresetManagerSearch(PRESET_KIND === 'nai' ? 'nai' : 'image', event.target.value);
+    };
+    $('presetManagerFilter').onchange = event => {
+      PRESET_MANAGER_FILTERS.image = String(event.target.value || '');
+      PRESET_MANAGER_PAGES.image = 1;
+      void loadManagedPromptPresets('image');
     };
     $('presetCosManagerSearch').oninput = event => {
       schedulePresetManagerSearch('cos', event.target.value);

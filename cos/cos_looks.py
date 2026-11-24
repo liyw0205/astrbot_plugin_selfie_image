@@ -2196,7 +2196,7 @@ COS_LOOK_TYPE_ALIASES: Dict[str, tuple[str, ...]] = {
     "埃罗芒阿老师": ("埃罗芒阿老师", "Eromanga Sensei", "eromangasensei"),
     "斗罗大陆": ("斗罗大陆", "Soul Land", "Douluo Dalu", "douluodalu"),
     "斗破苍穹": ("斗破苍穹", "BTTH", "Fights Break Sphere"),
-    "王者荣耀": ("王者荣耀", "王者", "honorofkings", "hok"),
+    "王者荣耀": ("王者荣耀", "王者", "Honor of Kings", "honorofkings", "hok"),
     "永劫无间": ("永劫无间", "永劫", "naraka", "narakabladepoint"),
     "原神": ("原神", "genshin", "genshinimpact"),
     "Fate": (

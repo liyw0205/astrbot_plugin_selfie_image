@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "cos_type": "Lycoris Recoil",
+  "items": [
+    {
+      "id": "lyco_chisato_da_uniform",
+      "title": "锦木千束 · DA 红色制服",
+      "prompt": "以输入形象中的 coser 为主体，换装为《Lycoris Recoil》锦木千束 DA 红色制服：浅金色短发剪至下颌，发尾轻翘，侧边以红色发带打结；穿红色收腰制服外套，采用窄翻领、金色纽扣与深色细领带，内搭浅色衬衣；下搭灰色百褶短裙，配深色及膝袜和棕色便鞋。保持红灰制服色块与短发轮廓，不添加枪械、场景、文字或水印。",
+      "cos_type": "Lycoris Recoil"
+    },
+    {
+      "id": "lyco_takina_cafe_uniform",
+      "title": "井之上泷奈 · LycoReco 咖啡店制服",
+      "prompt": "以输入形象中的 coser 为主体，换装为《Lycoris Recoil》井之上泷奈 LycoReco 咖啡店制服：黑色长发在两侧束成低马尾，额前整齐短刘海；穿蓝色交领和服式短上衣，袖长至肘部，腰间系黄色宽腰带和深蓝色垂带；外系米色长围裙，下搭深蓝色长裙，脚穿白袜与蓝色草履。按官方咖啡店制服还原，不与 DA 制服混搭，不添加武器、文字或水印。",
+      "cos_type": "Lycoris Recoil"
+    },
+    {
+      "id": "lyco_kurumi_official_cafe",
+      "title": "Lycoris Recoil · 胡桃日式咖啡店员装",
+      "prompt": "胡桃《Lycoris Recoil》官网角色页当前造型，浅金色长卷发、头顶黑色蝴蝶结发箍，黄色和服式交领上衣，藏蓝色斜向衣襟与红色腰带，米白色围裙，深藏蓝长裤，白色足袋和黄色系带木屐；还原官网图的日式店员搭配。",
+      "cos_type": "Lycoris Recoil"
+    },
+    {
+      "id": "lyco_mizuki_official_cafe",
+      "title": "中原瑞希 · 日式咖啡店员装",
+      "prompt": "中原瑞希《Lycoris Recoil》官网角色页当前造型，浅棕色长发与红框眼镜，橄榄绿色和服式交领上衣、深藏蓝斜襟及细金边，芥末黄色腰带，米白色围裙，深藏蓝长裤，白色足袋和绿色鼻绪木屐；服装按官网人物立绘还原。",
+      "cos_type": "Lycoris Recoil"
+    },
+    {
+      "id": "lyco_fuki_da_uniform",
+      "title": "春川芙季 · DA 制服",
+      "prompt": "春川芙季《Lycoris Recoil》官网角色页当前造型，深棕色短发向后梳理，暗红色双排扣长外套式制服，深蓝色领口与细长领结，腰间双带扣腰带，外侧灰色褶片，深灰连裤袜，棕色乐福鞋；保持制服的红、灰、深蓝分区。",
+      "cos_type": "Lycoris Recoil"
+    },
+    {
+      "id": "lyco_sakura_da_uniform",
+      "title": "乙女樱 · DA 制服",
+      "prompt": "乙女樱《Lycoris Recoil》官网角色页当前造型，浅棕色短发与发顶翘发，深藏蓝色双排扣长制服，灰色侧褶片，青绿色领结和腰带，青绿色系带运动鞋；按官网图还原制服长度、扣子排列与双色侧褶。",
+      "cos_type": "Lycoris Recoil"
+    },
+    {
+      "id": "lyco_kusunoki_da_commander",
+      "title": "楠木 · 白色长风衣与深色长裙",
+      "prompt": "楠木《Lycoris Recoil》官网角色页当前造型，短红棕色齐耳发与厚刘海，白色长款实验室风衣，灰色衬衫、深色领带，黑色直筒长裙，灰色连裤袜，黑色低跟鞋；保持简洁中性的正式制服感，不额外添加饰品。",
+      "cos_type": "Lycoris Recoil"
+    }
+  ]
+}
