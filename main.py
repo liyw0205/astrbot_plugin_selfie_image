@@ -4366,6 +4366,47 @@ class SelfieImagePlugin(
         await self.persona.ensure_daily_selfie_profile("查看今日日程")
         yield event.plain_result(self.persona.daily_schedule_text())
 
+    @filter.command("形象切换")
+    async def cmd_identity_pool_switch(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """切换自拍使用形象图池或文字人设池。"""
+        text = extract_command_message(
+            event, "形象切换", extract_event_text(event)
+        ).strip()
+        modes = {
+            "人设池": "persona",
+            "文字人设池": "persona",
+            "形象池": "image",
+            "形象图池": "image",
+            "图片池": "image",
+        }
+        mode = modes.get(text)
+        if mode is None:
+            current = self.persona.get_identity_mode()
+            current_label = "人设池" if current == "persona" else "形象池"
+            yield event.plain_result(
+                f"用法：/形象切换 人设池 或 /形象切换 形象池。\n当前使用：{current_label}。"
+            )
+            return
+        try:
+            self.persona.set_identity_mode(mode)
+        except (OSError, ValueError) as exc:
+            yield event.plain_result(f"形象池切换失败：{exc}")
+            return
+
+        if mode == "persona":
+            active = self.persona.get_active_persona()
+            detail = (
+                f"当前人设：{active['slot']}·{active['name']}。"
+                if active
+                else "当前未选择人设，可用 /形象人设设置 编号 选择。"
+            )
+            label = "形象人设池"
+        else:
+            active_slot = self.persona.identity_pool_payload()["active_image_slot"]
+            detail = f"当前形象图：{active_slot} 号。" if active_slot else "当前未选择形象图。"
+            label = "形象图池"
+        yield event.plain_result(f"已切换到{label}。{detail}")
+
     @filter.command("形象设置")
     async def cmd_persona_set(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
         """设置形象参考图，按编号切换形象图；也可改类型：自动 / 真人 / 动漫。"""

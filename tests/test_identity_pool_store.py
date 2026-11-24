@@ -231,6 +231,26 @@ def test_image_commands_switch_remove_and_refill_same_slot(tmp_path, monkeypatch
     assert [item["slot"] for item in PersonaManager(tmp_path).list_image_pool()] == [1, 2, 3]
 
 
+def test_identity_pool_switch_command_selects_mode_without_changing_pool_contents(tmp_path):
+    plugin = _plugin(tmp_path)
+    plugin.persona.save_reference_image(PNG, "image/png")
+    plugin.persona.select_persona(1)
+
+    reply = _command(plugin, "cmd_identity_pool_switch", "/形象切换 人设池")[0]
+    assert "已切换到形象人设池" in reply
+    assert plugin.persona.get_identity_mode() == "persona"
+
+    reply = _command(plugin, "cmd_identity_pool_switch", "/形象切换 形象池")[0]
+    assert "已切换到形象图池" in reply
+    assert plugin.persona.get_identity_mode() == "image"
+    assert len(plugin.persona.list_image_pool()) == 1
+    assert plugin.persona.get_active_persona()["slot"] == 1
+
+    reply = _command(plugin, "cmd_identity_pool_switch", "/形象切换 未知")[0]
+    assert "用法：/形象切换 人设池 或 /形象切换 形象池" in reply
+    assert plugin.persona.get_identity_mode() == "image"
+
+
 def test_text_persona_commands_select_remove_and_refill_hole(tmp_path):
     plugin = _plugin(tmp_path)
     first_custom_slot = next(
