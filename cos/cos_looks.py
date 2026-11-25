@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import re
+import math
 from collections.abc import Callable, Iterable, Mapping
 from itertools import product
 from typing import Any, Dict, List, Optional
@@ -750,6 +751,7 @@ def _compatible_cos_composition_ids(*, pose_id: str, scene_id: str, camera: str)
 
 def pick_cos_framing(
     *,
+    cos_id: str = "",
     outfit: str = "",
     extra_request: str = "",
     avoid_framings: Iterable[str] = (),
@@ -758,6 +760,7 @@ def pick_cos_framing(
     scene_id: str = "",
     camera: str = "third",
     allowed_framings: Iterable[str] = (),
+    eligible_pose_ids: Iterable[str] = (),
     framing_weights: Optional[Mapping[str, int]] = None,
     multi_view_collage: bool = False,
     forced_framing_id: str = "",
@@ -937,9 +940,6 @@ def pick_cos_framing(
             or camera in COS_FRAMING_CAMERA_COMPATIBILITY[item]
         ]
     unsafe_framings = _cos_unsafe_framings(scene_id, pose_id, camera)
-    safe_candidates = [item for item in candidates if item not in unsafe_framings]
-    if safe_candidates:
-        candidates = safe_candidates
     if not candidates:
         candidates = [
             item for item in COS_FRAMING_CLASSES
@@ -960,7 +960,6 @@ def pick_cos_framing(
                 or (scene_id and scene_id in COS_FRAMING_SCENE_COMPATIBILITY[item])
             )
             and item not in excluded_framings
-            and item not in unsafe_framings
         ]
     if not candidates:
         return {
@@ -977,28 +976,50 @@ def pick_cos_framing(
     if not available:
         # Avoid lists may exhaust the pool, but must not bypass pose/framing safety.
         available = candidates
-    selection_pool = available
     weights = framing_weights or {}
-    if pose_id == "back_to_camera" and camera == "third":
-        # A restrained low angle is useful for a rear outfit view, but keep
-        # eye-level and rear three-quarter options in rotation to avoid making
-        # every back view look like a forced hero shot.
-        selection_pool = [
-            item
-            for item in available
-            for _ in range(max(1, int(weights.get(item, 1))) * (
-                3 if item == "rear_low_hero"
-                else 2 if item == "rear_low_medium"
-                else 1
-            ))
-        ]
-    elif weights:
-        selection_pool = [
-            item
-            for item in available
-            for _ in range(max(1, int(weights.get(item, 1))))
-        ]
-    view_id = random.choice(selection_pool)
+    look_pose_ids = _as_id_set(eligible_pose_ids)
+    if scene_id in COS_RANDOM_SCENE_CLASSES:
+        support_pose_ids = set(_scene_pose_ids(COS_RANDOM_SCENE_CLASSES[scene_id]))
+    else:
+        support_pose_ids = set(look_pose_ids or COS_RANDOM_POSE_CLASSES)
+    if look_pose_ids:
+        support_pose_ids.intersection_update(look_pose_ids)
+    support_pose_ids.discard("user")
+    support_pose_ids.difference_update(COS_EXPLICIT_ONLY_POSE_IDS)
+    support_pose_ids = set(_poses_for_camera(support_pose_ids, camera))
+    support_pose_ids.add(pose_id)
+    support_counts = {
+        item: max(1, sum(
+            1 for candidate_pose_id in support_pose_ids
+            if item in COS_POSE_FRAMING_COMPATIBILITY.get(candidate_pose_id, ())
+            and (
+                not cos_id
+                or candidate_pose_id == pose_id
+                or not _cos_unsafe_random_pair(cos_id, scene_id, candidate_pose_id, camera)
+            )
+            and (
+                item not in COS_FRAMING_SCENE_COMPATIBILITY
+                or scene_id in COS_FRAMING_SCENE_COMPATIBILITY[item]
+            )
+            and (
+                item not in COS_FRAMING_CAMERA_COMPATIBILITY
+                or camera in COS_FRAMING_CAMERA_COMPATIBILITY[item]
+            )
+            and (
+                candidate_pose_id == pose_id
+                or not COS_SCENE_POSE_FRAMING_EXCLUSIONS.get((scene_id, candidate_pose_id), frozenset())
+                or item not in COS_SCENE_POSE_FRAMING_EXCLUSIONS[(scene_id, candidate_pose_id)]
+            )
+        ))
+        for item in available
+    }
+    selection_weights = [
+        max(1, int(weights.get(item, 1)))
+        * (1 / math.sqrt(support_counts[item]))
+        * (0.3 if item in unsafe_framings else 1.0)
+        for item in available
+    ]
+    view_id = random.choices(available, weights=selection_weights, k=1)[0]
     selected = dict(COS_FRAMING_CLASSES[view_id])
     selected["view_id"] = view_id
     selected["outfit_text"] = resolved_outfit
@@ -1303,12 +1324,14 @@ def _pick_cos_combination(
         candidates.append((combination_id, combination))
     if not candidates:
         return None
-    weighted = [
-        combination_id
-        for combination_id, combination in candidates
-        for _ in range(max(1, int(combination.get("weight") or 1)))
+    weights = [
+        max(1, int(combination.get("weight") or 1))
+        * (0.1 if combination.get("risk") == "high" or COS_RANDOM_POSE_CLASSES.get(
+            str(combination.get("pose_id") or ""), {}
+        ).get("risk") == "high" else 1.0)
+        for _, combination in candidates
     ]
-    chosen_id = random.choice(weighted)
+    chosen_id = random.choices([item[0] for item in candidates], weights=weights, k=1)[0]
     chosen = dict(COS_COMBINATION_PRESETS[chosen_id])
     chosen["combination_id"] = chosen_id
     return chosen
@@ -1359,23 +1382,29 @@ def _pick_weighted_cos_id(ids: Iterable[str], *, weights: Optional[Mapping[str, 
     values = [str(value) for value in ids if str(value)]
     if not values:
         return ""
-    pool = []
+    selection_weights = []
     for value in values:
         try:
-            weight = max(1, int((weights or {}).get(value, 1)))
+            weight = max(0.01, float((weights or {}).get(value, 1)))
         except (TypeError, ValueError):
             weight = 1
-        pool.extend([value] * weight)
-    return random.choice(pool)
+        selection_weights.append(weight)
+    return random.choices(values, weights=selection_weights, k=1)[0]
+
+
+def _cos_pose_selection_weight(pose_id: str) -> float:
+    pose = COS_RANDOM_POSE_CLASSES.get(pose_id, {})
+    try:
+        weight = max(0.01, float(pose.get("random_weight", 1)))
+    except (TypeError, ValueError):
+        weight = 1.0
+    return weight * (0.1 if pose.get("risk") == "high" else 1.0)
 
 
 def _pick_cos_pose(pose_ids: Iterable[str]) -> str:
     """Choose among compatible poses using their catalog weights."""
     values = [str(value) for value in pose_ids if str(value)]
-    weights = {
-        pose_id: COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("random_weight", 1)
-        for pose_id in values
-    }
+    weights = {pose_id: _cos_pose_selection_weight(pose_id) for pose_id in values}
     return _pick_weighted_cos_id(values, weights=weights)
 
 
@@ -1701,7 +1730,7 @@ def _pick_cos_collage_variation(
         pose_id for pose_id in pose_candidates
         if "eye_level_full" in compatible[pose_id]
     ]
-    main_pose = random.choice(main_pose_candidates or pose_candidates)
+    main_pose = _pick_cos_pose(main_pose_candidates or pose_candidates)
     main_framing_id = (
         "eye_level_full"
         if "eye_level_full" in compatible[main_pose]
@@ -1710,12 +1739,12 @@ def _pick_cos_collage_variation(
     panel_views = [(main_pose, main_framing_id)]
 
     # Use each compatible pose once before adding alternate camera views.
-    for pose_id in random.sample(
-        [item for item in pose_candidates if item != main_pose],
-        len([item for item in pose_candidates if item != main_pose]),
-    ):
+    remaining_poses = [item for item in pose_candidates if item != main_pose]
+    while remaining_poses:
         if len(panel_views) >= COS_MULTI_VIEW_COLLAGE_PANEL_COUNT:
             break
+        pose_id = _pick_cos_pose(remaining_poses)
+        remaining_poses.remove(pose_id)
         panel_views.append((pose_id, random.choice(compatible[pose_id])))
 
     pose_use_counts = {pose_id: 0 for pose_id in compatible}
@@ -1744,7 +1773,11 @@ def _pick_cos_collage_variation(
             view for view in view_candidates
             if pose_use_counts[view[0]] == least_used
         ]
-        view = random.choice(view_candidates)
+        view = random.choices(
+            view_candidates,
+            weights=[_cos_pose_selection_weight(pose_id) for pose_id, _ in view_candidates],
+            k=1,
+        )[0]
         panel_views.append(view)
         used_views.add(view)
         pose_use_counts[view[0]] += 1
@@ -2961,10 +2994,15 @@ def build_cos_third_person_prompt(text: str) -> str:
         variation["lighting_id"] = lighting_id
         lighting_line = "本次场景光照：" + lighting_prompt
     framing = pick_cos_framing(
+        cos_id=look_match.group(1) if look_match else "",
         extra_request=adapted,
         scene_id=str(variation.get("scene_id") or ""),
         pose_id=str(variation.get("pose_id") or ""),
         camera="third",
+        eligible_pose_ids=(
+            cos_look_compatibility(look_match.group(1))["recommended_pose_ids"]
+            if look_match else COS_RANDOM_POSE_CLASSES
+        ),
         framing_weights=(
             cos_look_compatibility(look_match.group(1))["recommended_framing_weights"]
             if look_match
@@ -3229,6 +3267,8 @@ def build_cos_look_action(
         camera=camera_kind,
         allowed_framings=look_profile["recommended_framing_ids"],
         framing_weights=look_profile["recommended_framing_weights"],
+        cos_id=cos_id,
+        eligible_pose_ids=look_profile["recommended_pose_ids"],
         multi_view_collage=collage_active,
     )
     # A camera/pose pair can legitimately have only one compatible crop (for
@@ -3266,6 +3306,8 @@ def build_cos_look_action(
                 camera=camera_kind,
                 allowed_framings=look_profile["recommended_framing_ids"],
                 framing_weights=look_profile["recommended_framing_weights"],
+                cos_id=cos_id,
+                eligible_pose_ids=look_profile["recommended_pose_ids"],
                 multi_view_collage=bool(retry_variation.get("panel_prompt")),
             )
             if retry_framing.get("view_id") not in avoided_framing_ids:

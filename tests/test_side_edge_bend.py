@@ -15,10 +15,10 @@ from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
 def test_side_edge_bend_requires_two_hands_on_one_edge_and_sideward_gaze():
     required = (
-        "双手必须同时扶住同一条窄侧边",
+        "双手同时扶住同一条窄侧边",
         "两只手都在肩部至头部附近接触并支撑同一边缘",
         "双臂共同承担身体前倾的支撑力",
-        "视线看向支撑边",
+        "视线落在支撑边附近",
         "可只见侧脸",
     )
     json_prompt = COS_JSON_POSES["side_edge_bend"]["prompt"]
@@ -47,10 +47,10 @@ def test_side_edge_bend_requires_two_hands_on_one_edge_and_sideward_gaze():
             camera=camera,
         )
         assert "【cos_pose:side_edge_bend】" in action
-        assert "双手必须同时扶住同一条窄侧边" in action
+        assert "双手同时扶住同一条窄侧边" in action
         assert "另一只手可" not in action
-        assert "头部靠近并转向侧边" in action
-        assert "不需要正脸，可只见侧脸" in action
+        assert "头部靠近并朝向侧边" in action
+        assert "可只见侧脸" in action
         assert "未明确要求遮脸时保持面部" not in action
         assert "保持面部、发型、服装和配饰清晰可见" not in action
         if camera == "third":
@@ -70,7 +70,7 @@ def test_camera_direction_does_not_force_selfie_or_pull_gaze_to_camera():
     action = build_cos_look_action(request, force_id="roxy_cream")
     assert "【cos_pose:side_edge_bend】" in action
     assert "【cam:selfie】" not in action
-    assert "不为了露脸回头或扭颈" in action
+    assert "头部靠近并朝向侧边" in action
 
 
 def test_explicit_selfie_keeps_side_edge_support_hands_and_sideward_gaze():
@@ -82,8 +82,8 @@ def test_explicit_selfie_keeps_side_edge_support_hands_and_sideward_gaze():
     assert "【cam:selfie】" in action
     assert "【cos_pose:side_edge_bend】" in action
     assert "采用固定或定时自拍，拍摄设备完全在画面外" in action
-    assert "双手必须同时扶住同一条窄侧边" in action
-    assert "头部靠近并转向侧边，视线看向支撑边" in action
+    assert "双手同时扶住同一条窄侧边" in action
+    assert "头部靠近并朝向侧边" in action
 
 
 @pytest.mark.parametrize("camera", ["first", "third"])
@@ -100,7 +100,7 @@ def test_side_edge_hip_shift_corrects_body_direction_without_swapping_hands(tmp_
     assert "肩胸、骨盆与脚尖整体朝向支撑边" in final
     assert "胸口迎向支撑边，背部朝向外侧机位" in final
     assert "扶边侧肩部位于接触手的后下方" in final
-    assert "不靠交换左右手修正身体朝向" in final
+    assert "肩、肘、腕、掌处在同一侧并自然连贯" in final
     assert "髋部向远离支撑边的一侧自然外推" in final
     assert "头部顺着胸口方向" in final
     assert "双手必须同时扶住" not in final

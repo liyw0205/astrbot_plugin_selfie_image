@@ -212,6 +212,18 @@ def anatomy_constraint_lines(*, style: str = "general") -> list[str]:
             "小腿或脚可以自然延伸到画面外，也可以被有明确前后关系的实体物体合理遮挡；不得在关节或肢体中段突然终止。",
             "若脚部入镜，脚部朝向自然正位；可见手与肩肘腕连续，自然放在腿侧或膝附近。",
         ]
+    if style == "cos":
+        return [
+            "单人限定：画面里只有主角一人。",
+            "姿势重心稳定、可自然维持；髋、膝、踝沿同侧腿部连续，关节朝向自然。",
+            "可见手臂沿肩、肘、腕连续连接，左右手和脚各一，手指与脚趾数量自然。",
+        ]
+    if style == "group":
+        return [
+            "合影中每个人的身体、四肢和衣物边界清楚，人物之间保持自然间距。",
+            "每个人的姿势重心稳定、可自然维持；可见肢体比例自然，手与胳膊连续连接，肩肘腕与髋膝踝连续。",
+            "各人物的手脚各自独立完整，互不粘连、重叠处保持明确前后关系。",
+        ]
     return [
         "单人限定：默认只有主角一人出镜（用户明确要求合影除外）。",
         "肢体完整自然：可见时左右手/脚各一，手与肩肘腕连续连接。",
@@ -2760,12 +2772,9 @@ class PersonaManager(IdentityPoolMixin):
                 if cos_contract
                 else "按以上 COS 套装、构图、姿势和表情生成一张完整自然的成片。"
             )
-            if not cos_contract:
-                output_lines.append(
-                    "人体结构自然完整：左右手/脚各一只，手与胳膊连续连接；第三人称摄影画面只出现主角自身的两条手臂和两只手。"
-                )
+            output_lines.extend(anatomy_constraint_lines(style="cos"))
         elif intent.is_group_photo:
-            output_lines = ["【生成要求】", "人体结构自然完整：每人左右手/脚各一只，手与胳膊连续连接。"]
+            output_lines = ["【生成要求】", *anatomy_constraint_lines(style="group")]
             if not group_contract:
                 output_lines[0] = "【生成要求】保持所有人物独立、边界清晰，统一场景与画风。"
                 output_lines.append(

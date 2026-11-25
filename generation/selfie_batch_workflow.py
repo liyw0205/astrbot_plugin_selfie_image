@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import random
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -12,11 +13,37 @@ from ..cos.cos_looks import keep_cos_outfit_requested
 from ..cos.leg_focus import (
     has_leg_focus_contract,
     parse_requested_leg_camera,
+    parse_requested_leg_crop_mode,
     parse_requested_leg_pose,
     parse_requested_legwear,
 )
 from ..features.reference_collector import CosReferenceSelection
 from ..prompts.prompt_templates import has_viewpoint_change_request
+
+
+LEGWEAR_RANDOM_CATEGORIES = (
+    "sheer", "opaque", "fishnet", "knee_high", "ankle_sock", "thigh_high",
+)
+
+
+def _plan_legwear_categories(total: int) -> List[str]:
+    """Keep hosiery at or below half of a batch and interleave bare-leg shots."""
+    count = max(0, int(total))
+    if count < 2:
+        return []
+    hosiery_count = count // 2
+    bare_count = count - hosiery_count
+    hosiery = []
+    for _ in range(hosiery_count):
+        choices = [category for category in LEGWEAR_RANDOM_CATEGORIES
+                   if not hosiery or category != hosiery[-1]]
+        hosiery.append(random.choice(choices))
+    planned = []
+    for category in hosiery:
+        planned.extend(("bare_legs", category))
+    if bare_count > hosiery_count:
+        planned.append("bare_legs")
+    return planned
 
 
 class SelfieBatchWorkflow:
@@ -100,8 +127,11 @@ class SelfieBatchWorkflow:
         self.used_leg_details: set[Tuple[str, str]] = set()
         self.extra_keep = ""
         self.force_legwear = ""
+        self.legwear_categories: List[str] = []
+        self.current_legwear_category = ""
         self.force_leg_pose = ""
         self.force_leg_camera = ""
+        self.force_leg_crop_mode = ""
         self.keep_cos_outfit = False
         if not self.rebuild_each:
             return
@@ -110,7 +140,8 @@ class SelfieBatchWorkflow:
         match = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
         if match:
             self.extra_keep = str(match.group(1) or "").strip()
-            self.extra_keep = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|wear|outfit|frame):[a-z0-9_]+】\s*", " ", self.extra_keep)
+            self.extra_keep = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|face_mode|crop_mode|leg_expression|wear|outfit|frame|legwear_category|hosiery|leg_accessory):[a-z0-9_]+】\s*", " ", self.extra_keep)
+            self.extra_keep = re.sub(r"\s*【leg_view_title:[^】]+】\s*", " ", self.extra_keep)
             self.extra_keep = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", self.extra_keep)
             self.extra_keep = re.sub(r"\s+", " ", self.extra_keep).strip(" 。")
         if self.rebuild_extra_request:
@@ -119,6 +150,9 @@ class SelfieBatchWorkflow:
             self.force_legwear = parse_requested_legwear(self.extra_keep)
             self.force_leg_pose = parse_requested_leg_pose(self.extra_keep)
             self.force_leg_camera = parse_requested_leg_camera(self.extra_keep)
+            self.force_leg_crop_mode = parse_requested_leg_crop_mode(str(action or ""))
+            if not self.force_legwear and self.total > 1:
+                self.legwear_categories = _plan_legwear_categories(self.total)
         pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
         if pose:
             self.last_pose = str(pose.group(1) or "")
@@ -139,6 +173,10 @@ class SelfieBatchWorkflow:
     def _build_actions(self) -> List[str]:
         actions = []
         for index in range(self.total):
+            self.current_legwear_category = (
+                self.legwear_categories[index]
+                if index < len(self.legwear_categories) else ""
+            )
             round_action = self.action
             if self.rebuild_each and self.total > 1:
                 variant_extra = (
@@ -174,8 +212,10 @@ class SelfieBatchWorkflow:
                 bool(self.extra_refs),
                 avoid_pose=self.last_pose,
                 force_legwear=self.force_legwear,
+                force_legwear_category=self.current_legwear_category,
                 force_pose=self.force_leg_pose,
                 force_camera=self.force_leg_camera,
+                force_crop_mode=self.force_leg_crop_mode,
                 avoid_combinations=self.used_leg_combinations,
                 avoid_pose_details=self.used_leg_details,
             )

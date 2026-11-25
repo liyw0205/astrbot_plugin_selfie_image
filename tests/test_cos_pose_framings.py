@@ -241,9 +241,11 @@ def test_back_three_quarter_pose_does_not_request_a_lookback():
 
     assert pose["title"] == "背后三分之四展示"
     assert pose["framing_ids"] == ["rear_three_quarter", "rear_low_medium", "rear_hair_close"]
-    assert "肩线、胯部与头部朝向保持一致" in pose["prompt"]
-    assert "不回头、不回眸、不扭颈" in pose["prompt"]
-    assert "不要求露出侧脸或正脸" in pose["prompt"]
+    assert "肩线、胯部与头部朝向一致" in pose["prompt"]
+    assert "头部自然朝向场景纵深" in pose["prompt"]
+    assert "不回头" not in pose["prompt"]
+    assert "不回眸" not in pose["prompt"]
+    assert "不扭颈" not in pose["prompt"]
     assert "body_curve" in pose["traits"]
     assert "rear_lookback" not in COS_JSON_FRAMINGS
 
@@ -256,8 +258,53 @@ def test_back_three_quarter_pose_does_not_request_a_lookback():
     )
     assert "【cos_pose:over_shoulder】" in action
     assert "【cos_framing:rear_lookback】" not in action
-    assert "也不要求露出侧脸或正脸" in action
-    assert "不回头、不回眸、不扭颈" in action
+    assert "头部自然朝向场景纵深" in action
+    assert "不回头、不回眸、不扭颈" not in action
+
+
+def test_high_risk_cos_poses_and_combinations_are_tagged_and_use_positive_alignment():
+    expected_high_risk_poses = {
+        "chair_diagonal_leg",
+        "back_to_camera",
+        "front_arms_raised_arch",
+        "front_behind_back_wrist_hold",
+        "rear_wall_curve",
+        "side_edge_bend",
+        "side_edge_hip_shift",
+        "rear_edge_curve",
+        "wall_raised_elbow_lean",
+        "kneeling_back_support",
+    }
+    assert expected_high_risk_poses <= {
+        pose_id
+        for pose_id, pose in COS_JSON_POSES.items()
+        if pose.get("risk") == "high"
+    }
+
+    forbidden_action_negatives = (
+        "不回头",
+        "不回眸",
+        "不扭颈",
+        "不过度扭颈",
+        "不扭转",
+        "不扭腰",
+        "不交叉",
+        "不做极限",
+        "不强求直角",
+        "不塌腰",
+        "不夸张拧胯",
+        "不大幅后折",
+        "不强行后仰",
+        "不强行回头",
+    )
+    for pose_id, pose in COS_JSON_POSES.items():
+        prompt = pose.get("prompt") or ""
+        for phrase in forbidden_action_negatives:
+            assert phrase not in prompt, f"{pose_id}: {phrase}"
+
+    for combo_id, combo in COS_JSON_COMBINATIONS.items():
+        if COS_JSON_POSES[combo["pose_id"]].get("risk") == "high":
+            assert combo.get("risk") == "high", combo_id
 
 
 def test_cos_multi_view_collage_defaults_to_portrait_ratio():
@@ -384,9 +431,17 @@ def test_new_random_poses_are_reachable_through_curated_picker(pose_id, combinat
             return pose_id
         return values[0]
 
+    def choose_weighted_pair(values, *, weights=None, k=1):
+        del weights, k
+        values = list(values)
+        if pose_id in values:
+            return [pose_id]
+        return [values[0]]
+
     with (
         patch.object(cos_looks.random, "random", return_value=1.0),
         patch.object(cos_looks.random, "choice", side_effect=choose_requested_pair),
+        patch.object(cos_looks.random, "choices", side_effect=choose_weighted_pair),
     ):
         variation = pick_cos_variation("roxy_cream", camera="third")
 
@@ -396,7 +451,13 @@ def test_new_random_poses_are_reachable_through_curated_picker(pose_id, combinat
 
 
 def test_generic_cos_prompt_uses_shared_json_staging_vocabularies():
-    with patch.object(cos_looks.random, "choice", side_effect=lambda values: values[0]):
+    def choose_first(values, *, weights=None, k=1):
+        del weights, k
+        return [list(values)[0]]
+
+    with patch.object(cos_looks.random, "choice", side_effect=lambda values: values[0]), patch.object(
+        cos_looks.random, "choices", side_effect=choose_first,
+    ):
         prompt = build_cos_third_person_prompt("COS 换装：穿蓝色礼服")
 
     pose_id = re.search(r"【cos_pose:([a-z0-9_]+)】", prompt).group(1)

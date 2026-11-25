@@ -26,7 +26,22 @@
       "framings": [
         "leg_detail"
       ],
-      "prompt": "从上身附近沿双腿自然斜向下取景，使用普通手机焦段和适中距离；避免头顶垂直俯拍、近大远小夸张透视或把脚端贴近镜头。"
+      "prompt": "从上身附近沿双腿自然斜向下取景，使用普通手机焦段和适中距离；避免头顶垂直俯拍、近大远小夸张透视或把脚端贴近镜头。",
+      "angle": {
+        "yaw": 0,
+        "yaw_range": [
+          -10,
+          10
+        ],
+        "pitch": 35,
+        "pitch_range": [
+          30,
+          40
+        ],
+        "pitch_kind": "down",
+        "camera_height": "upper_body",
+        "horizontal_position": "front"
+      }
     },
     {
       "id": "self_left_down",
@@ -53,7 +68,22 @@
       "framings": [
         "leg_detail"
       ],
-      "prompt": "从上身附近沿自身左侧腿线偏左斜向下取景，使用普通手机焦段和适中距离；避免头顶垂直俯拍、近大远小夸张透视或把脚端贴近镜头。"
+      "prompt": "从上身附近沿自身左侧腿线偏左斜向下取景，使用普通手机焦段和适中距离；避免头顶垂直俯拍、近大远小夸张透视或把脚端贴近镜头。",
+      "angle": {
+        "yaw": -45,
+        "yaw_range": [
+          -60,
+          -30
+        ],
+        "pitch": 35,
+        "pitch_range": [
+          30,
+          40
+        ],
+        "pitch_kind": "down",
+        "camera_height": "upper_body",
+        "horizontal_position": "left"
+      }
     },
     {
       "id": "self_right_down",
@@ -80,7 +110,22 @@
       "framings": [
         "leg_detail"
       ],
-      "prompt": "从上身附近沿自身右侧腿线偏右斜向下取景，使用普通手机焦段和适中距离；避免头顶垂直俯拍、近大远小夸张透视或把脚端贴近镜头。"
+      "prompt": "从上身附近沿自身右侧腿线偏右斜向下取景，使用普通手机焦段和适中距离；避免头顶垂直俯拍、近大远小夸张透视或把脚端贴近镜头。",
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": 35,
+        "pitch_range": [
+          30,
+          40
+        ],
+        "pitch_kind": "down",
+        "camera_height": "upper_body",
+        "horizontal_position": "right"
+      }
     },
     {
       "id": "self_steep_down",
@@ -99,7 +144,22 @@
       "framings": [
         "leg_detail"
       ],
-      "prompt": "从自身视线以较陡的向下倾角俯拍。"
+      "prompt": "从自身视线以较陡的向下倾角俯拍。",
+      "angle": {
+        "yaw": 0,
+        "yaw_range": [
+          -10,
+          10
+        ],
+        "pitch": 55,
+        "pitch_range": [
+          50,
+          60
+        ],
+        "pitch_kind": "down",
+        "camera_height": "upper_body",
+        "horizontal_position": "front"
+      }
     },
     {
       "id": "self_mirror_front_down",
@@ -109,9 +169,28 @@
       "direction": "front",
       "elevation": "down",
       "weight": 3,
-      "support_types": ["kneeling_surface"],
-      "framings": ["leg_detail"],
-      "prompt": "手机位于本人上身附近，镜头朝向面前落地镜并明显向下倾斜；从镜中人物正前方看清大腿与双膝，镜面反射透视一致，膝部保持自然大小。"
+      "support_types": [
+        "kneeling_surface"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "手机位于本人上身附近，镜头朝向面前落地镜并明显向下倾斜；从镜中人物正前方看清大腿与双膝，镜面反射透视一致，膝部保持自然大小。",
+      "angle": {
+        "yaw": 0,
+        "yaw_range": [
+          -10,
+          10
+        ],
+        "pitch": 35,
+        "pitch_range": [
+          30,
+          40
+        ],
+        "pitch_kind": "down",
+        "camera_height": "above_shoulder",
+        "horizontal_position": "front"
+      }
     },
     {
       "id": "self_mirror_left_down",
@@ -121,9 +200,28 @@
       "direction": "left",
       "elevation": "down",
       "weight": 2,
-      "support_types": ["kneeling_surface"],
-      "framings": ["leg_detail"],
-      "prompt": "本人持机位置略偏左，镜头朝向面前落地镜并向下倾斜，通过镜面呈现轻微偏侧的大腿与屈膝轮廓；两膝接触面自然可见，不绕到人物背后。"
+      "support_types": [
+        "kneeling_surface"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人持机位置略偏左，镜头朝向面前落地镜并向下倾斜，通过镜面呈现轻微偏侧的大腿与屈膝轮廓；两膝接触面自然可见，不绕到人物背后。",
+      "angle": {
+        "yaw": -45,
+        "yaw_range": [
+          -60,
+          -30
+        ],
+        "pitch": 35,
+        "pitch_range": [
+          30,
+          40
+        ],
+        "pitch_kind": "down",
+        "camera_height": "above_shoulder",
+        "horizontal_position": "left"
+      }
     },
     {
       "id": "self_mirror_right_down",
@@ -133,9 +231,28 @@
       "direction": "right",
       "elevation": "down",
       "weight": 2,
-      "support_types": ["kneeling_surface"],
-      "framings": ["leg_detail"],
-      "prompt": "本人持机位置略偏右，镜头朝向面前落地镜并向下倾斜，通过镜面呈现轻微偏侧的大腿与屈膝轮廓；两膝接触面自然可见，不绕到人物背后。"
+      "support_types": [
+        "kneeling_surface"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人持机位置略偏右，镜头朝向面前落地镜并向下倾斜，通过镜面呈现轻微偏侧的大腿与屈膝轮廓；两膝接触面自然可见，不绕到人物背后。",
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": 35,
+        "pitch_range": [
+          30,
+          40
+        ],
+        "pitch_kind": "down",
+        "camera_height": "above_shoulder",
+        "horizontal_position": "right"
+      }
     },
     {
       "id": "self_mirror_front_gentle_down",
@@ -145,9 +262,30 @@
       "direction": "front",
       "elevation": "down",
       "weight": 2,
-      "support_types": ["wide_surface"],
-      "framings": ["leg_detail"],
-      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，镜头仅轻微向下倾斜，以镜中正面倒影呈现地坐姿势；镜中腿脚透视自然，近侧脚部不夸张放大，不改成从自身胸前直接向下看腿的陡俯拍，也不把机位放到地面仰拍。"
+      "support_types": [
+        "wide_surface",
+        "seat_edge",
+        "chair_seat"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，镜头仅轻微向下倾斜，以镜中正面倒影呈现地坐姿势；镜中腿脚透视自然，近侧脚部不夸张放大，不改成从自身胸前直接向下看腿的陡俯拍，也不把机位放到地面仰拍。",
+      "angle": {
+        "yaw": 0,
+        "yaw_range": [
+          -10,
+          10
+        ],
+        "pitch": 15,
+        "pitch_range": [
+          10,
+          20
+        ],
+        "pitch_kind": "down",
+        "camera_height": "above_shoulder",
+        "horizontal_position": "front"
+      }
     },
     {
       "id": "self_mirror_left_gentle_down",
@@ -157,9 +295,31 @@
       "direction": "left",
       "elevation": "down",
       "weight": 2,
-      "support_types": ["wide_surface"],
-      "framings": ["leg_detail"],
-      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，持机位置略偏自身左侧，镜头仅轻微向下倾斜；镜中以接近正面、略偏侧的倒影呈现屈腿层次，镜面反射透视一致，不改成直接自视陡俯拍或贴地仰拍。"
+      "selection_weight": 3,
+      "support_types": [
+        "wide_surface",
+        "seat_edge",
+        "chair_seat"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，持机位置略偏自身左侧，镜头仅轻微向下倾斜；镜中以接近正面、略偏侧的倒影呈现屈腿层次，镜面反射透视一致，不改成直接自视陡俯拍或贴地仰拍。",
+      "angle": {
+        "yaw": -45,
+        "yaw_range": [
+          -60,
+          -30
+        ],
+        "pitch": 15,
+        "pitch_range": [
+          10,
+          20
+        ],
+        "pitch_kind": "down",
+        "camera_height": "above_shoulder",
+        "horizontal_position": "left"
+      }
     },
     {
       "id": "self_mirror_right_gentle_down",
@@ -169,9 +329,31 @@
       "direction": "right",
       "elevation": "down",
       "weight": 2,
-      "support_types": ["wide_surface"],
-      "framings": ["leg_detail"],
-      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，持机位置略偏自身右侧，镜头仅轻微向下倾斜；镜中以接近正面、略偏侧的倒影呈现屈腿层次，镜面反射透视一致，不改成直接自视陡俯拍或贴地仰拍。"
+      "selection_weight": 3,
+      "support_types": [
+        "wide_surface",
+        "seat_edge",
+        "chair_seat"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，持机位置略偏自身右侧，镜头仅轻微向下倾斜；镜中以接近正面、略偏侧的倒影呈现屈腿层次，镜面反射透视一致，不改成直接自视陡俯拍或贴地仰拍。",
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": 15,
+        "pitch_range": [
+          10,
+          20
+        ],
+        "pitch_kind": "down",
+        "camera_height": "above_shoulder",
+        "horizontal_position": "right"
+      }
     },
     {
       "id": "third_kneeling_oblique_down",
@@ -180,9 +362,63 @@
       "direction": "oblique",
       "elevation": "down",
       "weight": 2,
-      "support_types": ["kneeling_surface", "half_kneeling_surface"],
-      "framings": ["leg_detail", "full_outfit"],
-      "prompt": "相机位于跪姿人物斜前上方，从高于腰胯的位置以明确向下倾角拍摄，呈现腰胯、大腿与实际落地膝部的支撑关系；采用普通焦段和适中距离，不贴近单侧大腿，也不从头顶垂直拍摄。"
+      "support_types": [
+        "kneeling_surface",
+        "half_kneeling_surface"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "相机位于跪姿人物斜前上方，从高于腰胯的位置以明确向下倾角拍摄，呈现腰胯、大腿与实际落地膝部的支撑关系；采用普通焦段和适中距离，不贴近单侧大腿，也不从头顶垂直拍摄。",
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": 35,
+        "pitch_range": [
+          30,
+          40
+        ],
+        "pitch_kind": "down",
+        "camera_height": "above_waist",
+        "horizontal_position": "front_right"
+      }
+    },
+    {
+      "id": "third_seated_oblique_down",
+      "title": "座沿右前方斜俯拍",
+      "camera": "third",
+      "direction": "oblique",
+      "elevation": "down",
+      "weight": 2,
+      "selection_weight": 3,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "raised_soft_surface"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": 35,
+        "pitch_range": [
+          30,
+          40
+        ],
+        "pitch_kind": "down",
+        "camera_height": "above_shoulder",
+        "horizontal_position": "front_right"
+      },
+      "prompt": "第三人称画外相机从人物右前上方取景，机位高于肩线，向下倾斜约35度；画面保留沙发座沿和臀部承托关系，普通手机焦段、近距离自然竖幅。"
     },
     {
       "id": "third_front_low",
@@ -204,7 +440,22 @@
         "leg_detail",
         "full_outfit"
       ],
-      "prompt": "相机位于人物正前方、略低于座沿高度轻微仰拍，保持普通焦段与自然距离；腿脚透视连贯，不夸张放大近端。"
+      "prompt": "相机位于人物正前方、略低于座沿高度轻微仰拍，保持普通焦段与自然距离；腿脚透视连贯，不夸张放大近端。",
+      "angle": {
+        "yaw": 0,
+        "yaw_range": [
+          -10,
+          10
+        ],
+        "pitch": -15,
+        "pitch_range": [
+          -20,
+          -10
+        ],
+        "pitch_kind": "up",
+        "camera_height": "below_waist",
+        "horizontal_position": "front"
+      }
     },
     {
       "id": "third_oblique_low",
@@ -227,7 +478,22 @@
         "leg_detail",
         "full_outfit"
       ],
-      "prompt": "相机位于人物前侧方，水平方向偏离人物正面约30至45度，镜头在近侧腿外侧、略低于腰胯，轻微向上仰拍；使用普通焦段和适中距离，呈现前侧面轮廓，视线不朝向双腿之间。"
+      "prompt": "相机位于人物前侧方，水平方向偏离人物正面约30至45度，镜头在近侧腿外侧、略低于腰胯，轻微向上仰拍；使用普通焦段和适中距离，呈现前侧面轮廓，视线不朝向双腿之间。",
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": -15,
+        "pitch_range": [
+          -20,
+          -10
+        ],
+        "pitch_kind": "up",
+        "camera_height": "below_waist",
+        "horizontal_position": "front_right"
+      }
     },
     {
       "id": "third_side_low",
@@ -249,7 +515,22 @@
         "leg_detail",
         "full_outfit"
       ],
-      "prompt": "相机位于人物无遮挡的侧方，镜头沿腿部外侧略低于腰胯，轻微向上仰拍；使用普通焦段和适中距离呈现腿部侧面轮廓，不绕到背后，也不贴近脚边向上拍摄。"
+      "prompt": "相机位于人物无遮挡的侧方，镜头沿腿部外侧略低于腰胯，轻微向上仰拍；使用普通焦段和适中距离呈现腿部侧面轮廓，不绕到背后，也不贴近脚边向上拍摄。",
+      "angle": {
+        "yaw": 90,
+        "yaw_range": [
+          80,
+          100
+        ],
+        "pitch": -15,
+        "pitch_range": [
+          -20,
+          -10
+        ],
+        "pitch_kind": "up",
+        "camera_height": "below_waist",
+        "horizontal_position": "side"
+      }
     },
     {
       "id": "third_standing_front_low",
@@ -265,7 +546,22 @@
         "leg_detail",
         "full_outfit"
       ],
-      "prompt": "相机位于站立人物正前方、略低于腰胯轻微仰拍，使用普通焦段和适中距离，不从脚边向上拍摄。"
+      "prompt": "相机位于站立人物正前方、略低于腰胯轻微仰拍，使用普通焦段和适中距离，不从脚边向上拍摄。",
+      "angle": {
+        "yaw": 0,
+        "yaw_range": [
+          -10,
+          10
+        ],
+        "pitch": -15,
+        "pitch_range": [
+          -20,
+          -10
+        ],
+        "pitch_kind": "up",
+        "camera_height": "below_waist",
+        "horizontal_position": "front"
+      }
     },
     {
       "id": "third_standing_oblique_low",
@@ -283,7 +579,22 @@
         "leg_detail",
         "full_outfit"
       ],
-      "prompt": "相机位于站立人物前侧方，水平方向偏离人物正面约30至45度，从腿部外侧略低于腰胯轻微仰拍，保留双腿自然层次与实际承托关系；使用普通焦段和适中距离，不贴近膝脚向上拍摄。"
+      "prompt": "相机位于站立人物前侧方，水平方向偏离人物正面约30至45度，从腿部外侧略低于腰胯轻微仰拍，保留双腿自然层次与实际承托关系；使用普通焦段和适中距离，不贴近膝脚向上拍摄。",
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": -15,
+        "pitch_range": [
+          -20,
+          -10
+        ],
+        "pitch_kind": "up",
+        "camera_height": "below_waist",
+        "horizontal_position": "front_right"
+      }
     },
     {
       "id": "third_oblique_level",
@@ -302,7 +613,22 @@
         "leg_detail",
         "full_outfit"
       ],
-      "prompt": "相机位于人物斜前方，与腿部及支撑面大致同高平视，使用普通焦段和适中距离；自然呈现双腿轮廓与承托关系，不从头顶俯拍，也不从地面极低位置仰拍。"
+      "prompt": "相机位于人物斜前方，与腿部及支撑面大致同高平视，使用普通焦段和适中距离；自然呈现双腿轮廓与承托关系，不从头顶俯拍，也不从地面极低位置仰拍。",
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": 0,
+        "pitch_range": [
+          -5,
+          5
+        ],
+        "pitch_kind": "level",
+        "camera_height": "eye_level",
+        "horizontal_position": "front_right"
+      }
     },
     {
       "id": "third_standing_side_low",
@@ -311,9 +637,31 @@
       "direction": "side",
       "elevation": "up",
       "weight": 2,
-      "support_types": ["standing_edge", "standing_chair", "standing_stool"],
-      "framings": ["leg_detail", "full_outfit"],
-      "prompt": "相机位于站立人物的无遮挡侧方，从略低于腰胯的位置轻微仰拍；保持普通焦段和适中距离，保留腿部侧面轮廓及脚下空间，不从脚边贴近拍摄。"
+      "support_types": [
+        "standing_edge",
+        "standing_chair",
+        "standing_stool"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "相机位于站立人物的无遮挡侧方，从略低于腰胯的位置轻微仰拍；保持普通焦段和适中距离，保留腿部侧面轮廓及脚下空间，不从脚边贴近拍摄。",
+      "angle": {
+        "yaw": 90,
+        "yaw_range": [
+          80,
+          100
+        ],
+        "pitch": -15,
+        "pitch_range": [
+          -20,
+          -10
+        ],
+        "pitch_kind": "up",
+        "camera_height": "below_waist",
+        "horizontal_position": "side"
+      }
     },
     {
       "id": "third_lying_side_level",
@@ -322,9 +670,30 @@
       "direction": "side",
       "elevation": "level",
       "weight": 2,
-      "support_types": ["lying_surface", "reclined_surface"],
-      "framings": ["leg_detail", "full_outfit"],
-      "prompt": "相机位于卧姿人物的无遮挡侧前方，与腿部和软面大致同高平视；使用普通焦段和适中距离，头肩、髋部、膝踝沿自然姿态连贯过渡，双腿保持各自轮廓和轻微错位。不贴近脸、髋或脚端，不用极端纵深把腿拉成长直线，保留动作中实际抬起的膝部或脚端，不绕到人物背后。"
+      "support_types": [
+        "lying_surface",
+        "reclined_surface"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "相机位于卧姿人物的无遮挡侧前方，与腿部和软面大致同高平视；使用普通焦段和适中距离，头肩、髋部、膝踝沿自然姿态连贯过渡，双腿保持各自轮廓和轻微错位。不贴近脸、髋或脚端，不用极端纵深把腿拉成长直线，保留动作中实际抬起的膝部或脚端，不绕到人物背后。",
+      "angle": {
+        "yaw": 90,
+        "yaw_range": [
+          80,
+          100
+        ],
+        "pitch": 0,
+        "pitch_range": [
+          -5,
+          5
+        ],
+        "pitch_kind": "level",
+        "camera_height": "eye_level",
+        "horizontal_position": "side"
+      }
     },
     {
       "id": "third_reclined_stool_oblique_level",
@@ -333,9 +702,29 @@
       "direction": "oblique",
       "elevation": "level",
       "weight": 2,
-      "support_types": ["reclined_footstool"],
-      "framings": ["leg_detail", "full_outfit"],
-      "prompt": "相机从半靠人物斜前方平视，镜头与腿部大致同高，使用普通焦段和适中距离；同时呈现沙发与脚凳的位置关系，避免近侧膝脚挡满画面。"
+      "support_types": [
+        "reclined_footstool"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "相机从半靠人物斜前方平视，镜头与腿部大致同高，使用普通焦段和适中距离；同时呈现沙发与脚凳的位置关系，避免近侧膝脚挡满画面。",
+      "angle": {
+        "yaw": 45,
+        "yaw_range": [
+          30,
+          60
+        ],
+        "pitch": 0,
+        "pitch_range": [
+          -5,
+          5
+        ],
+        "pitch_kind": "level",
+        "camera_height": "eye_level",
+        "horizontal_position": "front_right"
+      }
     },
     {
       "id": "third_reclined_stool_side_level",
@@ -344,9 +733,29 @@
       "direction": "side",
       "elevation": "level",
       "weight": 2,
-      "support_types": ["reclined_footstool"],
-      "framings": ["leg_detail", "full_outfit"],
-      "prompt": "相机从半靠人物侧方平视，保持与腿线大致同高和普通焦段；沙发座面、伸展双腿及软脚凳依次可辨，取景不贴近脚端，不从地面向上拍摄。"
+      "support_types": [
+        "reclined_footstool"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "相机从半靠人物侧方平视，保持与腿线大致同高和普通焦段；沙发座面、伸展双腿及软脚凳依次可辨，取景不贴近脚端，不从地面向上拍摄。",
+      "angle": {
+        "yaw": 90,
+        "yaw_range": [
+          80,
+          100
+        ],
+        "pitch": 0,
+        "pitch_range": [
+          -5,
+          5
+        ],
+        "pitch_kind": "level",
+        "camera_height": "eye_level",
+        "horizontal_position": "side"
+      }
     }
   ]
 }

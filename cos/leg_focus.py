@@ -10,6 +10,11 @@ from typing import Any, Dict, List, Tuple
 
 from ..core.prompt_data import PromptDataError, read_nonempty_list, read_versioned_json
 
+LEGWEAR_CATEGORIES = frozenset({
+    "bare_legs", "sheer", "opaque", "fishnet", "knee_high", "ankle_sock", "thigh_high",
+})
+LEGWEAR_RISKS = frozenset({"normal", "high"})
+
 
 DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "legs" / "compositions.json"
 OUTFIT_DATA_PATH = DATA_PATH.with_name("outfits.json")
@@ -90,6 +95,32 @@ def _load_pool() -> Dict[str, Any]:
             or not set(framings) <= ({"leg_detail"} if camera == "selfie" else {"leg_detail", "full_outfit"})
         ):
             raise LegFocusDataError(f"看看腿机位字段或兼容条件无效: {view_id}")
+        angle = raw.get("angle")
+        if (
+            not isinstance(angle, Mapping)
+            or type(angle.get("yaw")) not in (int, float)
+            or not -180 <= angle["yaw"] <= 180
+            or type(angle.get("pitch")) not in (int, float)
+            or not -90 <= angle["pitch"] <= 90
+            or angle.get("pitch_kind") not in {"down", "up", "level"}
+            or angle.get("camera_height") not in {
+                "above_shoulder", "above_waist", "upper_body", "eye_level", "below_waist",
+            }
+            or angle.get("horizontal_position") not in {
+                "front", "front_left", "front_right", "front_oblique", "left", "right", "side",
+            }
+            or any(
+                not isinstance(angle.get(key), list)
+                or len(angle[key]) != 2
+                or any(type(value) not in (int, float) for value in angle[key])
+                or angle[key][0] > angle[key][1]
+                for key in ("yaw_range", "pitch_range")
+            )
+        ):
+            raise LegFocusDataError(f"看看腿机位角度 angle 字段无效: {view_id}")
+        selection_weight = raw.get("selection_weight", 1)
+        if type(selection_weight) is not int or selection_weight < 1:
+            raise LegFocusDataError(f"看看腿机位稀缺补偿权重无效: {view_id}/selection_weight")
         views_by_id[view_id] = raw
 
     pose_ids: set[str] = set()
@@ -104,6 +135,7 @@ def _load_pool() -> Dict[str, Any]:
         supports = raw.get("support_types")
         aliases = raw.get("legacy_ids")
         posture = raw.get("posture")
+        pose_scenes = raw.get("scene_ids", [])
         disallowed_hosiery_kinds = raw.get("disallowed_hosiery_kinds", [])
         if (
             not str(raw.get("title") or "").strip()
@@ -123,6 +155,7 @@ def _load_pool() -> Dict[str, Any]:
                 for refs in camera_views.values()
             )
             or not isinstance(supports, list) or not supports or not set(supports) <= support_types
+            or not isinstance(pose_scenes, list) or not set(pose_scenes) <= scene_ids
             or not isinstance(aliases, list) or any(not isinstance(value, str) or not value for value in aliases)
             or not isinstance(disallowed_hosiery_kinds, list)
             or not set(disallowed_hosiery_kinds) <= {"tights", "thigh_high", "stirrup", "ankle"}
@@ -189,6 +222,11 @@ def _load_pool() -> Dict[str, Any]:
             raise LegFocusDataError(f"看看腿提示词池缺少字段: {key}")
     if len(str(payload["anatomy_rule"])) > 60:
         raise LegFocusDataError("看看腿结构约束 anatomy_rule 不得超过 60 字")
+    crop_modes = payload.get("crop_modes")
+    if not isinstance(crop_modes, Mapping) or set(crop_modes) != {
+        "leg_full", "shoulder_crop", "half_face", "full_face",
+    } or any(not isinstance(value, str) or not value.strip() for value in crop_modes.values()):
+        raise LegFocusDataError("看看腿 crop_modes 字段不完整或无效")
     for key, required in (
         ("camera_framings", {"selfie", "third", "mirror"}),
         ("reference_rules", {"zh", "en"}),
@@ -312,7 +350,7 @@ def _load_pool() -> Dict[str, Any]:
 def _load_outfit_pool() -> Dict[str, Any]:
     try:
         payload = read_versioned_json(OUTFIT_DATA_PATH, "看看腿服饰池")
-        for key in ("outfits", "random_leg_details", "hosiery_styles"):
+        for key in ("outfits", "random_leg_details", "hosiery_styles", "leg_accessories"):
             records = read_nonempty_list(payload, key, "看看腿服饰池")
             seen: set[str] = set()
             for raw in records:
@@ -327,6 +365,22 @@ def _load_outfit_pool() -> Dict[str, Any]:
                     or type(raw.get("explicit_only", False)) is not bool
                 ):
                     raise LegFocusDataError(f"看看腿服饰池字段不完整或重复: {key}/{item_id}")
+                if raw.get("risk", "normal") not in LEGWEAR_RISKS:
+                    raise LegFocusDataError(f"看看腿服饰池风险级别无效: {key}/{item_id}")
+                category = raw.get("category")
+                if key == "outfits":
+                    if (
+                        not isinstance(category, list) or not category
+                        or not set(category) <= LEGWEAR_CATEGORIES
+                    ):
+                        raise LegFocusDataError(f"看看腿服饰类别无效: {key}/{item_id}")
+                elif key != "leg_accessories" and category not in LEGWEAR_CATEGORIES:
+                    raise LegFocusDataError(f"看看腿服饰类别无效: {key}/{item_id}")
+                if key == "random_leg_details" and (
+                    type(raw.get("category_weight", 1)) is not int
+                    or raw.get("category_weight", 1) < 1
+                ):
+                    raise LegFocusDataError(f"看看腿服饰类别权重无效: {key}/{item_id}")
                 seen.add(item_id)
     except PromptDataError as exc:
         raise LegFocusDataError(str(exc)) from exc
@@ -350,9 +404,8 @@ def _load_outfit_pool() -> Dict[str, Any]:
         if (
             style.get("wear") not in {"黑丝", "白丝"}
             or not str(style.get("family") or "").strip()
-            or style.get("kind") not in {"tights", "thigh_high", "stirrup", "ankle"}
+            or style.get("kind") not in {"tights", "thigh_high", "stirrup", "ankle", "knee_high", "fishnet"}
             or type(style.get("explicit_only", False)) is not bool
-            or (style.get("kind") != "tights" and not style.get("explicit_only", False))
             or not isinstance(style.get("aliases"), list)
             or not style["aliases"]
             or any(not isinstance(alias, str) or not alias.strip() for alias in style["aliases"])
@@ -395,6 +448,17 @@ def _load_outfit_pool() -> Dict[str, Any]:
                 for style in payload["hosiery_styles"]
             ):
                 raise LegFocusDataError(f"看看腿服饰缺少兼容连裤袜: {outfit['id']}/{wear}")
+    for accessory in payload["leg_accessories"]:
+        for key in (
+            "compatible_wear", "compatible_hosiery_families", "compatible_hosiery_kinds",
+            "incompatible_outfit_ids", "blocked_by_terms", "postures", "aliases",
+        ):
+            if not isinstance(accessory.get(key), list) or any(not isinstance(value, str) for value in accessory[key]):
+                raise LegFocusDataError(f"看看腿饰品兼容字段无效: {accessory['id']}/{key}")
+        if not accessory["compatible_wear"] or not accessory["postures"]:
+            raise LegFocusDataError(f"看看腿饰品兼容范围不能为空: {accessory['id']}")
+        if any(wear not in {"黑丝", "白丝", "连裤袜", "光腿", "赤足"} for wear in accessory["compatible_wear"]):
+            raise LegFocusDataError(f"看看腿饰品兼容服饰无效: {accessory['id']}")
     return payload
 
 
@@ -414,6 +478,10 @@ LEGFOCUS_ANATOMY_RULE = str(_POOL["anatomy_rule"])
 LEGFOCUS_HOSIERY_RULE = str(_POOL["hosiery_rule"])
 LEGFOCUS_CAMERA_FRAMINGS = dict(_POOL["camera_framings"])
 LEGFOCUS_FULL_FRAMING = str(_POOL["full_framing"])
+LEGFOCUS_CROP_MODES = {
+    str(mode_id): str(prompt)
+    for mode_id, prompt in _POOL["crop_modes"].items()
+}
 LEGFOCUS_REFERENCE_RULES = dict(_POOL["reference_rules"])
 LEGFOCUS_SCENE_RULE = str(_POOL["scene_rule"])
 LEGFOCUS_APPEARANCE_PROMPTS = _POOL["appearance_prompts"]
@@ -429,6 +497,8 @@ LEGFOCUS_POOL_REFERENCE_PROMPTS = dict(_OUTFITS["pool_reference_prompts"])
 LEGFOCUS_WEAR_PROMPTS = dict(_OUTFITS["wear_prompts"])
 LEGFOCUS_WEAR_LABELS = dict(_OUTFITS["wear_labels"])
 LEGFOCUS_HOSIERY_STYLES: List[Dict[str, Any]] = [dict(item) for item in _OUTFITS["hosiery_styles"]]
+LEGFOCUS_ACCESSORIES: List[Dict[str, Any]] = [dict(item) for item in _OUTFITS["leg_accessories"]]
+LEGFOCUS_ACCESSORY_BY_ID = {str(item["id"]): item for item in LEGFOCUS_ACCESSORIES}
 LEGFOCUS_OUTFIT_CAPTURE_PROFILES = dict(_OUTFITS["capture_profiles"])
 
 
@@ -567,7 +637,10 @@ LEG_NEGATION_PREFIX = r"(?:不要|别|避免|禁止|不得|不需要|不想要|�
 LEG_DETAIL_REQUEST_PATTERN = re.compile(
     r"(?:下半身特写|腿部特写|下装特写|局部特写|腰部以下|只拍腿|只拍下装|不拍上半身|上半身不入镜|不露脸|不露头|近距离拍腿)"
 )
-LEG_FACE_REQUEST_PATTERN = re.compile(r"(?:露脸|露头|带脸|看脸|面部入镜|表情|看向镜头|微笑|wink|眨眼)", re.I)
+LEG_FACE_REQUEST_PATTERN = re.compile(
+    r"(?:完整面部|完整露脸|正脸入镜|半脸|侧脸|露脸|露头|带脸|看脸|面部入镜|表情|看向镜头|微笑|wink|眨眼)",
+    re.I,
+)
 LEG_FULL_OUTFIT_REQUEST_PATTERN = re.compile(
     r"(?:全身(?!镜)|从头到脚|头部到鞋履|full[- ]?body)", re.I
 )
@@ -711,15 +784,77 @@ def _resolve_pose_id(pose_id: str) -> str:
     return LEGFOCUS_POSE_ALIASES.get(value, "")
 
 
+def _ranges_overlap(first: Any, second: Any) -> bool:
+    return first[0] <= second[1] and second[0] <= first[1]
+
+
+def _view_matches_angle(view: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
+    angle = view.get("angle") or {}
+    for key in ("yaw_range", "pitch_range"):
+        requested = filters.get(key)
+        if requested and not _ranges_overlap(angle.get(key, (angle.get(key[:-6]),) * 2), requested):
+            return False
+    requested_height = filters.get("camera_height")
+    return not requested_height or angle.get("camera_height") == requested_height
+
+
+def _view_angle_prompt(view: Mapping[str, Any]) -> str:
+    angle = view["angle"]
+    positions = {
+        "front": "人物正前方",
+        "front_left": "人物左前方",
+        "front_right": "人物右前方",
+        "front_oblique": "人物斜前方",
+        "left": "人物左侧",
+        "right": "人物右侧",
+        "side": "人物侧方",
+    }
+    heights = {
+        "above_shoulder": "机位高于肩线",
+        "above_waist": "机位高于腰胯",
+        "upper_body": "机位位于人物上身附近",
+        "eye_level": "机位位于人物视线高度",
+        "below_waist": "机位低于腰胯",
+    }
+    pitch = angle["pitch"]
+    if pitch > 0:
+        tilt = f"向下倾斜约{pitch}度"
+    elif pitch < 0:
+        tilt = f"向上倾斜约{abs(pitch)}度"
+    else:
+        tilt = "镜头保持水平"
+    yaw = angle["yaw"]
+    horizontal = f"水平偏转约{abs(yaw)}度" if yaw else "水平正向取景"
+    camera = "第三人称画外相机" if view["camera"] == "third" else "第一人称手机机位"
+    return (
+        f"{camera}位于{positions[angle['horizontal_position']]}，{horizontal}；"
+        f"{heights[angle['camera_height']]}，{tilt}，采用自然斜向构图。"
+    )
+
+
 def compatible_leg_compositions(
     pose: Dict[str, Any], *, camera: str = "", scene_ids: str = "",
     view_id: str = "", framing: str = "leg_detail", angles: Dict[str, Any] | None = None,
+    allow_explicit: bool = False,
 ) -> List[Tuple[Dict[str, Any], str, Dict[str, Any]]]:
+    if allow_explicit:
+        compatible = compatible_leg_compositions(
+            pose,
+            camera=camera,
+            scene_ids=scene_ids,
+            view_id=view_id,
+            framing=framing,
+            angles=angles,
+        )
+        if compatible:
+            return compatible
     requested_scenes = set(scene_ids.split())
     filters = angles or {}
     combinations = []
     for scene in LEGFOCUS_SCENE_POOL:
         if requested_scenes and scene["id"] not in requested_scenes:
+            continue
+        if pose.get("scene_ids") and scene["id"] not in pose["scene_ids"]:
             continue
         if scene["id"] in filters.get("excluded_scenes", ()):
             continue
@@ -728,34 +863,47 @@ def compatible_leg_compositions(
         for support in pose["support_types"]:
             if support not in scene["supports"]:
                 continue
-            for camera_kind, camera_view_ids in pose["camera_views"].items():
-                if camera and camera_kind != camera:
+            if allow_explicit:
+                candidate_views = [
+                    view for view in LEGFOCUS_VIEW_POOL
+                    if (not view_id or view["id"] == view_id)
+                    and (not camera or view["camera"] == camera)
+                ]
+            else:
+                candidate_views = [
+                    LEGFOCUS_VIEW_BY_ID[candidate_id]
+                    for camera_kind, camera_view_ids in pose["camera_views"].items()
+                    if not camera or camera_kind == camera
+                    for candidate_id in camera_view_ids
+                ]
+            for view in candidate_views:
+                candidate_id = view["id"]
+                if (
+                    candidate_id in selected_views
+                    or (view_id and candidate_id != view_id)
+                    or (camera and view["camera"] != camera)
+                    or view["camera"] not in scene.get("cameras", ("selfie", "third"))
+                    or view.get("capture_mode", "direct") not in scene.get("capture_modes", ("direct",))
+                    or framing not in view["framings"]
+                    or (not allow_explicit and support not in view["support_types"])
+                    or (filters.get("direction") and view["direction"] != filters["direction"])
+                    or (filters.get("elevations") and view["elevation"] not in filters["elevations"])
+                    or not _view_matches_angle(view, filters)
+                    or view["direction"] in filters.get("excluded_directions", ())
+                    or view["elevation"] in filters.get("excluded_elevations", ())
+                    or view["camera"] in filters.get("excluded_cameras", ())
+                ):
                     continue
-                for candidate_id in camera_view_ids:
-                    view = LEGFOCUS_VIEW_BY_ID[candidate_id]
-                    if (
-                        candidate_id in selected_views
-                        or (view_id and candidate_id != view_id)
-                        or (camera and view["camera"] != camera)
-                        or view["camera"] not in scene.get("cameras", ("selfie", "third"))
-                        or view.get("capture_mode", "direct") not in scene.get("capture_modes", ("direct",))
-                        or framing not in view["framings"]
-                        or support not in view["support_types"]
-                        or (filters.get("direction") and view["direction"] != filters["direction"])
-                        or (filters.get("elevations") and view["elevation"] not in filters["elevations"])
-                        or view["direction"] in filters.get("excluded_directions", ())
-                        or view["elevation"] in filters.get("excluded_elevations", ())
-                        or view["camera"] in filters.get("excluded_cameras", ())
-                    ):
-                        continue
-                    combinations.append((scene, support, view))
-                    selected_views.add(candidate_id)
+                combinations.append((scene, support, view))
+                selected_views.add(candidate_id)
     return combinations
 
 
 def _weighted_pose_choice(pool: List[Dict[str, Any]]) -> Dict[str, Any]:
     weights = [
-        int(item["weight"]) * (0.1 if item.get("risk") == "high" else 1)
+        max(0.01, float(item.get("_selection_weight", item["weight"])))
+        if "_selection_weight" in item
+        else int(item["weight"]) * (0.1 if item.get("risk") == "high" else 1)
         for item in pool
     ]
     return dict(random.choices(pool, weights=weights, k=1)[0])
@@ -865,27 +1013,33 @@ def _leg_outfit_allows_composition(
 
 def _compatible_leg_outfits(
     *, hosiery_family: str = "",
+    category: str = "",
     compositions: List[Tuple[Dict[str, Any], str, Dict[str, Any]]] | None = None,
 ) -> List[Dict[str, Any]]:
     return [
         item for item in LEGFOCUS_OUTFIT_POOL
         if (not hosiery_family or hosiery_family in item["hosiery_families"])
+        and (not category or category in item.get("category", LEGWEAR_CATEGORIES))
         and (compositions is None or any(_leg_outfit_allows_composition(item, composition) for composition in compositions))
     ]
 
 
 def pick_leg_focus_outfit(
     *, avoid_id: str = "", hosiery_family: str = "",
+    category: str = "",
     compositions: List[Tuple[Dict[str, Any], str, Dict[str, Any]]] | None = None,
 ) -> Dict[str, Any]:
-    compatible = _compatible_leg_outfits(hosiery_family=hosiery_family, compositions=compositions)
+    compatible = _compatible_leg_outfits(
+        hosiery_family=hosiery_family, category=category, compositions=compositions,
+    )
     pool = [
         item for item in compatible
         if item["id"] != avoid_id
     ] or compatible
     if not pool:
         raise LegFocusDataError("看看腿服饰池没有兼容当前姿势、视角与袜装的搭配")
-    return dict(random.choices(pool, weights=[item["weight"] for item in pool], k=1)[0])
+    weights = [int(item["weight"]) * (0.1 if item.get("risk") == "high" else 1.0) for item in pool]
+    return dict(random.choices(pool, weights=weights, k=1)[0])
 
 
 def get_leg_focus_outfit(outfit_id: str) -> Dict[str, Any]:
@@ -906,6 +1060,7 @@ def _hosiery_allowed(style: Dict[str, Any], text: str) -> bool:
     kind_terms = {
         "tights": ("连裤袜",), "thigh_high": ("过膝袜", "长筒袜", "长袜"),
         "stirrup": ("踩脚袜",), "ankle": ("短袜", "踝袜"),
+        "knee_high": ("膝下袜", "中筒袜"), "fishnet": ("网袜", "网眼袜"),
     }
     return not any(
         _has_negative_term(text, term)
@@ -914,19 +1069,91 @@ def _hosiery_allowed(style: Dict[str, Any], text: str) -> bool:
 
 
 def _pick_hosiery_style(
-    wear: str, outfit: Dict[str, Any], text: str = "", *, excluded_kinds: set[str] | None = None,
+    wear: str, outfit: Dict[str, Any], text: str = "", *,
+    category: str = "", pose: Dict[str, Any] | None = None,
+    excluded_kinds: set[str] | None = None,
 ) -> Dict[str, Any]:
     excluded_kinds = excluded_kinds or set()
     pool = [
         style for style in LEGFOCUS_HOSIERY_STYLES
         if style["family"] in outfit["hosiery_families"]
         and (style["wear"] == wear or (wear == "连裤袜" and style["kind"] == "tights"))
-        and style["kind"] == "tights"
+        and (not category or style.get("category") == category)
         and style["kind"] not in excluded_kinds
         and not style.get("explicit_only")
         and _hosiery_allowed(style, text)
     ]
-    return dict(random.choices(pool, weights=[item["weight"] for item in pool], k=1)[0]) if pool else {}
+    if not pool:
+        return {}
+    posture = str((pose or {}).get("posture") or "")
+    pose_id = str((pose or {}).get("id") or "")
+    relaxed_sofa_side_sit = pose_id == "mirror_side_sit_shins_overlap"
+    weights = []
+    for style in pool:
+        weight = float(style["weight"])
+        if style.get("risk") == "high":
+            weight *= 0.1
+        if (
+            style.get("category") in {"thigh_high", "knee_high"}
+            and posture in {"seated", "reclined", "lying", "side_lying", "prone"}
+            and not relaxed_sofa_side_sit
+        ):
+            weight *= 0.35
+        weights.append(max(0.01, weight))
+    return dict(random.choices(pool, weights=weights, k=1)[0])
+
+
+def _pick_leg_accessory(
+    wear: str,
+    outfit: Dict[str, Any],
+    style: Dict[str, Any],
+    pose: Dict[str, Any],
+    text: str = "",
+) -> Dict[str, Any]:
+    outfit_id = str(outfit.get("id") or "")
+    posture = str(pose.get("posture") or "")
+    outfit_prompt = " ".join((str(outfit.get("prompt") or ""), str(style.get("prompt") or "")))
+    explicit = [
+        item for item in LEGFOCUS_ACCESSORIES
+        if _has_positive_term(text, str(item["id"]))
+        or any(_has_positive_term(text, str(alias)) for alias in item.get("aliases", []))
+    ]
+    pool = []
+    for item in LEGFOCUS_ACCESSORIES:
+        if item.get("risk") == "high" and item not in explicit:
+            continue
+        if item["compatible_wear"] and wear not in item["compatible_wear"]:
+            continue
+        if outfit_id in item.get("incompatible_outfit_ids", []):
+            continue
+        if item.get("postures") and posture not in item["postures"]:
+            continue
+        if style:
+            if item.get("compatible_hosiery_families") and style.get("family") not in item["compatible_hosiery_families"]:
+                continue
+            if item.get("compatible_hosiery_kinds") and style.get("kind") not in item["compatible_hosiery_kinds"]:
+                continue
+        blocked_terms = item.get("blocked_by_terms", [])
+        blocked = any(
+            re.search(
+                rf"(?:不加|不添加|不增加|不出现|不要|禁止|不需要|不带)[^。；，,]{{0,8}}{re.escape(term)}",
+                outfit_prompt,
+            )
+            for term in blocked_terms
+        )
+        if blocked:
+            continue
+        pool.append(item)
+    if explicit:
+        pool = [item for item in pool if item in explicit]
+        if not pool:
+            return {}
+    elif random.random() < 0.3:
+        return {}
+    if not pool:
+        return {}
+    weights = [int(item["weight"]) * (0.1 if item.get("risk") == "high" and item not in explicit else 1) for item in pool]
+    return dict(random.choices(pool, weights=weights, k=1)[0])
 
 
 def has_explicit_leg_outfit(text: str) -> bool:
@@ -962,7 +1189,7 @@ def parse_excluded_leg_cameras(text: str) -> set[str]:
 
 LEG_POSTURE_TERMS = {
     "standing": ("站姿", "站立", "站着"),
-    "seated": ("坐姿", "坐着"),
+    "seated": ("坐姿", "坐着", "侧坐"),
     "kneeling": ("跪姿", "跪坐", "跪着", "跪立"),
     "lying": ("仰卧", "仰躺", "平躺", "平卧"),
     "side_lying": ("侧躺", "侧卧"),
@@ -1041,6 +1268,11 @@ def parse_requested_leg_view(text: str) -> str:
     tag = re.search(r"【leg_view:([a-z_]+)】", raw)
     if tag and tag.group(1) in LEGFOCUS_VIEW_BY_ID:
         return tag.group(1)
+    if re.search(r"(?:镜前|落地镜|对镜).{0,12}(?:轻俯拍|微俯拍|向下倾)", raw):
+        if re.search(r"右|偏右", raw):
+            return "self_mirror_right_gentle_down"
+        if re.search(r"左|偏左", raw):
+            return "self_mirror_left_gentle_down"
     matches = [
         (len(term), view["id"]) for view in LEGFOCUS_VIEW_POOL
         for term in (view["id"], view["title"]) if _has_positive_term(raw, term)
@@ -1048,17 +1280,59 @@ def parse_requested_leg_view(text: str) -> str:
     return max(matches, key=lambda item: item[0])[1] if matches else ""
 
 
+def parse_requested_leg_crop_mode(text: str) -> str:
+    raw = str(text or "")
+    tag = re.search(r"【crop_mode:(leg_full|shoulder_crop|half_face|full_face)】", raw, re.I)
+    if tag:
+        return tag.group(1).lower()
+    if any(_has_positive_term(raw, term) for term in ("到肩不露脸", "肩下裁切", "只拍肩以下", "肩线以下裁切")):
+        return "shoulder_crop"
+    if any(_has_positive_term(raw, term) for term in ("完整面部", "正脸入镜", "完整露脸", "全脸入镜")):
+        return "full_face"
+    if any(_has_positive_term(raw, term) for term in ("半脸", "侧脸")):
+        return "half_face"
+    if parse_requested_leg_face(raw):
+        return "half_face"
+    return ""
+
+
 def parse_requested_leg_angles(text: str) -> Dict[str, Any]:
     raw = str(text or "").lower()
+    compact = re.sub(r"\s+", "", raw)
     if any(_has_positive_term(raw, term) for term in ("背拍", "背身", "背面", "侧后方", "后方拍")):
         raise LegFocusDataError("看看腿不支持背面或侧后方机位，请使用正前方、斜前方或侧面机位")
-    filters: Dict[str, Any] = {"excluded_directions": set(), "excluded_elevations": set()}
-    direction_kinds, excluded_directions = _constraint_kinds(raw, dict((
+    filters: Dict[str, Any] = {
+        "excluded_directions": set(), "excluded_elevations": set(),
+    }
+    left_front = any(_has_positive_term(raw, term) for term in ("左前斜", "左前方", "左前")) or (
+        "斜前" in compact and _has_positive_term(raw, "偏左")
+    )
+    right_front = any(_has_positive_term(raw, term) for term in ("右前斜", "右前方", "右前")) or (
+        "斜前" in compact and _has_positive_term(raw, "偏右")
+    )
+    if left_front and right_front:
+        raise LegFocusDataError("看看腿同时指定了左右两个镜头角度，请选择左前或右前中的一个")
+    direction_terms = dict((
         ("oblique", ("斜前方", "侧前方", "斜侧拍")),
         ("side", ("侧拍", "侧面", "侧方")),
         ("front", ("正前方", "正面拍", "正拍")),
-        ("left", ("偏左",)), ("right", ("偏右",)),
-    )))
+    ))
+    if left_front or right_front:
+        direction_kinds, excluded_directions = _constraint_kinds(raw, direction_terms)
+        direction_kinds.add("oblique")
+        yaw_match = re.search(
+            r"(?:(?:左前|右前)(?:方|斜)?(?:约|大约)?(\d{1,3})(?:度|°)|(\d{1,3})(?:度|°)(?:左前|右前)(?:方|斜)?)",
+            compact,
+        )
+        target_yaw = int(next(value for value in yaw_match.groups() if value)) if yaw_match else 45
+        yaw = -target_yaw if left_front else target_yaw
+        filters["yaw_range"] = (max(-180, yaw - (5 if yaw_match else 15)), min(180, yaw + (5 if yaw_match else 15)))
+    else:
+        direction_kinds, excluded_directions = _constraint_kinds(raw, {
+            **direction_terms,
+            "left": ("偏左", "左侧", "左"),
+            "right": ("偏右", "右侧", "右"),
+        })
     filters["excluded_directions"] = excluded_directions
     if len(direction_kinds) > 1:
         raise LegFocusDataError("看看腿同时指定了不兼容的镜头方向，请选择正前方、斜前方或侧面中的一个")
@@ -1072,6 +1346,32 @@ def parse_requested_leg_angles(text: str) -> Dict[str, Any]:
         filters["elevations"] = {"level"}
     elif level_requested and (explicit_up or explicit_down):
         raise LegFocusDataError("看看腿同时指定了不兼容的俯仰角度，请选择仰拍、俯拍或平拍中的一个")
+    pitch_terms = r"(?:俯拍|俯视|下俯|向下拍|向下看|仰拍|仰视|向上拍)"
+    exact_pitch_match = re.search(
+        pitch_terms + r"(?:约|大约|接近)?(\d{1,2})(?:度|°)?", compact,
+    )
+    if exact_pitch_match:
+        pitch_value = exact_pitch_match.group(1)
+    else:
+        exact_pitch_match = re.search(
+            r"(\d{1,2})(?:度|°)" + pitch_terms, compact,
+        )
+        pitch_value = exact_pitch_match.group(1) if exact_pitch_match else ""
+    if exact_pitch_match:
+        pitch = int(pitch_value)
+        if explicit_up and not explicit_down:
+            pitch = -pitch
+        elif explicit_down and not explicit_up:
+            pitch = abs(pitch)
+        filters["pitch_range"] = (max(-90, pitch - 5), min(90, pitch + 5))
+    elif any(_has_positive_term(raw, term) for term in ("较陡俯拍", "陡俯拍", "大角度俯拍")):
+        filters["pitch_range"] = (45, 90)
+    elif any(_has_positive_term(raw, term) for term in ("斜俯", "斜向下", "斜向俯拍")):
+        filters["pitch_range"] = (30, 40)
+    elif any(_has_positive_term(raw, term) for term in ("轻俯", "微俯", "轻微俯拍")):
+        filters["pitch_range"] = (10, 20)
+    if any(_has_positive_term(raw, term) for term in ("高于肩线", "高过肩线", "肩线以上", "高于肩部", "头顶前上方")):
+        filters["camera_height"] = "above_shoulder"
     for values, terms in (
         ({"top"}, ("正上方", "顶拍", "topdown", "top-down")),
         ({"down"}, ("俯拍", "俯视", "向下拍", "向下看")),
@@ -1145,21 +1445,40 @@ def parse_requested_legwear(text: str) -> str:
     return ""
 
 
-def _weighted_detail_choice(excluded_wears: set[str] | None = None) -> Dict[str, Any]:
+def _weighted_detail_choice(
+    excluded_wears: set[str] | None = None,
+    *, category: str = "", allowed_categories: set[str] | None = None,
+) -> Dict[str, Any]:
     excluded = set(excluded_wears or ())
     pool = [
         item for item in LEGFOCUS_RANDOM_LEG_DETAILS
         if str(item.get("wear") or "") not in excluded
         and not item.get("explicit_only", False)
+        and (not category or item.get("category") == category)
+        and (allowed_categories is None or item.get("category") in allowed_categories)
     ]
     if not pool:
-        raise LegFocusDataError("看看腿没有满足排除条件的腿部细节，请放宽袜装要求")
-    return dict(random.choices(pool, weights=[int(item["weight"]) for item in pool], k=1)[0])
+        raise LegFocusDataError("看看腿没有满足分类与排除条件的腿部细节，请放宽袜装要求")
+    if category:
+        return dict(random.choices(pool, weights=[int(item["weight"]) for item in pool], k=1)[0])
+    category_weights = {
+        str(item["category"]): int(item.get("category_weight", 1))
+        for item in pool
+    }
+    available_categories = list(category_weights)
+    selected_category = random.choices(
+        available_categories,
+        weights=[category_weights[value] for value in available_categories],
+        k=1,
+    )[0]
+    category_pool = [item for item in pool if item["category"] == selected_category]
+    return dict(random.choices(category_pool, weights=[int(item["weight"]) for item in category_pool], k=1)[0])
 
 
 def _clean_extra_request(extra_request: str) -> str:
     extra = re.sub(r"/?看看腿", " ", str(extra_request or ""), flags=re.I)
-    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|cam|wear|pose|pose_detail|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|face_mode|crop_mode|leg_expression|cam|wear|pose|pose_detail|outfit|frame|legwear_category|hosiery|leg_accessory):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【leg_view_title:[^】]+】", " ", extra, flags=re.I)
     # Keep the original constraint once; deleting fragments loses negation,
     # sock lengths, or the support required by a free-form pose.
     for risky_text, neutral_text in LEGFOCUS_RISKY_EXTRA_REPLACEMENTS:
@@ -1174,6 +1493,9 @@ def build_leg_focus_action(
     *,
     avoid_pose: str = "",
     force_legwear: str = "",
+    force_legwear_category: str = "",
+    force_face_mode: str = "",
+    force_crop_mode: str = "",
     force_pose: str = "",
     force_camera: str = "",
     force_framing: str = "",
@@ -1187,15 +1509,47 @@ def build_leg_focus_action(
     raw_extra = str(extra_request or "")
     requested_view = str(force_view or parse_requested_leg_view(raw_extra))
     if requested_view and requested_view not in LEGFOCUS_VIEW_BY_ID:
-        raise LegFocusDataError(f"看看腿机位不存在: {requested_view}")
+        candidates = "、".join(str(view["title"]) for view in LEGFOCUS_VIEW_POOL[:8])
+        raise LegFocusDataError(f"指定机位无法识别。可选机位示例：{candidates}")
     angles = parse_requested_leg_angles(raw_extra)
     include_face = parse_requested_leg_face(raw_extra)
+    crop_mode_tag = re.search(r"【crop_mode:(leg_full|shoulder_crop|half_face|full_face)】", raw_extra, re.I)
+    crop_mode = str(force_crop_mode or (crop_mode_tag.group(1) if crop_mode_tag else "")).strip().lower()
+    if crop_mode and crop_mode not in LEGFOCUS_CROP_MODES:
+        raise LegFocusDataError("看看腿构图模式无法识别；可选范围包括腿部主体、肩线下裁切、半脸和完整面部")
+    if not crop_mode:
+        crop_mode = parse_requested_leg_crop_mode(raw_extra) or "leg_full"
+    face_mode_tag = re.search(r"【face_mode:(none|half|full)】", raw_extra, re.I)
+    face_mode = str(force_face_mode or (face_mode_tag.group(1) if face_mode_tag else "")).strip().lower()
+    explicit_face_mode = bool(force_face_mode or face_mode_tag)
+    if face_mode not in {"none", "half", "full"}:
+        if re.search(r"(?:不露脸|不露头|不拍脸|只拍腿|只拍下装|上半身不入镜)", raw_extra):
+            face_mode = "none"
+        elif re.search(r"(?:完整露脸|正脸入镜|完整面部|全身(?!镜)|从头到脚)", raw_extra):
+            face_mode = "full"
+        elif re.search(r"(?:半脸|侧脸)", raw_extra):
+            face_mode = "half"
+        else:
+            face_mode = "half"
+    if explicit_face_mode:
+        include_face = face_mode in {"half", "full"}
+    if crop_mode == "shoulder_crop":
+        face_mode = "none"
+        include_face = False
+    elif crop_mode in {"half_face", "full_face"}:
+        face_mode = "half" if crop_mode == "half_face" else "full"
+        include_face = True
+        explicit_face_mode = True
     framing = str(force_framing or "").strip()
-    if framing not in {"full_outfit", "leg_detail"}:
+    if crop_mode == "shoulder_crop":
+        framing = "leg_detail"
+    elif framing not in {"full_outfit", "leg_detail"}:
         explicit_full = bool(LEG_FULL_OUTFIT_REQUEST_PATTERN.search(raw_extra)) and not bool(
             re.search(r"(?:不|不要|无需|不需要)\s*(?:全身(?!镜)|从头到脚)", raw_extra)
         )
         framing = "full_outfit" if explicit_full or include_face else "leg_detail"
+    explicit_face_request = include_face or explicit_face_mode or framing == "full_outfit"
+    visible_face_requested = explicit_face_request and face_mode in {"half", "full"}
     if include_face and framing == "leg_detail":
         raise LegFocusDataError("看看腿的腿部局部构图不能同时露脸，请选择全身构图或取消露脸要求")
     requested_scene = parse_requested_leg_scene(raw_extra)
@@ -1214,7 +1568,11 @@ def build_leg_focus_action(
     excluded_cameras = parse_excluded_leg_cameras(raw_extra)
     if requested_camera and requested_camera in excluded_cameras:
         raise LegFocusDataError("看看腿指定的相机人称同时被排除，请选择第一人称或第三人称中的一个")
-    requested_pose = _resolve_pose_id(force_pose) or _resolve_pose_id(parse_requested_leg_pose(raw_extra))
+    forced_pose_id = _resolve_pose_id(force_pose)
+    if force_pose and not forced_pose_id:
+        options = "、".join(str(item["title"]) for item in LEGFOCUS_POSE_POOL[:8])
+        raise LegFocusDataError(f"指定姿势无法识别。可选姿势示例：{options}")
+    requested_pose = forced_pose_id or _resolve_pose_id(parse_requested_leg_pose(raw_extra))
     allowed_postures = _allowed_leg_postures(raw_extra)
     excluded_poses = parse_excluded_leg_poses(raw_extra)
     if requested_pose and requested_pose in excluded_poses:
@@ -1227,7 +1585,15 @@ def build_leg_focus_action(
     explicit_outfit = has_explicit_leg_outfit(raw_extra)
     outfit_source = "pool" if forced_outfit else "custom" if explicit_outfit else "reference" if has_refs else "pool"
     requested_family = str(requested_style.get("family") or "")
-    outfit_candidates = [forced_outfit] if forced_outfit else _compatible_leg_outfits(hosiery_family=requested_family)
+    requested_wear_hint = str(force_legwear or parse_requested_legwear(raw_extra) or "")
+    category_filter = str(force_legwear_category or "").strip()
+    if requested_wear_hint:
+        category_filter = ""
+    if category_filter and category_filter not in LEGWEAR_CATEGORIES:
+        raise LegFocusDataError(f"看看腿服饰类别不存在: {category_filter}")
+    outfit_candidates = [forced_outfit] if forced_outfit else _compatible_leg_outfits(
+        hosiery_family=requested_family, category=category_filter,
+    )
     if forced_outfit and requested_family and requested_family not in forced_outfit["hosiery_families"]:
         raise LegFocusDataError("看看腿指定的服饰与袜装不兼容，请调整其中一项")
     requested_style_kind = str(requested_style.get("kind") or "")
@@ -1244,6 +1610,12 @@ def build_leg_focus_action(
         "excluded_scenes": excluded_scenes,
         "excluded_cameras": excluded_cameras,
     }
+    explicit_view_constraints = bool(
+        requested_view or requested_camera or any(
+            key in angles for key in ("direction", "elevations", "yaw_range", "pitch_range", "camera_height")
+        )
+    )
+    allow_explicit_combination = bool(requested_pose and explicit_view_constraints)
 
     def candidates(scene_hint: str) -> Dict[str, List[Tuple[Dict[str, Any], str, Dict[str, Any]]]]:
         filtered_scene_hint = " ".join(
@@ -1255,10 +1627,18 @@ def build_leg_focus_action(
         for pose in pose_options:
             if pose["id"] in excluded_poses or pose["posture"] not in allowed_postures:
                 continue
+            if visible_face_requested and pose["posture"] in {"lying", "side_lying", "prone"}:
+                continue
             combinations = compatible_leg_compositions(
                 pose, camera=requested_camera, scene_ids=filtered_scene_hint,
                 view_id=requested_view, framing=framing, angles=selection_angles,
+                allow_explicit=allow_explicit_combination,
             )
+            if visible_face_requested:
+                combinations = [
+                    item for item in combinations
+                    if item[2].get("elevation") not in {"down", "top"}
+                ]
             if outfit_source == "pool":
                 combinations = [
                     item for item in combinations
@@ -1272,7 +1652,63 @@ def build_leg_focus_action(
     if not eligible and requested_scene and not explicit_scene:
         eligible = candidates("")
     if not eligible:
-        raise LegFocusDataError("看看腿指定的姿势、场景、服饰或视角不兼容，请调整其中一项；不会强行改变支撑动作或相机人称")
+        if visible_face_requested:
+            raise LegFocusDataError("看看腿当前姿势或俯拍机位与露脸不兼容，请改用站姿、坐姿或平视/仰拍机位")
+        diagnostic_scene_hint = " ".join(
+            scene_id for scene_id in requested_scene.split() if scene_id not in excluded_scenes
+        )
+        available_view_ids: set[str] = set()
+        diagnostic_poses = [LEGFOCUS_POSE_BY_ID[requested_pose]] if requested_pose else pose_options
+        for candidate_pose in diagnostic_poses:
+            for candidate_combination in compatible_leg_compositions(
+                candidate_pose,
+                camera=requested_camera,
+                scene_ids=diagnostic_scene_hint,
+                framing=framing,
+                angles=selection_angles,
+                allow_explicit=allow_explicit_combination,
+            ):
+                candidate_view = candidate_combination[2]
+                if requested_camera and candidate_view["camera"] != requested_camera:
+                    continue
+                if outfit_source == "pool" and not any(
+                    _leg_outfit_allows_composition(outfit, candidate_combination)
+                    for outfit in outfit_candidates
+                ):
+                    continue
+                available_view_ids.add(str(candidate_view["id"]))
+        available_pose_ids: set[str] = set()
+        for candidate_pose in LEGFOCUS_POSE_POOL:
+            if candidate_pose["id"] in excluded_poses or candidate_pose["posture"] not in allowed_postures:
+                continue
+            if visible_face_requested and candidate_pose["posture"] in {"lying", "side_lying", "prone"}:
+                continue
+            matches = compatible_leg_compositions(
+                candidate_pose,
+                camera=requested_camera,
+                scene_ids=diagnostic_scene_hint,
+                view_id=requested_view,
+                framing=framing,
+                angles=selection_angles,
+                allow_explicit=allow_explicit_combination,
+            )
+            if matches and (
+                outfit_source != "pool"
+                or any(_leg_outfit_allows_composition(outfit, item) for outfit in outfit_candidates for item in matches)
+            ):
+                available_pose_ids.add(str(candidate_pose["id"]))
+        view_titles_text = "、".join(
+            LEGFOCUS_VIEW_BY_ID[view_id]["title"] for view_id in sorted(available_view_ids)[:8]
+        ) or "无"
+        pose_titles_text = "、".join(
+            LEGFOCUS_POSE_BY_ID[pose_id]["title"] for pose_id in sorted(available_pose_ids)[:8]
+        ) or "无"
+        raise LegFocusDataError(
+            "看看腿指定的姿势、场景、服饰或视角不兼容；"
+            f"当前姿势可用机位: [{view_titles_text}]；当前机位可用姿势: [{pose_titles_text}]；"
+            "兼容检查包含 camera、scene/support、framing、angle 与服饰条件。"
+            "不会强行改变支撑动作或相机人称"
+        )
     if requested_style_kind and not requested_pose:
         eligible = {
             pose_id: combinations for pose_id, combinations in eligible.items()
@@ -1310,7 +1746,23 @@ def build_leg_focus_action(
     pose_choices = [LEGFOCUS_POSE_BY_ID[pose_id] for pose_id in eligible]
     if not requested_pose:
         pose_choices = [pose for pose in pose_choices if pose["id"] != avoid_id] or pose_choices
-    pose = _weighted_pose_choice(pose_choices)
+    view_pose_counts: Dict[str, int] = {}
+    for pose_id, pose_combinations in eligible.items():
+        for view_id in {item[2]["id"] for item in pose_combinations}:
+            view_pose_counts[view_id] = view_pose_counts.get(view_id, 0) + 1
+    weighted_pose_choices = []
+    for candidate_pose in pose_choices:
+        rare_views = {
+            item[2]["id"] for item in eligible[candidate_pose["id"]]
+        }
+        scarcity = sum(1 / (view_pose_counts[view_id] ** 0.5) for view_id in rare_views) / max(1, len(rare_views))
+        risk_factor = 0.1 if candidate_pose.get("risk") == "high" else 1.0
+        weighted_pose_choices.append({
+            **candidate_pose,
+            "_selection_weight": int(candidate_pose["weight"]) * risk_factor * (1 + 2 * scarcity),
+        })
+    pose = _weighted_pose_choice(weighted_pose_choices)
+    pose.pop("_selection_weight", None)
     pose_id = pose["id"]
     combinations = eligible[pose_id]
     forced_detail: Dict[str, Any] = {}
@@ -1332,7 +1784,7 @@ def build_leg_focus_action(
     outfit: Dict[str, Any] = {}
     if outfit_source == "pool":
         outfit = forced_outfit or pick_leg_focus_outfit(
-            hosiery_family=requested_family, compositions=combinations,
+            hosiery_family=requested_family, category=category_filter, compositions=combinations,
         )
         combinations = [item for item in combinations if _leg_outfit_allows_composition(outfit, item)]
         if not combinations:
@@ -1341,11 +1793,35 @@ def build_leg_focus_action(
     camera_kind = random.choice(camera_kinds)
     combinations = [item for item in combinations if item[2]["camera"] == camera_kind]
     view_ids = list(dict.fromkeys(item[2]["id"] for item in combinations))
+    eligible_pose_counts: Dict[str, int] = {}
+    for eligible_pose_id, pose_combinations in eligible.items():
+        if eligible_pose_id == pose_id:
+            continue
+        if any(item[2]["camera"] == camera_kind for item in pose_combinations):
+            for view_id in {item[2]["id"] for item in pose_combinations if item[2]["camera"] == camera_kind}:
+                eligible_pose_counts[view_id] = eligible_pose_counts.get(view_id, 0) + 1
+    selected_view_counts = {
+        view_id: eligible_pose_counts.get(view_id, 0) + 1 for view_id in view_ids
+    }
     view = random.choices(
         [LEGFOCUS_VIEW_BY_ID[view_id] for view_id in view_ids],
-        weights=[LEGFOCUS_VIEW_BY_ID[view_id]["weight"] for view_id in view_ids], k=1,
+        weights=[
+            LEGFOCUS_VIEW_BY_ID[view_id]["weight"]
+            * LEGFOCUS_VIEW_BY_ID[view_id].get("selection_weight", 1)
+            / (selected_view_counts[view_id] ** 0.5)
+            for view_id in view_ids
+        ], k=1,
     )[0]
     combinations = [item for item in combinations if item[2]["id"] == view["id"]]
+    if pose["posture"] in {"lying", "side_lying", "prone"} or view.get("elevation") in {"down", "top"}:
+        face_mode = "none"
+        include_face = False
+    else:
+        include_face = visible_face_requested
+        if not include_face:
+            face_mode = "none"
+    if face_mode == "none" and framing == "full_outfit":
+        framing = "leg_detail"
     scene_ids = list(dict.fromkeys(item[0]["id"] for item in combinations))
     scene = LEGFOCUS_SCENE_BY_ID[random.choice(scene_ids)]
     support = next(item[1] for item in combinations if item[0]["id"] == scene["id"])
@@ -1356,6 +1832,20 @@ def build_leg_focus_action(
     capture_style = _weighted_capture_style_choice(
         str(scene["id"]), camera_mode, environment, str(scene_state.get("id") or ""),
     )
+    view_prompt = str(view["prompt"])
+    view_title = str(view["title"])
+    if allow_explicit_combination and not requested_view:
+        declared_combinations = compatible_leg_compositions(
+            pose,
+            camera=camera_kind,
+            scene_ids=str(scene["id"]),
+            view_id=str(view["id"]),
+            framing=framing,
+            angles=selection_angles,
+        )
+        if not any(item[1] == support and item[2]["id"] == view["id"] for item in declared_combinations):
+            view_prompt = "相机按用户指定的镜头角度取景，人物与实际支撑面保持自然连贯的透视关系。"
+            view_title = "用户指定角度"
     if detail_id:
         pose_detail = forced_detail
     else:
@@ -1384,11 +1874,21 @@ def build_leg_focus_action(
     elif outfit_source != "pool" or unhandled_wear:
         wear = "用户指定"
     else:
-        detail = _weighted_detail_choice(excluded_wears)
-        wear = _DETAIL_TAGS.get(str(detail.get("id") or ""), "用户指定")
+        allowed_categories = set(outfit.get("category") or LEGWEAR_CATEGORIES)
+        detail = _weighted_detail_choice(
+            excluded_wears,
+            category=category_filter,
+            allowed_categories=allowed_categories,
+        )
+        wear = str(detail.get("wear") or _DETAIL_TAGS.get(str(detail.get("id") or "")) or "用户指定")
+    category = str(
+        requested_style.get("category")
+        or detail.get("category")
+        or ("bare_legs" if wear in {"光腿", "光腿神器"} else "sheer" if wear in {"黑丝", "白丝", "连裤袜"} else "")
+    )
     if outfit_source == "pool":
         style = requested_style or ({} if unhandled_wear else _pick_hosiery_style(
-            wear, outfit, raw_extra,
+            wear, outfit, raw_extra, category=category, pose=pose,
             excluded_kinds=set(pose.get("disallowed_hosiery_kinds") or ()),
         ))
         if style and not _hosiery_allowed(style, raw_extra):
@@ -1407,7 +1907,17 @@ def build_leg_focus_action(
             outfit_line += LEGWEAR_PROMPTS[requested_wear]
         elif detail:
             outfit_line += str(detail["prompt"])
+        accessory = _pick_leg_accessory(
+            "光腿" if wear == "光腿神器" else wear,
+            outfit,
+            style,
+            pose,
+            raw_extra,
+        )
+        if accessory:
+            outfit_line += str(accessory["prompt"])
     else:
+        accessory = {}
         detail_override = bool(requested_wear or unhandled_wear or excluded_wears or LEGWEAR_NEGATION_PATTERN.search(raw_extra))
         preserve_line = LEGFOCUS_PRESERVE_PROMPTS[
             f"{outfit_source}_detail" if detail_override else outfit_source
@@ -1423,18 +1933,56 @@ def build_leg_focus_action(
 
     # Each layer owns one constraint: crop, camera, action, setting, or clothing.
     framing_key = "mirror" if capture_mode == "mirror" else camera_kind
-    framing_lines = [LEGFOCUS_FULL_FRAMING] if framing == "full_outfit" else [
-        LEGFOCUS_FRAMING,
-        LEGFOCUS_CAMERA_FRAMINGS[framing_key],
-        str(pose["crop_prompts"][framing_key]),
-    ]
+    pose_crop_prompt = (
+        pose.get("crop_prompts", {}).get(framing_key)
+        or pose.get("crop_prompts", {}).get(camera_kind)
+        or next(iter(pose.get("crop_prompts", {}).values()), "")
+    )
+    framing_lines = [LEGFOCUS_CROP_MODES[crop_mode]]
+    if framing == "full_outfit":
+        framing_lines.append(LEGFOCUS_FULL_FRAMING)
+    else:
+        framing_lines.extend((
+            LEGFOCUS_FRAMING,
+            LEGFOCUS_CAMERA_FRAMINGS[framing_key],
+            str(pose_crop_prompt),
+        ))
+    face_lines: List[str] = []
+    expression_id = ""
+    if not include_face:
+        face_lines.append("头部与面部保持画外，取景上缘停在肩线附近或更低处；姿势与机位自然优先。")
+    else:
+        face_crop = (
+            "完整面部清晰进入画面，额头、双眼、鼻部和下巴均自然可见；"
+            if face_mode == "full"
+            else "仅呈现自然侧脸或半脸，画面在脸部形成自然裁切；"
+        )
+        face_lines.append(
+            face_crop + "脸部特征、发型、妆容与形象参考图一致，肤色与可见手部、腿部统一。"
+        )
+        try:
+            from .cos_looks import _pick_scene_expression
+
+            expression_id, expression_prompt = _pick_scene_expression(pose_id, raw_extra)
+        except Exception:
+            expression_prompt = ""
+        if expression_prompt:
+            face_lines.append("本次神态按 COS 表情模板执行：" + expression_prompt)
+    skin_tone_line = (
+        "人物皮肤保持其本人自然肤色，脸部、手部、腿部肤色一致；白色只属于袜料纤维，不覆盖皮肤。"
+        if wear == "白丝" else
+        "人物皮肤保持其本人自然肤色，脸部、手部、腿部肤色一致；袜装颜色只属于织物，不覆盖皮肤。"
+        if wear in {"黑丝", "连裤袜"} else
+        "人物皮肤保持其本人自然肤色，脸部、手部、腿部肤色一致。"
+    )
     base = "\n".join(line for line in (
         LEGFOCUS_ANATOMY_RULE,
         *framing_lines,
-        "人物皮肤保持其本人自然肤色，脸部、手部、腿部肤色一致；"
-        + ("白色只属于袜料纤维，不覆盖皮肤。" if wear == "白丝" else "袜装颜色只属于织物，不覆盖皮肤。"),
-        LEGFOCUS_HOSIERY_RULE,
-        str(view["prompt"]),
+        *face_lines,
+        skin_tone_line,
+        "" if category == "bare_legs" else LEGFOCUS_HOSIERY_RULE,
+        _view_angle_prompt(view),
+        f"本次机位（{view_title}）：{view_prompt}",
         str(pose["prompt"]),
         str(pose_detail.get("prompt") or ""),
         str(pose.get("hand_prompts", {}).get(capture_mode, "")),
@@ -1445,6 +1993,12 @@ def build_leg_focus_action(
         f"本张拍摄质感：{capture_style['prompt']}",
         outfit_line,
     ) if line)
+    if angles.get("pitch_range"):
+        pitch_center = sum(angles["pitch_range"]) / 2
+        if pitch_center > 0:
+            base = re.sub(r"平视|平拍|仰拍|仰视|向上拍", "按选定的俯拍角度", base)
+        elif pitch_center < 0:
+            base = re.sub(r"平视|平拍|俯拍|俯视|向下拍", "按选定的仰拍角度", base)
     extra = _clean_extra_request(raw_extra)
     if extra:
         base += f"\n用户补充要求优先：{extra}。"
@@ -1463,13 +2017,19 @@ def build_leg_focus_action(
         base
         + f" 【legs:outfit】 【frame:{framing if framing == 'full_outfit' else 'leg_detail'}】"
         + (" 【legs_face:context】" if include_face else "")
+        + f" 【face_mode:{face_mode}】"
+        + f" 【crop_mode:{crop_mode}】"
         + f"【姿势池·{pose['title']}】【场景池·{scene['title']}】"
-        + f" 【leg_view:{view['id']}】 【leg_scene:{scene['id']}】 【leg_support:{support}】"
+        + f" 【leg_view:{view['id']}】 【leg_view_title:{view_title}】 【leg_scene:{scene['id']}】 【leg_support:{support}】"
         + f" 【leg_capture_style:{capture_style['id']}】"
         + (f" 【leg_state:{scene_state['id']}】" if scene_state else "")
         + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_id}】"
         + (f" 【pose_detail:{pose_detail['id']}】" if pose_detail else "")
+        + (f" 【leg_expression:{expression_id}】" if expression_id else "")
         + f" 【outfit:{outfit.get('id') or outfit_source}】"
+        + f" 【legwear_category:{category or 'custom'}】"
+        + f" 【hosiery:{style.get('id') or 'none'}】"
+        + f" 【leg_accessory:{accessory.get('id') or 'none'}】"
     )
 
 
@@ -1480,6 +2040,7 @@ def has_leg_focus_contract(text: str) -> bool:
         and re.search(r"【cam:(?:selfie|third)】", raw)
         and re.search(r"【wear:(?:daily|custom|white|black|bare|barefoot|pantyhose)】", raw)
         and re.search(r"【frame:(?:full_outfit|leg_detail)】", raw)
+        and re.search(r"【crop_mode:(?:leg_full|shoulder_crop|half_face|full_face)】", raw)
         and re.search(r"【pose:[a-z_]+】", raw)
         and re.search(r"【outfit:[a-z_]+】", raw)
         and re.search(r"【leg_view:[a-z_]+】", raw)
@@ -1520,10 +2081,25 @@ def has_leg_focus_contract(text: str) -> bool:
         scene_ids=scene.group(1),
         framing=re.search(r"【frame:(full_outfit|leg_detail)】", raw).group(1),
     )
-    return any(
+    selected_support = support.group(1)
+    strict_match = any(
         selected_support == support.group(1)
         and (not outfit or _leg_outfit_allows_composition(outfit, (scene_obj, selected_support, view)))
         for scene_obj, selected_support, view in combinations
+    )
+    if strict_match:
+        return True
+    return any(
+        selected_support == support.group(1)
+        and (not outfit or _leg_outfit_allows_composition(outfit, (scene_obj, selected_support, view)))
+        for scene_obj, selected_support, view in compatible_leg_compositions(
+            pose,
+            camera=camera,
+            view_id=view_id,
+            scene_ids=scene.group(1),
+            framing=re.search(r"【frame:(full_outfit|leg_detail)】", raw).group(1),
+            allow_explicit=True,
+        )
     )
 
 
@@ -1543,7 +2119,8 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
     if "【legs:outfit】" in raw:
         supplement = re.search(r"用户补充要求优先[:：](.*?)(?=【legs:outfit】|$)", raw, re.S)
         extra = supplement.group(1).strip() if supplement else ""
-    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|cam|wear|pose|pose_detail|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|face_mode|crop_mode|leg_expression|cam|wear|pose|pose_detail|outfit|frame|legwear_category|hosiery|leg_accessory):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【leg_view_title:[^】]+】", " ", extra, flags=re.I)
     extra = re.sub(r"/?看看腿", " ", extra, flags=re.I)
     pose_id = _resolve_pose_id(str(pose_match.group(1) if pose_match else ""))
     force_detail = str(detail_match.group(1) if detail_match else "")
@@ -1707,19 +2284,23 @@ def validate_leg_focus_catalog() -> List[str]:
                 issues.append(f"hosiery {style_id}: tights prompt conflicts with bare-foot state")
         elif kind == "thigh_high" and not re.search(r"(?:过膝|长筒|丝袜)", prompt):
             issues.append(f"hosiery {style_id}: thigh-high prompt lacks length detail")
+        elif kind == "knee_high" and not re.search(r"(?:膝下|膝部)", prompt):
+            issues.append(f"hosiery {style_id}: knee-high prompt lacks length detail")
+        elif kind == "fishnet" and "网袜" not in prompt:
+            issues.append(f"hosiery {style_id}: fishnet prompt lacks mesh detail")
         elif kind == "stirrup" and not all(term in prompt for term in ("踩脚", "脚弓")):
             issues.append(f"hosiery {style_id}: stirrup prompt lacks foot-strap detail")
         elif kind == "ankle" and not re.search(r"(?:短袜|踝袜)", prompt):
             issues.append(f"hosiery {style_id}: ankle prompt lacks ankle-length detail")
-        if kind != "tights" and not style.get("explicit_only", False):
-            issues.append(f"hosiery {style_id}: non-tights style must be explicit_only")
+        if style.get("category") not in LEGWEAR_CATEGORIES:
+            issues.append(f"hosiery {style_id}: invalid random category")
 
     for detail in LEGFOCUS_RANDOM_LEG_DETAILS:
         wear = str(detail["wear"])
         prompt = str(detail["prompt"])
         detail_id = str(detail["id"])
-        if wear == "光腿" and "不增加袜装" not in prompt:
-            issues.append(f"leg detail {detail_id}: bare-leg prompt must forbid extra hosiery")
+        if wear == "光腿" and re.search(r"袜|织物|纤维|白丝|冷调|丝袜", prompt):
+            issues.append(f"leg detail {detail_id}: bare-leg prompt contains hosiery language")
         if wear == "赤足" and not all(term in prompt for term in ("赤足", "不添加袜装", "鞋履")):
             issues.append(f"leg detail {detail_id}: barefoot prompt lacks sock/shoe/foot contract")
         if wear in {"黑丝", "白丝"} and any(

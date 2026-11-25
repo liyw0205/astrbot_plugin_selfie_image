@@ -129,7 +129,7 @@ def test_exact_pose_name_still_selects_the_requested_pose(pose_id):
 
 def test_expansion_has_the_accepted_posture_distribution():
     assert Counter(pose["posture"] for pose in LEGFOCUS_POSE_BY_ID.values()) == {
-        "standing": 7, "seated": 12, "lying": 5, "side_lying": 3,
+        "standing": 7, "seated": 13, "lying": 5, "side_lying": 3,
         "prone": 3, "reclined": 4, "kneeling": 6,
     }
 
@@ -150,7 +150,7 @@ def test_expansion_has_the_accepted_posture_distribution():
 ])
 def test_reference_sitting_poses_keep_mirror_and_direct_cameras_separate(query, pose_id, support, view_ids):
     from astrbot_plugin_selfie_image.cos.leg_focus import (
-        LEGFOCUS_CAMERA_FRAMINGS, compatible_leg_compositions,
+        LEGFOCUS_CAMERA_FRAMINGS, LEGFOCUS_VIEW_BY_ID, compatible_leg_compositions,
     )
 
     pose = LEGFOCUS_POSE_BY_ID[pose_id]
@@ -184,12 +184,27 @@ def test_reference_sitting_poses_keep_mirror_and_direct_cameras_separate(query, 
         assert action.count(pose["hand_prompts"]["mirror" if mirror else "direct"]) == 1
         assert has_leg_focus_contract(action)
         assert ensure_leg_focus_action(action, has_refs=True) == action
-    for options in ({"force_camera": "third"}, {"force_framing": "full_outfit"}):
-        with pytest.raises(LegFocusDataError, match="不兼容|第一人称自视"):
-            build_leg_focus_action(query, **options)
-    for incompatible_view in ("self_forward_down", "self_mirror_front_down", "self_steep_down"):
+    if mirror:
         with pytest.raises(LegFocusDataError, match="不兼容"):
-            build_leg_focus_action(query, force_view=incompatible_view)
+            build_leg_focus_action(query, force_camera="third")
+    else:
+        third_person = build_leg_focus_action(query, force_camera="third")
+        assert "【cam:third】" in third_person
+    with pytest.raises(LegFocusDataError):
+        build_leg_focus_action(query, force_framing="full_outfit")
+    for incompatible_view in ("self_forward_down", "self_mirror_front_down", "self_steep_down"):
+        selected = LEGFOCUS_VIEW_BY_ID[incompatible_view]
+        can_override = (
+            (mirror and selected.get("capture_mode") == "mirror" and incompatible_view == "self_mirror_front_down")
+            or (not mirror and selected.get("capture_mode") != "mirror" and incompatible_view == "self_forward_down")
+        )
+        if can_override:
+            action = build_leg_focus_action(query, force_view=incompatible_view)
+            assert f"【pose:{pose_id}】" in action
+            assert f"【leg_view:{incompatible_view}】" in action
+        else:
+            with pytest.raises(LegFocusDataError, match="不兼容"):
+                build_leg_focus_action(query, force_view=incompatible_view)
 
 
 @pytest.mark.parametrize("pose_id,support,scenes", [
@@ -219,8 +234,9 @@ def test_prone_uses_only_external_side_view(pose_id):
     assert {(view["camera"], view["direction"], view["elevation"]) for _, _, view in combinations} == {
         ("third", "side", "level"),
     }
-    with pytest.raises(LegFocusDataError, match="不兼容"):
-        build_leg_focus_action(force_pose=pose_id, force_camera="selfie")
+    action = build_leg_focus_action(force_pose=pose_id, force_camera="selfie")
+    assert f"【pose:{pose_id}】" in action
+    assert "【cam:selfie】" in action
 
 
 @pytest.mark.parametrize("query", [

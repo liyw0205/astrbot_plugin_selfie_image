@@ -559,11 +559,13 @@ def test_unspecified_cos_framing_picks_one_concrete_view():
 
 
 def test_outfit_framing_words_do_not_suppress_random_view():
-    def choose_framing(values):
-        return "low_angle_hero" if "low_angle_hero" in values else values[0]
+    def choose_framing(values, *, weights=None, k=1):
+        del weights, k
+        values = list(values)
+        return ["low_angle_hero" if "low_angle_hero" in values else values[0]]
 
     with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choices",
         side_effect=choose_framing,
     ):
         selected = pick_cos_framing(
@@ -575,6 +577,35 @@ def test_outfit_framing_words_do_not_suppress_random_view():
     assert selected["view_id"] == "low_angle_hero"
     assert selected["prompt"] == COS_FRAMING_CLASSES["low_angle_hero"]["prompt"]
     assert selected["outfit_text"] == "竖屏9:16，人物对镜站立"
+
+
+def test_framing_rarity_uses_the_look_eligible_pose_pool():
+    def capture_weights(eligible_pose_ids):
+        captured = {}
+
+        def choose(values, *, weights=None, k=1):
+            values = list(values)
+            if weights is not None:
+                captured.update(zip(values, weights))
+            return [values[0]]
+
+        with patch(
+            "astrbot_plugin_selfie_image.cos.cos_looks.random.choices",
+            side_effect=choose,
+        ):
+            pick_cos_framing(
+                cos_id="",
+                pose_id="standing_detail",
+                scene_id="photo_studio",
+                camera="third",
+                eligible_pose_ids=eligible_pose_ids,
+            )
+        return captured
+
+    all_pose_weights = capture_weights(COS_RANDOM_POSE_CLASSES)
+    look_pose_weights = capture_weights({"standing_detail"})
+
+    assert all_pose_weights["front_half"] < look_pose_weights["front_half"]
 
 
 def test_camera_adaptation_does_not_corrupt_existing_facing_phrases():
@@ -654,9 +685,19 @@ def test_random_scene_is_uniformly_selected_before_compatible_pose():
             return "back_to_camera"
         return values[-1]
 
+    def choose_weighted_pose(values, *, weights=None, k=1):
+        del weights, k
+        values = list(values)
+        if "back_to_camera" in values:
+            return ["back_to_camera"]
+        return [values[-1]]
+
     with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
         side_effect=choose_final_scene_and_back_pose,
+    ), patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choices",
+        side_effect=choose_weighted_pose,
     ):
         selected = pick_cos_variation("custom_cos_id")
     final_scene_id = cos_look_compatibility("custom_cos_id")["scene_ids"][-1]
@@ -666,11 +707,13 @@ def test_random_scene_is_uniformly_selected_before_compatible_pose():
 
 
 def test_back_view_can_use_a_controlled_low_angle_only_in_third_person():
-    def choose_low_rear_framing(values):
-        return "rear_low_hero" if "rear_low_hero" in values else values[0]
+    def choose_low_rear_framing(values, *, weights=None, k=1):
+        del weights, k
+        values = list(values)
+        return ["rear_low_hero" if "rear_low_hero" in values else values[0]]
 
     with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choices",
         side_effect=choose_low_rear_framing,
     ):
         selected = pick_cos_framing(pose_id="back_to_camera", camera="third")
@@ -695,15 +738,17 @@ def test_back_view_can_use_a_controlled_low_angle_only_in_third_person():
 
 
 def test_side_profile_and_negative_space_do_not_force_a_head_turn():
-    def choose_side_profile(values):
+    def choose_side_profile(values, *, weights=None, k=1):
+        del weights, k
+        values = list(values)
         if "side_profile" in values:
-            return "side_profile"
+            return ["side_profile"]
         if "asymmetric_negative_space" in values:
-            return "asymmetric_negative_space"
-        return values[0]
+            return ["asymmetric_negative_space"]
+        return [values[0]]
 
     with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choices",
         side_effect=choose_side_profile,
     ):
         selected = pick_cos_framing(
@@ -714,10 +759,12 @@ def test_side_profile_and_negative_space_do_not_force_a_head_turn():
 
     assert selected["view_id"] == "side_profile"
     assert "肩线、胯部与面部朝向保持一致" in selected["prompt"]
-    assert "不为展示正脸单独扭脸" in selected["prompt"]
+    assert "仅呈现自然可见的一侧五官" in selected["prompt"]
+    assert "不为展示正脸单独扭脸" not in selected["prompt"]
     composition = selected["composition"]
     assert composition["composition_id"] == "asymmetric_negative_space"
-    assert "不为指向留白单独转头、回眸或扭颈" in composition["prompt"]
+    assert "保持已选姿势、镜头视角与头部朝向连贯" in composition["prompt"]
+    assert "不为指向留白单独转头" not in composition["prompt"]
 
 
 def test_low_angle_hero_is_reserved_for_open_scenes():
@@ -1203,13 +1250,13 @@ def test_cos_back_view_does_not_require_a_visible_face_in_third_person_mode():
     )
     assert "【cos_pose:back_to_camera】" in action
     assert "【他拍 / 看看COS模式】" in action
-    assert "不要求露出面部" in action
+    assert "面部按背面构图自然留在画外" in action
     assert "未明确要求遮脸时保持面部和服装清晰可见" not in action
 
     with tempfile.TemporaryDirectory() as tmp:
         persona = PersonaManager(tmp)
         prompt = persona.build_selfie_prompt(action, "小助", "温柔", True, 1)
-    assert "不要求露出面部" in prompt
+    assert "面部按背面构图自然留在画外" in prompt
     assert "额外参考图只补充用户明确要求参考的细节" in prompt
     assert "表情眼神按本次场景重画" not in prompt
     assert "除非用户要求遮脸，否则主角面部清晰自然" not in prompt
@@ -1241,14 +1288,14 @@ def test_back_three_quarter_pose_keeps_head_aligned_without_lookback():
     assert "【cos_pose:over_shoulder】" in action
     assert "【cos_framing:rear_lookback】" not in action
     assert "背后三分之四角度朝向场景纵深" in action
-    assert "肩线、胯部与头部朝向保持一致" in action
-    assert "不回头、不回眸、不扭颈" in action
-    assert "也不要求露出侧脸或正脸" in action
+    assert "肩线、胯部与头部朝向一致" in action
+    assert "头部自然朝向场景纵深" in action
+    assert "不回头、不回眸、不扭颈" not in action
 
     with tempfile.TemporaryDirectory() as tmp:
         persona = PersonaManager(tmp)
         prompt = persona.build_selfie_prompt(action, "小助", "温柔", True, 1)
-    assert "肩线、胯部与头部朝向保持一致" in prompt
+    assert "肩线、胯部与头部朝向一致" in prompt
     assert "额外参考图只补充用户明确要求参考的细节" in prompt
     assert "表情眼神按本次场景重画" not in prompt
     assert "除非用户要求遮脸，否则主角面部清晰自然" not in prompt
