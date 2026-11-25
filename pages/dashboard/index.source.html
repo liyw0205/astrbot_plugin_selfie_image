@@ -817,6 +817,13 @@
         <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理</label><select id="modalProxyId"><option value="">直连（不使用代理）</option></select></div>
       </div>
+      <details id="modalNaiSettings" style="margin-top:12px" open>
+        <summary>NovelAI 参数</summary>
+        <div class="grid" style="margin-top:8px">
+          <div><label for="modalNaiNegative">负向提示词</label><textarea id="modalNaiNegative" rows="2" placeholder="留空使用插件默认值"></textarea></div>
+          <div><label for="modalNaiStrength">图生图参考强度（0 到 1）</label><input id="modalNaiStrength" type="number" min="0" max="1" step="0.01" placeholder="0.55"></div>
+        </div>
+      </details>
       <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
       <label class="checkline"><input id="modalEnabled" type="checkbox"> 启用渠道</label>
 

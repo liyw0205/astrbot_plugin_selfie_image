@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -914,6 +916,25 @@ class AgnesImageAdapter(BaseImageAdapter):
 
 # NovelAI default UC — keep very short; freeform user/preset text should not fight a long UC dump.
 NAI_DEFAULT_NEGATIVE = "lowres, worst quality, bad anatomy, bad hands, extra digits, blurry, watermark, text"
+NAI_DEFAULT_IMG2IMG_STRENGTH = 0.55
+
+
+def _nai_negative_prompt(target: ImageModelTarget) -> str:
+    extra = target.extra if isinstance(target.extra, Mapping) else {}
+    configured = extra.get("novelai_negative_prompt", extra.get("negative_prompt"))
+    return NAI_DEFAULT_NEGATIVE if configured is None else str(configured).strip()
+
+
+def _nai_img2img_strength(target: ImageModelTarget) -> float:
+    extra = target.extra if isinstance(target.extra, Mapping) else {}
+    value = extra.get("novelai_img2img_strength", extra.get("img2img_strength"))
+    if isinstance(value, bool):
+        return NAI_DEFAULT_IMG2IMG_STRENGTH
+    try:
+        strength = float(value)
+    except (TypeError, ValueError):
+        return NAI_DEFAULT_IMG2IMG_STRENGTH
+    return strength if math.isfinite(strength) and 0 <= strength <= 1 else NAI_DEFAULT_IMG2IMG_STRENGTH
 
 
 def map_aspect_ratio_to_nai_size(aspect: str, resolution: str = "1K") -> tuple[int, int]:
@@ -1091,7 +1112,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
             "cfg_rescale": 0.0,
             "image_format": "png",
             "n_samples": 1,
-            "negative_prompt": NAI_DEFAULT_NEGATIVE,
+            "negative_prompt": _nai_negative_prompt(self.target),
             "seed": random.randint(1, 2**31 - 1),
         }
         # Preserve the family decision in diagnostics without adding an
@@ -1126,6 +1147,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
         return {
             "model": self.target.model or self.default_model,
             "prompt": str(req.prompt or "").strip(),
+            "negative_prompt": _nai_negative_prompt(self.target),
             "size": f"{width}x{height}",
             "n": 1,
             "response_format": "b64_json",
@@ -1136,7 +1158,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
 
         width, height = map_aspect_ratio_to_nai_size(req.aspect_ratio, req.resolution)
         prompt = str(req.prompt or "").strip()
-        negative = NAI_DEFAULT_NEGATIVE
+        negative = _nai_negative_prompt(self.target)
         seed = random.randint(1, 2**31 - 1)
         model = self.target.model or self.default_model
         parameters: Dict[str, Any] = {
@@ -1183,7 +1205,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
             # img2img: first reference as base image (ppnai style bare base64)
             raw_b64 = base64.b64encode(req.images[0].data).decode("ascii")
             parameters["image"] = raw_b64
-            parameters["strength"] = 0.55
+            parameters["strength"] = _nai_img2img_strength(self.target)
             parameters["noise"] = 0
             action = "img2img"
         return {
@@ -1205,7 +1227,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
             "sampler": "k_dpmpp_2m_sde",
             "noise_schedule": "karras",
             "nocache": "1",
-            "negative": NAI_DEFAULT_NEGATIVE,
+            "negative": _nai_negative_prompt(self.target),
         }
         return {k: v for k, v in params.items() if v is not None and str(v) != ""}
 

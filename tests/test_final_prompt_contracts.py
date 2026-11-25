@@ -797,8 +797,16 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
                 assert view["elevation"] == "down", (pose_id, view_id)
             else:
                 assert view["camera"] == "third", (pose_id, view_id)
-                assert view["elevation"] == "up", (pose_id, view_id)
-                assert "仰拍" in view["prompt"]
+                expected_elevations = (
+                    {"up", "down"} if view_id == "third_seated_oblique_down"
+                    else {"level"} if view_id == "third_oblique_level"
+                    else {"up"}
+                )
+                assert view["elevation"] in expected_elevations, (pose_id, view_id)
+                expected_camera_phrase = {
+                    "down": "向下倾斜", "level": "平视", "up": "仰拍",
+                }[view["elevation"]]
+                assert expected_camera_phrase in view["prompt"]
         if pose_id == "reclined_same_side_knees":
             assert view["camera"] == "selfie", (pose_id, support_id, view_id)
         if pose["posture"] in {"lying", "side_lying", "prone", "reclined"} and view["camera"] == "third":
@@ -860,10 +868,14 @@ def test_supported_third_person_poses_use_low_views_only(pose_id):
     pose = LEGFOCUS_POSE_BY_ID[pose_id]
     combinations = compatible_leg_compositions(pose)
     assert combinations
+    assert all(view["camera"] == "third" for _, _, view in combinations)
+    assert all(view["direction"] in {"front", "oblique", "side"} for _, _, view in combinations)
     assert all(
-        view["camera"] == "third"
-        and view["elevation"] == "up"
-        and view["direction"] in {"front", "oblique", "side"}
+                view["elevation"] == (
+                    "down" if view["id"] == "third_seated_oblique_down"
+                    else "level" if view["id"] == "third_oblique_level"
+                    else "up"
+                )
         for _, _, view in combinations
     )
     explicit_self_view = build_leg_focus_action(force_pose=pose_id, force_camera="selfie")
@@ -883,7 +895,10 @@ def test_added_leg_poses_keep_their_required_support_and_camera(pose_id, scenes,
     assert {support for _, support, _ in combinations} <= supports
     assert {view["camera"] for _, _, view in combinations} == {camera}
     if camera == "third":
-        assert all(view["elevation"] == "up" for _, _, view in combinations)
+        assert all(
+            view["elevation"] == ("down" if view["id"] == "third_seated_oblique_down" else "up")
+            for _, _, view in combinations
+        )
     else:
         assert {view["id"] for _, _, view in combinations} == {"self_left_down", "self_right_down"}
     for query in ("卧室地毯", "落地镜"):
@@ -1205,9 +1220,17 @@ def test_elevated_seats_keep_external_low_views_and_explicit_self_view_variants(
                 assert view["elevation"] == "down"
             else:
                 assert view["camera"] == "third", (pose["id"], support, view["id"])
-                assert view["elevation"] == "up", (pose["id"], support, view["id"])
+                assert view["elevation"] == (
+                    "down" if view["id"] == "third_seated_oblique_down"
+                    else "level" if view["id"] == "third_oblique_level"
+                    else "up"
+                ), (pose["id"], support, view["id"])
             if support == "raised_edge":
-                assert view["elevation"] == "up", (pose["id"], view["id"])
+                assert view["elevation"] == (
+                    "down" if view["id"] == "third_seated_oblique_down"
+                    else "level" if view["id"] == "third_oblique_level"
+                    else "up"
+                ), (pose["id"], view["id"])
                 raised_views.add(view["direction"])
     assert raised_views == {"front", "oblique", "side"}
 
@@ -1273,7 +1296,15 @@ def test_obsolete_leg_requests_are_rebuilt_with_current_support_and_camera(
         assert "【leg_support:kneeling_surface】" in prompt
     else:
         assert "第一人称" not in prompt
-        assert "俯拍" not in prompt
+        selected_view_id = re.search(r"【leg_view:([a-z_]+)】", prompt).group(1)
+        selected_view = LEGFOCUS_VIEW_BY_ID[selected_view_id]
+        assert selected_view["prompt"] in prompt
+        expected_camera_phrase = {
+            "down": "向下倾斜",
+            "level": "平视",
+            "up": "仰拍",
+        }[selected_view["elevation"]]
+        assert expected_camera_phrase in prompt
         assert re.search(r"【leg_support:(?:raised_edge|chair_seat)】", prompt)
 
 
@@ -1341,7 +1372,9 @@ def test_suspended_knees_use_front_view_and_avoid_random_stirrup_socks():
 
     pose_id = "edge_knees_together_ankles_apart"
     pose = LEGFOCUS_POSE_BY_ID[pose_id]
-    assert pose["camera_views"] == {"third": ["third_front_low"]}
+    assert pose["camera_views"] == {
+        "third": ["third_front_low", "third_seated_oblique_down"]
+    }
     assert "stirrup" in pose["disallowed_hosiery_kinds"]
 
     action = build_leg_focus_action(

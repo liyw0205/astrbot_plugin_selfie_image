@@ -457,6 +457,58 @@ def test_cancel_from_flask_thread_uses_debug_loop_safely(tmp_path):
     asyncio.run(run())
 
 
+def test_runtime_shutdown_waits_for_multi_image_batch_before_cancelling(tmp_path, monkeypatch):
+    async def run():
+        plugin = runtime_plugin(tmp_path)
+        plugin.RUNTIME_SHUTDOWN_GRACE_SECONDS = 0.2
+        batch_finished = asyncio.Event()
+        batch_cancelled = asyncio.Event()
+        single_cancelled = asyncio.Event()
+
+        async def batch_worker():
+            try:
+                await asyncio.sleep(0.03)
+                batch_finished.set()
+            except asyncio.CancelledError:
+                batch_cancelled.set()
+                raise
+
+        async def single_worker():
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                single_cancelled.set()
+                raise
+
+        batch = asyncio.create_task(batch_worker())
+        single = asyncio.create_task(single_worker())
+        plugin._web_tasks = {
+            "batch": {"status": "running", "requested_count": 3},
+            "single": {"status": "running", "requested_count": 1},
+        }
+        plugin._runtime_generation_tasks = {"batch": batch, "single": single}
+        plugin._runtime_generation_workers = {"batch": batch, "single": single}
+        plugin._close_reference_client_session = lambda: asyncio.sleep(0)
+        plugin._release_quota_reservation = lambda *_args: None
+        plugin._set_web_image_task = lambda *_args, **_kwargs: None
+        plugin._web_task_timestamp = lambda: "now"
+        plugin._flush_web_task_snapshots = lambda: None
+
+        async def close_scheduler():
+            return None
+
+        monkeypatch.setattr(
+            "astrbot_plugin_selfie_image.main._generation_runtime_service_for",
+            lambda _plugin: SimpleNamespace(close_scheduler=close_scheduler),
+        )
+        await plugin._terminate_runtime()
+        assert batch_finished.is_set()
+        assert not batch_cancelled.is_set()
+        assert single_cancelled.is_set()
+
+    asyncio.run(run())
+
+
 def test_scheduler_limit_can_be_changed_from_flask_thread():
     async def run():
         loop = asyncio.get_running_loop()

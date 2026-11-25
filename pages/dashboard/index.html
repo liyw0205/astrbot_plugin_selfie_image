@@ -1991,6 +1991,13 @@
         <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理</label><select id="modalProxyId"><option value="">直连（不使用代理）</option></select></div>
       </div>
+      <details id="modalNaiSettings" style="margin-top:12px" open>
+        <summary>NovelAI 参数</summary>
+        <div class="grid" style="margin-top:8px">
+          <div><label for="modalNaiNegative">负向提示词</label><textarea id="modalNaiNegative" rows="2" placeholder="留空使用插件默认值"></textarea></div>
+          <div><label for="modalNaiStrength">图生图参考强度（0 到 1）</label><input id="modalNaiStrength" type="number" min="0" max="1" step="0.01" placeholder="0.55"></div>
+        </div>
+      </details>
       <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
       <label class="checkline"><input id="modalEnabled" type="checkbox"> 启用渠道</label>
 
@@ -3988,6 +3995,15 @@ Source prompt:
         source = normalizeChannel(list[EDITING_CHANNEL_INDEX] || factory());
       }
       const enabled = Array.from(document.querySelectorAll('#enabledModels .model-row .name')).map(el => el.textContent || '');
+      const extra = Object.assign({}, source.extra || {});
+      const negativePrompt = String($('modalNaiNegative')?.value || '').trim();
+      const strengthInput = String($('modalNaiStrength')?.value || '').trim();
+      if (negativePrompt) extra.novelai_negative_prompt = negativePrompt;
+      else delete extra.novelai_negative_prompt;
+      if (strengthInput) {
+        const strength = Number(strengthInput);
+        if (Number.isFinite(strength) && strength >= 0 && strength <= 1) extra.novelai_img2img_strength = strength;
+      } else delete extra.novelai_img2img_strength;
       const ch = normalizeChannel(Object.assign({}, source, {
         name: $('modalChannelName').value.trim(),
         provider_type: $('modalProvider').value || source.provider_type || 'openai',
@@ -4002,7 +4018,8 @@ Source prompt:
         prompt_en_models: collectModalPromptEnModels(enabled),
         model_provider_types: collectModalProviderTypes(enabled),
         model_download_proxy_ids: collectModalDownloadProxyIds(enabled),
-        models_cache: source.models_cache || []
+        models_cache: source.models_cache || [],
+        extra
       }));
       // Editing a masked channel without touching the field must not submit an
       // empty credential and accidentally clear the stored key.
@@ -4106,6 +4123,8 @@ Source prompt:
       $('modalProvider').dataset.prevProvider = defaultProvider;
       $('modalBaseUrl').value = ch.base_url || '';
       $('modalApiKey').value = ch.api_key || '';
+      $('modalNaiNegative').value = String((ch.extra || {}).novelai_negative_prompt || '');
+      $('modalNaiStrength').value = String((ch.extra || {}).novelai_img2img_strength ?? '');
       fillChannelProxyOptions(ch.proxy_id || '');
       $('modalEnabled').checked = ch.enabled !== false;
       $('cacheSearch').value = '';
@@ -13293,7 +13312,7 @@ Source prompt:
     };
     $('manualModel').onkeydown = event => { if (event.key === 'Enter') $('manualAdd').click(); };
     // Modal field edits stay local until「保存渠道」
-    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxyId','modalEnabled'].forEach(id => {
+    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxyId','modalEnabled','modalNaiNegative','modalNaiStrength'].forEach(id => {
       const el = $(id);
       if (!el) return;
       const eventName = el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';

@@ -40,7 +40,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "upper_body",
-        "horizontal_position": "front"
+        "horizontal_position": "front",
+        "roll": 0
       }
     },
     {
@@ -82,7 +83,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "upper_body",
-        "horizontal_position": "left"
+        "horizontal_position": "left",
+        "roll": 0
       }
     },
     {
@@ -124,7 +126,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "upper_body",
-        "horizontal_position": "right"
+        "horizontal_position": "right",
+        "roll": 0
       }
     },
     {
@@ -158,7 +161,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "upper_body",
-        "horizontal_position": "front"
+        "horizontal_position": "front",
+        "roll": 0
       }
     },
     {
@@ -189,7 +193,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "above_shoulder",
-        "horizontal_position": "front"
+        "horizontal_position": "front",
+        "roll": 0
       }
     },
     {
@@ -220,7 +225,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "above_shoulder",
-        "horizontal_position": "left"
+        "horizontal_position": "left",
+        "roll": 0
       }
     },
     {
@@ -251,7 +257,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "above_shoulder",
-        "horizontal_position": "right"
+        "horizontal_position": "right",
+        "roll": 0
       }
     },
     {
@@ -284,7 +291,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "above_shoulder",
-        "horizontal_position": "front"
+        "horizontal_position": "front",
+        "roll": 0
       }
     },
     {
@@ -318,7 +326,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "above_shoulder",
-        "horizontal_position": "left"
+        "horizontal_position": "left",
+        "roll": 0
       }
     },
     {
@@ -352,7 +361,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "above_shoulder",
-        "horizontal_position": "right"
+        "horizontal_position": "right",
+        "roll": 0
       }
     },
     {
@@ -384,7 +394,8 @@
         ],
         "pitch_kind": "down",
         "camera_height": "above_waist",
-        "horizontal_position": "front_right"
+        "horizontal_position": "front_right",
+        "roll": 0
       }
     },
     {
@@ -394,14 +405,19 @@
       "direction": "oblique",
       "elevation": "down",
       "weight": 2,
-      "selection_weight": 3,
+      "selection_weight": 5,
       "support_types": [
         "seat_edge",
         "wide_edge",
-        "raised_soft_surface"
+        "raised_soft_surface",
+        "chair_seat",
+        "raised_edge",
+        "wide_surface",
+        "long_surface"
       ],
       "framings": [
-        "leg_detail"
+        "leg_detail",
+        "full_outfit"
       ],
       "angle": {
         "yaw": 45,
@@ -416,9 +432,10 @@
         ],
         "pitch_kind": "down",
         "camera_height": "above_shoulder",
-        "horizontal_position": "front_right"
+        "horizontal_position": "front_right",
+        "roll": 0
       },
-      "prompt": "第三人称画外相机从人物右前上方取景，机位高于肩线，向下倾斜约35度；画面保留沙发座沿和臀部承托关系，普通手机焦段、近距离自然竖幅。"
+      "prompt": "第三人称画外相机从人物右前上方取景，机位高于肩线，向下倾斜约35度；画面保留座沿或软支撑面对臀部的承托关系，普通手机焦段、近距离自然竖幅。"
     },
     {
       "id": "third_front_low",
@@ -454,7 +471,8 @@
         ],
         "pitch_kind": "up",
         "camera_height": "below_waist",
-        "horizontal_position": "front"
+        "horizontal_position": "front",
+        "roll": 0
       }
     },
     {
@@ -492,7 +510,8 @@
         ],
         "pitch_kind": "up",
         "camera_height": "below_waist",
-        "horizontal_position": "front_right"
+        "horizontal_position": "front_right",
+        "roll": 0
       }
     },
     {
@@ -529,7 +548,8 @@
         ],
         "pitch_kind": "up",
         "camera_height": "below_waist",
-        "horizontal_position": "side"
+        "horizontal_position": "side",
+        "roll": 0
       }
     },
     {
@@ -560,7 +580,8 @@
         ],
         "pitch_kind": "up",
         "camera_height": "below_waist",
-        "horizontal_position": "front"
+        "horizontal_position": "front",
+        "roll": 0
       }
     },
     {
@@ -593,7 +614,8 @@
         ],
         "pitch_kind": "up",
         "camera_height": "below_waist",
-        "horizontal_position": "front_right"
+        "horizontal_position": "front_right",
+        "roll": 0
       }
     },
     {
@@ -607,7 +629,10 @@
         "lying_surface",
         "reclined_surface",
         "kneeling_surface",
-        "half_kneeling_surface"
+        "half_kneeling_surface",
+        "chair_seat",
+        "seat_edge",
+        "wide_surface"
       ],
       "framings": [
         "leg_detail",
@@ -627,7 +652,8 @@
         ],
         "pitch_kind": "level",
         "camera_height": "eye_level",
-        "horizontal_position": "front_right"
+        "horizontal_position": "front_right",
+        "roll": 0
       }
     },
     {
@@ -660,7 +686,8 @@
         ],
         "pitch_kind": "up",
         "camera_height": "below_waist",
-        "horizontal_position": "side"
+        "horizontal_position": "side",
+        "roll": 0
       }
     },
     {
@@ -692,7 +719,8 @@
         ],
         "pitch_kind": "level",
         "camera_height": "eye_level",
-        "horizontal_position": "side"
+        "horizontal_position": "side",
+        "roll": 0
       }
     },
     {
@@ -723,7 +751,8 @@
         ],
         "pitch_kind": "level",
         "camera_height": "eye_level",
-        "horizontal_position": "front_right"
+        "horizontal_position": "front_right",
+        "roll": 0
       }
     },
     {
@@ -754,7 +783,8 @@
         ],
         "pitch_kind": "level",
         "camera_height": "eye_level",
-        "horizontal_position": "side"
+        "horizontal_position": "side",
+        "roll": 0
       }
     }
   ]

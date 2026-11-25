@@ -445,6 +445,15 @@
         source = normalizeChannel(list[EDITING_CHANNEL_INDEX] || factory());
       }
       const enabled = Array.from(document.querySelectorAll('#enabledModels .model-row .name')).map(el => el.textContent || '');
+      const extra = Object.assign({}, source.extra || {});
+      const negativePrompt = String($('modalNaiNegative')?.value || '').trim();
+      const strengthInput = String($('modalNaiStrength')?.value || '').trim();
+      if (negativePrompt) extra.novelai_negative_prompt = negativePrompt;
+      else delete extra.novelai_negative_prompt;
+      if (strengthInput) {
+        const strength = Number(strengthInput);
+        if (Number.isFinite(strength) && strength >= 0 && strength <= 1) extra.novelai_img2img_strength = strength;
+      } else delete extra.novelai_img2img_strength;
       const ch = normalizeChannel(Object.assign({}, source, {
         name: $('modalChannelName').value.trim(),
         provider_type: $('modalProvider').value || source.provider_type || 'openai',
@@ -459,7 +468,8 @@
         prompt_en_models: collectModalPromptEnModels(enabled),
         model_provider_types: collectModalProviderTypes(enabled),
         model_download_proxy_ids: collectModalDownloadProxyIds(enabled),
-        models_cache: source.models_cache || []
+        models_cache: source.models_cache || [],
+        extra
       }));
       // Editing a masked channel without touching the field must not submit an
       // empty credential and accidentally clear the stored key.
@@ -563,6 +573,8 @@
       $('modalProvider').dataset.prevProvider = defaultProvider;
       $('modalBaseUrl').value = ch.base_url || '';
       $('modalApiKey').value = ch.api_key || '';
+      $('modalNaiNegative').value = String((ch.extra || {}).novelai_negative_prompt || '');
+      $('modalNaiStrength').value = String((ch.extra || {}).novelai_img2img_strength ?? '');
       fillChannelProxyOptions(ch.proxy_id || '');
       $('modalEnabled').checked = ch.enabled !== false;
       $('cacheSearch').value = '';

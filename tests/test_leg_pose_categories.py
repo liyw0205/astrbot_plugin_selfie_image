@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from astrbot_plugin_selfie_image.cos.leg_focus import (
+    LEGFOCUS_EXPLICIT_ONLY_POSE_IDS,
     LEGFOCUS_POSE_BY_ID,
     LegFocusDataError,
     build_leg_focus_action,
@@ -41,7 +42,7 @@ from astrbot_plugin_selfie_image.cos.leg_focus import (
     ("不要站姿 不要坐姿 不要跪姿", {"lying", "side_lying", "prone", "reclined"}),
 ])
 def test_category_selects_all_and_only_compatible_postures(query, postures):
-    with patch(
+    with patch("astrbot_plugin_selfie_image.cos.leg_focus.random.random", return_value=1), patch(
         "astrbot_plugin_selfie_image.cos.leg_focus._weighted_pose_choice",
         side_effect=lambda pool: pool[0],
     ) as choose:
@@ -49,7 +50,8 @@ def test_category_selects_all_and_only_compatible_postures(query, postures):
     candidates = choose.call_args.args[0]
     assert {pose["posture"] for pose in candidates} == postures
     assert {pose["id"] for pose in candidates} == {
-        pose["id"] for pose in LEGFOCUS_POSE_BY_ID.values() if pose["posture"] in postures
+        pose["id"] for pose in LEGFOCUS_POSE_BY_ID.values()
+        if pose["posture"] in postures and pose["id"] not in LEGFOCUS_EXPLICIT_ONLY_POSE_IDS
     }
     assert has_leg_focus_contract(action)
     assert has_leg_focus_contract(ensure_leg_focus_action(action))
@@ -75,7 +77,7 @@ def test_category_does_not_fall_back_to_another_posture(query, options):
 
 @pytest.mark.parametrize("query", ["不要并膝自然跪坐", "不要并膝坐姿轻捏大腿"])
 def test_negated_specific_pose_does_not_request_its_category(query):
-    with patch(
+    with patch("astrbot_plugin_selfie_image.cos.leg_focus.random.random", return_value=1), patch(
         "astrbot_plugin_selfie_image.cos.leg_focus._weighted_pose_choice",
         side_effect=lambda pool: pool[0],
     ) as choose:

@@ -49,6 +49,7 @@ APPROVED_RUNTIME_ADDITIONS = frozenset({
     "features/archive_transfer.py",
     "features/identity_pool.py",
     "data/persona/builtin_personas.json",
+    "data/legs/combo_presets.json",
 })
 REQUIRED_FILES = frozenset({
     "__init__.py", "main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt",
@@ -56,6 +57,7 @@ REQUIRED_FILES = frozenset({
     "webui/index_fallback.py", "core/constants.py", "data/cos/looks/index.json",
     "data/common/selfie_snapshots.json", "data/group/compositions.json",
     "data/legs/compositions.json", "data/legs/outfits.json", "data/legs/views.json",
+    "data/legs/combo_presets.json",
     "data/nai/artist_presets.json", "data/nai/reference.json", "data/schedule/prompt_pools.json",
     "data/studio/builtin_prompts.json",
     "features/identity_pool.py", "data/persona/builtin_personas.json",

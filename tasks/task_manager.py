@@ -863,7 +863,7 @@ class WebTaskMixin:
                     workers.pop(task_id, None)
 
         with self._web_task_lock:
-            if getattr(self, "_terminating", False):
+            if getattr(self, "_terminating", False) or getattr(self, "_shutdown_requested", False):
                 coro.close()
                 raise RuntimeError("插件正在卸载，无法提交新任务")
             loop = getattr(self, "loop", None)

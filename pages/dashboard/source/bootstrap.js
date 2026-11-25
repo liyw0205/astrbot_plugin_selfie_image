@@ -143,7 +143,7 @@
     };
     $('manualModel').onkeydown = event => { if (event.key === 'Enter') $('manualAdd').click(); };
     // Modal field edits stay local until「保存渠道」
-    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxyId','modalEnabled'].forEach(id => {
+    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxyId','modalEnabled','modalNaiNegative','modalNaiStrength'].forEach(id => {
       const el = $(id);
       if (!el) return;
       const eventName = el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';

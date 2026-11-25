@@ -308,6 +308,8 @@ class SelfieImagePlugin(
     WebTaskMixin,
     Star,
 ):
+    RUNTIME_SHUTDOWN_GRACE_SECONDS = 60.0
+
     def __init__(self, context: Context, config: Optional[dict] = None):
         super().__init__(context)
         plugin_data_dir = os.path.join(str(get_astrbot_data_path()), "plugin_data")
@@ -402,6 +404,7 @@ class SelfieImagePlugin(
         self._runtime_generation_tasks: Dict[str, Any] = {}
         self._runtime_generation_workers: Dict[str, asyncio.Task] = {}
         self._terminating = False
+        self._shutdown_requested = False
         # 模型选择仅作用于当前会话。
         self._session_model_lock = threading.RLock()
         self._session_model_overrides: Dict[str, str] = {}
@@ -593,10 +596,7 @@ class SelfieImagePlugin(
 
     async def _terminate_runtime(self) -> None:
         with self._web_task_lock:
-            self._terminating = True
-            for task in self._web_tasks.values():
-                if task.get("status") in {"queued", "running"}:
-                    task["cancel_requested"] = True
+            self._shutdown_requested = True
             runtime_tasks = dict(getattr(self, "_runtime_generation_tasks", {}))
             handles = list(runtime_tasks.values())
         startup_task = getattr(self, "_startup_load_task", None)
@@ -609,16 +609,48 @@ class SelfieImagePlugin(
                 pass
         # Stop Flask without blocking cancellation work on the bot event loop.
         await asyncio.to_thread(self.web_server.stop)
-        for handle in handles:
+        await asyncio.sleep(0)
+        workers_by_id = dict(getattr(self, "_runtime_generation_workers", {}))
+        with self._web_task_lock:
+            batch_ids = {
+                task_id for task_id, task in self._web_tasks.items()
+                if task.get("status") in {"queued", "running"}
+                and int(task.get("requested_count") or 1) > 1
+            }
+        grace_workers = {
+            workers_by_id[task_id] for task_id in batch_ids if task_id in workers_by_id
+        }
+        grace_workers.update(
+            handle for task_id, handle in runtime_tasks.items()
+            if task_id in batch_ids and isinstance(handle, asyncio.Task)
+        )
+        # Non-batch jobs retain prompt shutdown; accepted multi-image batches get a grace window.
+        for task_id, handle in runtime_tasks.items():
+            if task_id in batch_ids:
+                continue
             if isinstance(handle, asyncio.Task):
                 cancel_task_once(handle)
+            elif not handle.done():
+                handle.cancel()
+        pending = set()
+        if grace_workers:
+            _, pending = await asyncio.wait(
+                grace_workers,
+                timeout=max(0.0, float(getattr(self, "RUNTIME_SHUTDOWN_GRACE_SECONDS", 60.0))),
+            )
+        with self._web_task_lock:
+            self._terminating = True
+        for handle in handles:
+            if isinstance(handle, asyncio.Task):
+                if not handle.done():
+                    cancel_task_once(handle)
             elif not handle.done():
                 handle.cancel()
         # A concurrent Future becomes cancelled before its coroutine has
         # unwound. Await the actual loop workers, not just the proxy handles.
         await asyncio.sleep(0)
         workers_by_id = dict(getattr(self, "_runtime_generation_workers", {}))
-        workers = set(workers_by_id.values())
+        workers = pending | set(workers_by_id.values())
         workers.update(handle for handle in handles if isinstance(handle, asyncio.Task))
         cancelled_proxies = {
             task_id

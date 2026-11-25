@@ -67,7 +67,10 @@ def fingerprint_distance(left: Mapping[str, Any], right: Mapping[str, Any]) -> f
 
 
 def prompt_selection_snapshot(text: str) -> dict[str, str]:
-    return dict(re.findall(r"【(cos(?:_[a-z_]+)?|legs(?:_[a-z_]+)?|pose|scene|cam|frame|outfit|wear|angle|support|shot):([a-zA-Z0-9_-]+)】", str(text or "")))
+    return dict(re.findall(
+        r"【(cos(?:_[a-z_]+)?|legs(?:_[a-z_]+)?|pose|scene|cam|frame|outfit|wear|angle|support|shot|combo|crop_mode|leg_accessory):([a-zA-Z0-9_.,=|+-]+)】",
+        str(text or ""),
+    ))
 
 
 def record_final_prompt(record: Mapping[str, Any]) -> str:

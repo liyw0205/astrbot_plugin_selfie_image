@@ -165,15 +165,14 @@
       "id": "sofa_side_sit_knees_together",
       "title": "沙发侧坐并膝垂腿",
       "posture": "seated",
-      "scene_ids": ["sofa"],
       "legacy_ids": [],
       "aliases": ["沙发侧坐", "沙发并膝侧坐", "座沿侧坐并膝"],
-      "weight": 2,
-      "prompt": "坐在沙发座沿，臀部由座面稳定承托，上身自然直立；双膝轻轻并拢并向一侧自然偏转，小腿沿同侧膝踝顺势向前下方垂落，双脚轻松落地；双手自然落在身侧座面或膝旁，肩膀放松。",
+      "weight": 3,
+      "prompt": "坐稳在有承托的座沿或软支撑面上，臀部由座面稳定承托，上身自然直立；双膝轻轻并拢并向一侧自然偏转，小腿沿同侧膝踝顺势向前下方垂落，双脚轻松落地；双手自然落在身侧座面或膝旁，肩膀放松。",
       "crop_prompts": {
-        "third": "沙发座沿对臀部与大腿的承托关系清楚，双膝并拢、小腿自然下垂；画面裁切范围按选定 crop mode 执行。"
+        "third": "座沿或软支撑面对臀部与大腿的承托关系清楚，双膝并拢、小腿自然下垂；画面裁切范围按选定 crop mode 执行。"
       },
-      "support_types": ["seat_edge", "raised_soft_surface"],
+      "support_types": ["seat_edge", "raised_soft_surface", "raised_edge", "chair_seat", "wide_surface"],
       "camera_views": {
         "third": ["third_seated_oblique_down"]
       }
@@ -227,7 +226,8 @@
         "third": [
           "third_front_low",
           "third_oblique_low",
-          "third_side_low"
+          "third_side_low",
+          "third_seated_oblique_down"
         ]
       }
     },
@@ -272,7 +272,8 @@
       ],
       "camera_views": {
         "third": [
-          "third_front_low"
+          "third_front_low",
+          "third_seated_oblique_down"
         ]
       }
     },
@@ -402,7 +403,9 @@
       "camera_views": {
         "third": [
           "third_oblique_low",
-          "third_side_low"
+          "third_side_low",
+          "third_seated_oblique_down",
+          "third_oblique_level"
         ]
       }
     },
@@ -460,7 +463,8 @@
       "camera_views": {
         "third": [
           "third_oblique_low",
-          "third_side_low"
+          "third_side_low",
+          "third_seated_oblique_down"
         ]
       }
     },
@@ -512,7 +516,9 @@
           "self_mirror_right_gentle_down"
         ],
         "third": [
-          "third_oblique_low"
+          "third_oblique_low",
+          "third_seated_oblique_down",
+          "third_oblique_level"
         ]
       }
     },
@@ -554,6 +560,7 @@
       "legacy_ids": [],
       "aliases": ["并膝轻捏大腿", "轻捏大腿", "轻掐大腿", "捏腿坐姿"],
       "weight": 2,
+      "camera_preference": "selfie",
       "prompt": "自然坐稳座面，双大腿轻轻靠近、双膝相邻，小腿松弛落向座前地面。本人一只手从腰侧自然落到同侧大腿外侧，另一只手留在取景外；手掌沿衣料轻放，腿间保持自然距离。",
       "detail_variants": [
         {
@@ -568,11 +575,13 @@
         }
       ],
       "crop_prompts": {
-        "selfie": "从本人上身位置向下取景，两条大腿、相邻双膝与大腿外侧的轻柔手势为主体，保留座面承托；膝下小腿与脚可自然留在下缘画外，维持近距离日常自拍视角。"
+        "selfie": "从本人上身位置向下取景，两条大腿、相邻双膝与大腿外侧的轻柔手势为主体，保留座面承托；膝下小腿与脚可自然留在下缘画外，维持近距离日常自拍视角。",
+        "third": "第三人称斜俯取景保留座面承托、相邻双膝和手掌轻触同侧大腿外缘的关系，手指与腿部轮廓清楚。"
       },
       "support_types": ["chair_seat", "seat_edge"],
       "camera_views": {
-        "selfie": ["self_forward_down", "self_left_down", "self_right_down"]
+        "selfie": ["self_forward_down", "self_left_down", "self_right_down"],
+        "third": ["third_seated_oblique_down"]
       }
     },
     {

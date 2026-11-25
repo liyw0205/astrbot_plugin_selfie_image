@@ -12,7 +12,7 @@ from PIL import Image
 
 from astrbot_plugin_selfie_image.core.models import AICatConfig
 from astrbot_plugin_selfie_image.core.provider_parser import build_model_list_urls
-from astrbot_plugin_selfie_image.core.providers import ImageGenerateRequest, NovelAIImageAdapter
+from astrbot_plugin_selfie_image.core.providers import ImageGenerateRequest, ImageReference, NovelAIImageAdapter
 from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
 
@@ -126,6 +126,42 @@ def test_nai_targets_from_openai_channels_still_use_relay_protocol():
     assert target.provider_type == "novelai"
     assert adapter._mode() == "relay"
     assert adapter._endpoint(adapter._mode()) == "https://relay.test/v1/chat/completions"
+
+
+def test_novelai_payload_settings_come_from_channel_extra():
+    config = AICatConfig.from_dict({"image_channels": [{
+        "name": "nai", "provider_type": "novelai", "base_url": "https://api.novelai.net",
+        "api_key": "key", "enabled_models": ["nai-diffusion-4-5-full"],
+        "extra": {"novelai_negative_prompt": "custom negative", "novelai_img2img_strength": 0.28},
+    }]})
+    adapter = NovelAIImageAdapter(config.get_enabled_image_targets()[0], None)
+    request = ImageGenerateRequest(prompt="portrait", images=[ImageReference(data=PNG)])
+
+    official = adapter.build_official_payload(request)["parameters"]
+    relay = json.loads(adapter.build_relay_payload(request)["messages"][1]["content"])
+    gateway = adapter.build_gateway_params(request)
+    fallback = adapter.build_relay_fallback_payload(request)
+
+    assert official["negative_prompt"] == "custom negative"
+    assert official["v4_negative_prompt"]["caption"]["base_caption"] == "custom negative"
+    assert official["strength"] == 0.28
+    assert relay["negative_prompt"] == "custom negative"
+    assert gateway["negative"] == "custom negative"
+    assert fallback["negative_prompt"] == "custom negative"
+
+
+def test_novelai_payload_settings_validate_strength_and_allow_empty_negative():
+    config = AICatConfig.from_dict({"image_channels": [{
+        "name": "nai", "provider_type": "novelai", "base_url": "https://api.novelai.net",
+        "api_key": "key", "enabled_models": ["nai-diffusion-4-5-full"],
+        "extra": {"negative_prompt": "", "img2img_strength": 2},
+    }]})
+    adapter = NovelAIImageAdapter(config.get_enabled_image_targets()[0], None)
+    parameters = adapter.build_official_payload(
+        ImageGenerateRequest(prompt="portrait", images=[ImageReference(data=PNG)])
+    )["parameters"]
+    assert parameters["negative_prompt"] == ""
+    assert parameters["strength"] == 0.55
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 429, 502])
