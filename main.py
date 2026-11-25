@@ -254,6 +254,14 @@ from .webui.dashboard_api import SelfieImageDashboardAPI
 from .webui.web import FlaskWebServer
 
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
+_ALL_EVENT_MESSAGES = getattr(getattr(filter, "EventMessageType", None), "ALL", None)
+
+
+def _event_message_handler(*args: Any, **kwargs: Any):
+    register_handler = getattr(filter, "event_message_type", None)
+    if callable(register_handler) and _ALL_EVENT_MESSAGES is not None:
+        return register_handler(*args, **kwargs)
+    return lambda handler: handler
 
 
 def _appearance_type_for_request(persona: Any, text: str = "") -> str:
@@ -1465,6 +1473,8 @@ class SelfieImagePlugin(
         force_view: str = "",
         avoid_combinations: Optional[set[Tuple[str, str]]] = None,
         avoid_pose_details: Optional[set[Tuple[str, str]]] = None,
+        avoid_combos: Optional[set[str]] = None,
+        prefer_combo: bool = False,
     ) -> str:
         return build_leg_focus_action(
             extra_request,
@@ -1479,6 +1489,8 @@ class SelfieImagePlugin(
             force_view=force_view,
             avoid_combinations=avoid_combinations,
             avoid_pose_details=avoid_pose_details,
+            avoid_combos=avoid_combos,
+            prefer_combo=prefer_combo,
         )
 
     def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:
@@ -1731,6 +1743,8 @@ class SelfieImagePlugin(
         ack_message: str = "",
         model_request: str = "",
         original_prompt: str = "",
+        message_refs: Optional[List[ImageReference]] = None,
+        retry_context: Optional[Mapping[str, Any]] = None,
     ) -> Optional[str]:
         if not self.config.image_enable_llm_tool:
             return self._tool_unavailable("我这会儿还没法给你拍这种。")
@@ -1746,12 +1760,14 @@ class SelfieImagePlugin(
             event,
             await self._build_contextual_progress_text(event, "selfie", action, requested_count, ack_message),
         )
-        extra_refs = await self._event_reference_images(
-            event,
-            include_at_avatar=self._looks_like_group_selfie_intent(action),
-            context_hint=action,
-            allow_context_fallback=True,
-        )
+        extra_refs = message_refs
+        if extra_refs is None:
+            extra_refs = await self._event_reference_images(
+                event,
+                include_at_avatar=self._looks_like_group_selfie_intent(action),
+                context_hint=action,
+                allow_context_fallback=True,
+            )
         await self._ensure_daily_selfie_schedule(action, bool(extra_refs))
         cos_selection = self._select_selfie_references(action, extra_refs)
         group_selection = (
@@ -1795,11 +1811,14 @@ class SelfieImagePlugin(
                 "reference_image_count": len(extra_refs),
                 "requested_model": str(model_request or "").strip(),
                 "kind": "LLM 自拍",
+                **dict(retry_context or {}),
             },
             runner=runner,
             reference_images=self._selfie_reference_images(action, extra_refs, selection),
         )
         result = await self._await_command_image_task(task)
+        if result.get("success") or result.get("generation_success"):
+            self._remember_llm_generation_result(event, task, result)
         if not result.get("success") and not result.get("files"):
             return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("selfie"))
         return self._tool_success("selfie", len(result.get("files") or []) or requested_count)
@@ -1810,12 +1829,10 @@ class SelfieImagePlugin(
             lines.append(f"生成成功，耗时 {elapsed_seconds:.2f}s，数量 {count} 张。")
             if self.config.image_enable_daily_limit:
                 status = self._access_status(event)
-                if status.get("unlimited"):
-                    lines.append("今日用量：白名单用户/群组和管理员不限制。")
-                else:
-                    user_id = status.get("user_id") or ""
-                    used = int(self._current_usage_stats().get("users", {}).get(user_id, {}).get("count", 0))
-                    lines.append(f"今日用量：{used}/{self.config.image_daily_limit_count}。")
+                user_id = status.get("user_id") or ""
+                used = int(self._current_usage_stats().get("users", {}).get(user_id, {}).get("count", 0))
+                limit = "∞" if status.get("unlimited") else self.config.image_daily_limit_count
+                lines.append(f"今日用量：{used}/{limit}")
         model_name = command_model_name(used_model)
         if self.config.image_show_model_info and model_name:
             lines.append(f"模型：{model_name}")
@@ -2657,13 +2674,31 @@ class SelfieImagePlugin(
             targets if targets is not None else self._resolve_generation_targets(event),
             model_request,
         )
-        return {
+        context = {
             "task_id": task_id,
             "requested_count": requested_count,
             "requested_model": str(model_request or "").strip(),
             "resolved_model": resolved_model,
             "model_match_mode": match_mode,
         }
+        task_getter = getattr(self, "get_web_image_task", None)
+        if callable(task_getter) and task_id:
+            try:
+                task = task_getter(task_id)
+            except Exception:
+                task = {}
+            request_data = task.get("request_data") if isinstance(task, Mapping) else {}
+            if isinstance(request_data, Mapping):
+                for key in (
+                    "retry_mode", "source_generation_id", "source_record_id", "source_images",
+                    "feedback", "last_feedback", "strength", "reference_fidelity", "negative_prompt",
+                ):
+                    value = request_data.get(key)
+                    if isinstance(value, (str, int, float, bool)):
+                        context[key] = value
+                    elif key == "source_images" and isinstance(value, list):
+                        context[key] = [dict(item) for item in value if isinstance(item, Mapping)][:8]
+        return context
 
     def _prioritize_targets_by_model_request(
         self,
@@ -3185,6 +3220,7 @@ class SelfieImagePlugin(
         special_preset_variants: Optional[List[str]] = None,
         model_request: str = "",
         original_prompt: str = "",
+        reference_fidelity: str = "",
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         base_prompt, variation_enabled, variation_field = parse_variation_request(prompt)
@@ -3224,6 +3260,7 @@ class SelfieImagePlugin(
                     requested_count=total,
                     model_request=model_request,
                     original_prompt=original_prompt or prompt,
+                    reference_fidelity=reference_fidelity,
                 )
             return await self._draw_once(
                 event,
@@ -3521,6 +3558,7 @@ class SelfieImagePlugin(
         requested_count: int = 1,
         model_request: str = "",
         original_prompt: str = "",
+        reference_fidelity: str = "",
     ) -> Dict[str, Any]:
         user_prompt = str(prompt or "").strip()
         prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
@@ -3546,6 +3584,7 @@ class SelfieImagePlugin(
             record_context=self._model_request_record_context(
                 task_id, requested_count, model_request, event, target_pool,
             ),
+            reference_fidelity=reference_fidelity,
         )
 
     async def _handle_selfie_command(
@@ -3815,26 +3854,12 @@ class SelfieImagePlugin(
             yield event.plain_result("未找到可访问的生图记录。可用 /查看提示词 六位编号 或 /查看提示词 最近；需要反推图片时使用 /查看生图提示词。")
             return
         original_prompt = record_final_prompt(record)
-        request_data = record.get("request_data") or {}
-        if not isinstance(request_data, Mapping):
-            request_data = {}
-        actual_prompt = str(
-            record.get("final_prompt")
-            or request_data.get("final_prompt")
-            or request_data.get("request_prompt_en")
-            or record.get("request_prompt")
-            or record.get("prompt")
-            or ""
-        ).strip()
-        used_model = str(record.get("used_model") or "")
         label = f"生图编号：{record.get('image_code', '')}\n时间：{record.get('time', '')}\n匹配方式：{method}"
-        if not original_prompt and not actual_prompt:
+        if not original_prompt:
             yield event.plain_result(label + "\n历史记录没有保存提示词。")
             return
         yield event.plain_result(label)
-        yield event.plain_result(f"原始提示词：\n{original_prompt or '（未保存）'}")
-        yield event.plain_result(f"实际发送提示词：\n{actual_prompt or '（未保存）'}")
-        yield event.plain_result(f"使用模型：{used_model or '（未记录）'}")
+        yield event.plain_result(original_prompt)
 
     async def _prompt_lookup_references(self, event: AstrMessageEvent, context_hint: str) -> List[ImageReference]:
         quoted_sources = await self._quoted_original_image_sources(event)
@@ -4823,6 +4848,42 @@ class SelfieImagePlugin(
         success, message = self._mutate_access_user("release", event, payload)
         yield event.plain_result(f"{'✅' if success else '❌'} {message}")
 
+    @staticmethod
+    def _is_retry_generation_request(text: str) -> bool:
+        value = str(text or "").strip()
+        if re.search(r"(?:不要|不想|不需要|无需|不用|别)\s*(?:再)?\s*(?:重画|重新画|重新生成|再生成|再画)", value):
+            return False
+        return bool(re.search(
+            r"(?:重新画|重画|再来一张|再生成一张|重新生成|重来(?:一张)?|这张重画|"
+            r"(?:比例|身材|姿势|真人感|质感).{0,16}(?:不对|不好|不自然).{0,16}(?:重画|重新画|再来|重来))",
+            value,
+        ))
+
+    @_event_message_handler(_ALL_EVENT_MESSAGES, priority=1000)
+    async def route_natural_image_retry(self, event: AstrMessageEvent) -> None:
+        text = extract_event_text(event)
+        if not self._is_retry_generation_request(text):
+            return
+        if not event.is_private_chat() and not bool(getattr(event, "is_at_or_wake_command", False)):
+            return
+        if text.lstrip().startswith(("/", "!")):
+            return
+        stopped = getattr(event, "is_stopped", None)
+        if callable(stopped) and stopped():
+            return
+        try:
+            result = await self.tool_retry_last_generation(event, text)
+            result_text = str(result or "")
+            if result_text.startswith(("[TOOL_FAILED]", "[TOOL_UNAVAILABLE]")):
+                marker = "[TOOL_FAILED]" if result_text.startswith("[TOOL_FAILED]") else "[TOOL_UNAVAILABLE]"
+                message = result_text.splitlines()[0].removeprefix(marker).strip()
+                await event.send(event.plain_result(message))
+        except Exception as exc:
+            logger.exception(f"[SelfieImage] natural image retry failed: {exc}")
+            await event.send(event.plain_result("这次没能重新画出来，请再试一次。"))
+        finally:
+            event.stop_event()
+
     @LLM_TOOL(name="generate_image")
     async def tool_generate_image(
         self,
@@ -4864,21 +4925,45 @@ class SelfieImagePlugin(
                 "model": model,
             },
         )
+        return await self._run_llm_image_request(
+            event, prompt, count, aspect_ratio, resolution, size, model, ack_message,
+            original_prompt=str(prompt or ""),
+        )
+
+    async def _run_llm_image_request(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+        count: int = 1,
+        aspect_ratio: str = "",
+        resolution: str = "",
+        size: str = "",
+        model: str = "",
+        ack_message: str = "",
+        *,
+        original_prompt: str = "",
+        reference_images: Optional[List[ImageReference]] = None,
+        retry_context: Optional[Mapping[str, Any]] = None,
+        force_plain_image: bool = False,
+    ) -> Optional[str]:
+        if not self.config.image_enable_llm_tool:
+            return self._tool_unavailable("我这会儿还没法把这个画面整理出来。")
         requested_count = self._normalize_count(count)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             return self._tool_soft_fail(error)
-        original_prompt = str(prompt or "")
+        original_prompt = str(original_prompt or prompt or "")
         if self._nai_model_unavailable(event, model):
             return self._tool_soft_fail(NAI_MODEL_UNAVAILABLE)
         prompt, aspect, resol, _, _ = self._resolve_image_preset(prompt, aspect_ratio, resolution or size)
         if not prompt:
             return self._tool_soft_fail("缺少生图提示词", "你想让我往什么感觉走？")
         framework_persona = await resolve_framework_persona(getattr(self, "context", None), event)
-        if self._looks_like_selfie_intent(prompt, bot_name=framework_persona.name):
+        if not force_plain_image and self._looks_like_selfie_intent(prompt, bot_name=framework_persona.name):
             return await self._run_llm_selfie_flow(
                 event, prompt, requested_count, aspect, resol, ack_message,
                 model_request=model, original_prompt=original_prompt,
+                message_refs=reference_images, retry_context=retry_context,
             )
 
         await self._send_progress_text(
@@ -4889,13 +4974,15 @@ class SelfieImagePlugin(
         # a clear "use the previous image" follow-up, but must not silently
         # borrow the bot persona image.  Persona references belong to the
         # dedicated generate_selfie path.
-        refs = await self._event_reference_images(
-            event,
-            include_at_avatar=True,
-            context_hint=prompt,
-            allow_context_fallback=True,
-            include_persona=False,
-        )
+        refs = reference_images
+        if refs is None:
+            refs = await self._event_reference_images(
+                event,
+                include_at_avatar=True,
+                context_hint=prompt,
+                allow_context_fallback=True,
+                include_persona=False,
+            )
         async def runner(task_id: str) -> Dict[str, Any]:
             return await self._background_draw_batches(
                 task_id,
@@ -4910,6 +4997,7 @@ class SelfieImagePlugin(
                 fail_label=self._natural_fail_fallback("image"),
                 model_request=model,
                 original_prompt=original_prompt,
+                reference_fidelity=str((retry_context or {}).get("reference_fidelity") or ""),
             )
 
         task = self.start_command_image_task(
@@ -4924,11 +5012,14 @@ class SelfieImagePlugin(
                 "reference_image_count": len(refs),
                 "requested_model": str(model or "").strip(),
                 "kind": "LLM 生图",
+                **dict(retry_context or {}),
             },
             runner=runner,
             reference_images=refs,
         )
         result = await self._await_command_image_task(task)
+        if result.get("success") or result.get("generation_success"):
+            self._remember_llm_generation_result(event, task, result)
         if not result.get("success") and not result.get("files"):
             return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("image"))
         return self._tool_success("image", len(result.get("files") or []) or requested_count)
@@ -4996,17 +5087,237 @@ class SelfieImagePlugin(
         feedback: str = "",
     ) -> Optional[str]:
         """
-        重新生成本会话最近一次图片或自拍。
-        用户说“再来”“重试”“重新生成”“再试一次”等，或明确指出上一张的问题时必须使用本工具，不能只回复文字。
-        feedback 填用户对上一张的明确修改要求，例如“更年轻一点”“不像我”“衣服不对”。
+        基于本会话最近一次图片或自拍重绘。
+        用户说“重画”“重新画”“再来一张”“重新生成”，或指出上一张比例、姿势、质感等问题时必须使用本工具，不得只回复文字或退化成纯文生图。
+        默认把上一张生成图作为图生图参考；当前消息引用/上传的图片优先，并可与上一张结果一起传入。
+        只有用户明确说“不要参考图”“从零画”或“纯文生图”时，才允许不带参考图。
+        feedback 填用户对上一张的明确修改要求，例如“身材比例不对，真人感不足”。
         Args:
             feedback(string): 可选。用户对上一轮结果的具体修正要求；留空时按原要求重新生成。
         """
-        previous = self._last_llm_generation(event, feedback)
+        previous = self._last_llm_generation(event)
         kind = str(previous.get("kind") or "")
-        params = previous.get("params") if isinstance(previous.get("params"), dict) else {}
-        if kind == "image":
-            return await self.tool_generate_image(event, **params)
-        if kind == "selfie":
-            return await self.tool_generate_selfie(event, **params)
-        return self._tool_soft_fail("没有找到本会话最近一次生成请求", "你想重新来哪一张？")
+        params = dict(previous.get("params") or {}) if isinstance(previous.get("params"), dict) else {}
+        source_record = self._llm_retry_source_record(event, previous)
+        if not kind and source_record:
+            source = str(source_record.get("source") or "")
+            kind = "selfie" if source.endswith("selfie") else "image"
+            request_data = source_record.get("request_data") if isinstance(source_record.get("request_data"), Mapping) else {}
+            params = {
+                "prompt" if kind == "image" else "action": str(
+                    source_record.get("original_prompt") or source_record.get("request_prompt") or source_record.get("prompt") or ""
+                ),
+                "count": 1,
+                "aspect_ratio": str(request_data.get("aspect_ratio") or ""),
+                "resolution": str(request_data.get("resolution") or ""),
+                "model": str(request_data.get("requested_model") or source_record.get("used_model") or ""),
+            }
+            previous["params"] = params
+        if kind not in {"image", "selfie"}:
+            kind = "image"
+            params = {}
+
+        request_text = extract_event_text(event)
+        text_only = bool(re.search(r"(?:不要|不需要|无需|别用).{0,8}(?:参考图|原图)|从零画|纯文生图", request_text, re.I))
+        feedback_text = str(feedback or "").strip() or request_text.strip()
+        field = "action" if kind == "selfie" else "prompt"
+        original_prompt = str(
+            params.get(field)
+            or (source_record.get("original_prompt") if isinstance(source_record, Mapping) else "")
+            or (source_record.get("request_prompt") if isinstance(source_record, Mapping) else "")
+            or ""
+        ).strip()
+
+        refs: List[ImageReference] = []
+        current_ref_count = 0
+        previous_ref = None
+        if not text_only:
+            refs = await self._event_reference_images(
+                event,
+                include_at_avatar=kind == "selfie" and self._looks_like_group_selfie_intent(original_prompt),
+                context_hint=request_text,
+                allow_context_fallback=False,
+                include_persona=False,
+            )
+            current_ref_count = len(refs)
+            previous_ref = self._load_retry_source_image(source_record)
+            if previous_ref:
+                refs = self._deduplicate_image_references([*refs, previous_ref])
+            if not refs:
+                return self._tool_soft_fail(
+                    "找不到要重画的图，请引用图片或重新发图",
+                    "找不到要重画的图，请引用图片或重新发图。",
+                )
+        if not original_prompt:
+            if refs and not text_only:
+                original_prompt = "根据参考图片重绘，保留主体身份与主要内容，优化构图和细节。"
+            else:
+                return self._tool_soft_fail(
+                    "没有找到本会话最近一次生成请求",
+                    "找不到要重画的画面，请引用图片或重新发送原图。",
+                )
+        retry_prompt = self._build_retry_feedback_prompt(original_prompt, feedback_text)
+
+        requested_model = str(params.get("model") or "").strip()
+        if not requested_model and source_record:
+            request_data = source_record.get("request_data") if isinstance(source_record.get("request_data"), Mapping) else {}
+            requested_model = str(request_data.get("requested_model") or source_record.get("used_model") or "").strip()
+        params[field] = original_prompt
+        params["model"] = requested_model
+        self._remember_llm_generation(event, kind, params)
+        source_image_meta = []
+        if source_record and previous_ref and not text_only:
+            source_image_meta.append({
+                "kind": "generated",
+                "generation_id": str(source_record.get("image_code") or ""),
+                "record_id": str(source_record.get("id") or ""),
+                "local_path": str((source_record.get("generated_image_paths") or [""])[0]),
+            })
+        if current_ref_count:
+            source_image_meta.append({"kind": "current_reference", "count": current_ref_count})
+        retry_context = {
+            "retry_mode": "retry_text_only" if text_only else "retry_img2img",
+            "source_generation_id": str(source_record.get("image_code") or "") if previous_ref and source_record else "",
+            "source_record_id": str(source_record.get("id") or "") if previous_ref and source_record else "",
+            "source_images": source_image_meta,
+            "feedback": feedback_text,
+            "last_feedback": feedback_text,
+            "strength": None if text_only else 0.5,
+            "reference_fidelity": "" if text_only else "low",
+            "negative_prompt": (
+                "elongated legs, short torso, distorted proportions, bad anatomy, plastic skin, overly smooth cgi, overly smoothed skin"
+                if not text_only and re.search(r"比例|腿太长|腿长|身材|真人感|塑料|磨皮", feedback_text)
+                else ""
+            ),
+        }
+        if source_record:
+            self._update_last_llm_generation(
+                event,
+                source_record_id=str(source_record.get("id") or ""),
+                source_generation_id=str(source_record.get("image_code") or ""),
+            )
+        return await self._run_llm_image_request(
+            event,
+            retry_prompt,
+            params.get("count", 1),
+            str(params.get("aspect_ratio") or ""),
+            str(params.get("resolution") or ""),
+            str(params.get("size") or ""),
+            requested_model,
+            "我按这次反馈重新画。",
+            original_prompt=original_prompt,
+            reference_images=refs,
+            retry_context=retry_context,
+            force_plain_image=True,
+        )
+
+    def _build_retry_feedback_prompt(self, original_prompt: str, feedback: str) -> str:
+        text = str(feedback or "").strip()
+        if not text or re.fullmatch(
+            r"(?:请)?(?:帮我)?(?:这张)?(?:再来一张|再生成一张|重新生成|重画|重新画|重来(?:一张)?)[。！! ]*",
+            text,
+        ):
+            return str(original_prompt or "").strip()
+        block = f"保持原构图与人物设定；优先修正用户反馈：{text}。"
+        if re.search(r"比例|腿太长|腿长|身材|真人感|塑料|磨皮", text):
+            block += (
+                "人物比例符合真人常模，约7至7.5头身，腿长自然，不刻意拉长；"
+                "皮肤保留真实纹理与自然光影，不过度磨皮，不呈塑料质感。"
+                "避免 elongated legs, short torso, distorted proportions, bad anatomy, plastic skin, overly smooth CGI。"
+            )
+        return "\n\n".join(
+            part for part in (str(original_prompt or "").strip(), "【重绘反馈优先】" + block)
+            if part
+        )
+
+    def _llm_retry_source_record(self, event: AstrMessageEvent, cached: Mapping[str, Any]) -> Dict[str, Any]:
+        target_id = str(cached.get("source_record_id") or "").strip()
+        getter = getattr(self, "get_record_for_web", None)
+        record: Dict[str, Any] = {}
+        if target_id and callable(getter):
+            try:
+                record = getter(target_id)
+            except Exception:
+                record = {}
+        if not record:
+            records_getter = getattr(self, "_prompt_records_for_event", None)
+            if callable(records_getter):
+                try:
+                    records = records_getter(event)
+                except Exception:
+                    records = []
+                record = next((
+                    row for row in reversed(records)
+                    if isinstance(row, Mapping)
+                    and str(row.get("source") or "").startswith("llm-generate-")
+                    and row.get("generated_image_paths")
+                    and (row.get("generation_success") is not False)
+                ), {})
+        if record and not self._prompt_record_allowed(event, record):
+            return {}
+        if not record or not str(record.get("source") or "").startswith("llm-generate-"):
+            return {}
+        return dict(record)
+
+    def _load_retry_source_image(self, record: Mapping[str, Any]) -> Optional[ImageReference]:
+        paths = record.get("generated_image_paths")
+        if not isinstance(paths, list):
+            return None
+        loader = getattr(self, "_load_cache_image_bytes", None)
+        if not callable(loader):
+            return None
+        for path in paths:
+            try:
+                loaded = loader(str(path or ""))
+            except Exception:
+                loaded = None
+            if loaded and loaded[0]:
+                return ImageReference(data=loaded[0], mime_type=loaded[1], source_url=str(path or ""))
+        return None
+
+    @staticmethod
+    def _deduplicate_image_references(refs: List[ImageReference]) -> List[ImageReference]:
+        seen = set()
+        result = []
+        for ref in refs:
+            data = bytes(getattr(ref, "data", b"") or b"")
+            digest = hashlib.sha256(data).digest() if data else None
+            if digest is not None and digest in seen:
+                continue
+            if digest is not None:
+                seen.add(digest)
+            result.append(ref)
+        return result
+
+    def _remember_llm_generation_result(
+        self, event: AstrMessageEvent, task: Mapping[str, Any], result: Mapping[str, Any],
+    ) -> None:
+        task_id = str(task.get("task_id") or "").strip()
+        latest_task = task
+        task_getter = getattr(self, "get_web_image_task", None)
+        if task_id and callable(task_getter):
+            try:
+                latest_task = task_getter(task_id)
+            except Exception:
+                latest_task = task
+        record_ids = latest_task.get("record_ids") if isinstance(latest_task, Mapping) else None
+        if not isinstance(record_ids, list):
+            record_ids = result.get("record_ids") if isinstance(result, Mapping) else None
+        if not isinstance(record_ids, list):
+            return
+        record_id = next((str(item).strip() for item in record_ids if str(item).strip()), "")
+        getter = getattr(self, "get_record_for_web", None)
+        if not record_id or not callable(getter):
+            return
+        try:
+            record = getter(record_id)
+        except Exception:
+            return
+        if not record or not self._prompt_record_allowed(event, record):
+            return
+        self._update_last_llm_generation(
+            event,
+            source_record_id=str(record.get("id") or record_id),
+            source_generation_id=str(record.get("image_code") or ""),
+            used_model=str(record.get("used_model") or ""),
+        )

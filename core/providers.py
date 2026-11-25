@@ -62,6 +62,8 @@ class ImageGenerateRequest:
     allow_compat_retry: bool = True
     max_image_bytes: int = 25 * 1024 * 1024
     reference_fidelity: str = ""
+    img2img_strength: Optional[float] = None
+    negative_prompt: str = ""
 
 
 @dataclass
@@ -919,13 +921,24 @@ NAI_DEFAULT_NEGATIVE = "lowres, worst quality, bad anatomy, bad hands, extra dig
 NAI_DEFAULT_IMG2IMG_STRENGTH = 0.55
 
 
-def _nai_negative_prompt(target: ImageModelTarget) -> str:
+def _nai_negative_prompt(target: ImageModelTarget, request: Optional[ImageGenerateRequest] = None) -> str:
     extra = target.extra if isinstance(target.extra, Mapping) else {}
     configured = extra.get("novelai_negative_prompt", extra.get("negative_prompt"))
-    return NAI_DEFAULT_NEGATIVE if configured is None else str(configured).strip()
+    base = NAI_DEFAULT_NEGATIVE if configured is None else str(configured).strip()
+    requested = str(getattr(request, "negative_prompt", "") or "").strip()
+    parts = list(dict.fromkeys(part.strip() for part in (base, requested) if part.strip()))
+    return ", ".join(parts)
 
 
-def _nai_img2img_strength(target: ImageModelTarget) -> float:
+def _nai_img2img_strength(target: ImageModelTarget, request: Optional[ImageGenerateRequest] = None) -> float:
+    requested = getattr(request, "img2img_strength", None)
+    if requested is not None and not isinstance(requested, bool):
+        try:
+            strength = float(requested)
+        except (TypeError, ValueError):
+            strength = float("nan")
+        if math.isfinite(strength) and 0 <= strength <= 1:
+            return strength
     extra = target.extra if isinstance(target.extra, Mapping) else {}
     value = extra.get("novelai_img2img_strength", extra.get("img2img_strength"))
     if isinstance(value, bool):
@@ -1112,13 +1125,15 @@ class NovelAIImageAdapter(BaseImageAdapter):
             "cfg_rescale": 0.0,
             "image_format": "png",
             "n_samples": 1,
-            "negative_prompt": _nai_negative_prompt(self.target),
+            "negative_prompt": _nai_negative_prompt(self.target, req),
             "seed": random.randint(1, 2**31 - 1),
         }
         # Preserve the family decision in diagnostics without adding an
         # unknown provider field to the upstream payload.
         logger.debug("[SelfieImage/NAI] relay model=%s family=%s", model, family)
         if req.images:
+            user_payload["strength"] = _nai_img2img_strength(self.target, req)
+            user_payload["noise"] = 0
             user_payload["image"] = [
                 bytes_to_data_url(item.data, item.mime_type or "image/png")
                 for item in req.images
@@ -1147,7 +1162,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
         return {
             "model": self.target.model or self.default_model,
             "prompt": str(req.prompt or "").strip(),
-            "negative_prompt": _nai_negative_prompt(self.target),
+            "negative_prompt": _nai_negative_prompt(self.target, req),
             "size": f"{width}x{height}",
             "n": 1,
             "response_format": "b64_json",
@@ -1158,7 +1173,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
 
         width, height = map_aspect_ratio_to_nai_size(req.aspect_ratio, req.resolution)
         prompt = str(req.prompt or "").strip()
-        negative = _nai_negative_prompt(self.target)
+        negative = _nai_negative_prompt(self.target, req)
         seed = random.randint(1, 2**31 - 1)
         model = self.target.model or self.default_model
         parameters: Dict[str, Any] = {
@@ -1205,7 +1220,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
             # img2img: first reference as base image (ppnai style bare base64)
             raw_b64 = base64.b64encode(req.images[0].data).decode("ascii")
             parameters["image"] = raw_b64
-            parameters["strength"] = _nai_img2img_strength(self.target)
+            parameters["strength"] = _nai_img2img_strength(self.target, req)
             parameters["noise"] = 0
             action = "img2img"
         return {
@@ -1227,7 +1242,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
             "sampler": "k_dpmpp_2m_sde",
             "noise_schedule": "karras",
             "nocache": "1",
-            "negative": _nai_negative_prompt(self.target),
+            "negative": _nai_negative_prompt(self.target, req),
         }
         return {k: v for k, v in params.items() if v is not None and str(v) != ""}
 
@@ -1291,6 +1306,10 @@ class NovelAIImageAdapter(BaseImageAdapter):
                 # billable request through a second endpoint.
                 lowered = str(error or "").lower()
                 if any(token in lowered for token in ("http 404", "http 405", "http 501", "not found", "method not allowed", "not implemented")):
+                    if req.images:
+                        return ImageGenerateResult(
+                            error="NovelAI 中继端点不支持图生图，未退化为纯文生图重试"
+                        )
                     base = normalize_image_base_url(self.target.base_url) or ""
                     fallback_url = f"{base}/v1/images/generations"
                     fallback_data, fallback_error = await self.post_json_data_or_error(
@@ -1305,6 +1324,8 @@ class NovelAIImageAdapter(BaseImageAdapter):
                     return ImageGenerateResult(error=fallback_error or error or "NovelAI 中继请求失败")
                 return ImageGenerateResult(error=error or "NovelAI 中继请求失败")
             # gateway GET
+            if req.images:
+                return ImageGenerateResult(error="当前 NovelAI 网关传输不支持图生图参考，已停止重试")
             params = self.build_gateway_params(req)
             # token in query — do not also send Authorization unless host wants both
             headers = {

@@ -239,6 +239,14 @@ async def run_image_generation_workflow(
         if refs and str(reference_fidelity or "").strip().lower() == "low"
         else ""
     )
+    img2img_strength = None
+    if isinstance(record_context, Mapping) and str(record_context.get("retry_mode") or "") == "retry_img2img":
+        try:
+            candidate_strength = float(record_context.get("strength"))
+        except (TypeError, ValueError):
+            candidate_strength = float("nan")
+        if math.isfinite(candidate_strength) and 0 <= candidate_strength <= 1:
+            img2img_strength = candidate_strength
     stable_reference_checker = getattr(self, "_is_stable_reference", None)
     persona_reference_count = sum(
         1
@@ -410,12 +418,23 @@ async def run_image_generation_workflow(
             "requested_model",
             "resolved_model",
             "model_match_mode",
+            "retry_mode",
+            "source_generation_id",
+            "source_record_id",
+            "feedback",
+            "last_feedback",
+            "strength",
+            "reference_fidelity",
+            "negative_prompt",
         ):
             value = record_context.get(key)
             if isinstance(value, (str, int, float, bool)):
                 source_meta[key] = value
             elif isinstance(value, list):
                 source_meta[key] = [str(item).strip() for item in value if str(item).strip()][:24]
+        retry_sources = record_context.get("source_images")
+        if isinstance(retry_sources, list):
+            source_meta["source_images"] = [dict(item) for item in retry_sources if isinstance(item, Mapping)][:8]
     request_image_paths = await asyncio.to_thread(self._save_reference_images_to_cache, refs)
     task_id = str(record_context.get("task_id") or "").strip() if isinstance(record_context, Mapping) else ""
     if task_id:
@@ -498,6 +517,14 @@ async def run_image_generation_workflow(
                     "request_image_paths": request_image_paths,
                     "targets": [redact_sensitive_text(target.label) for target in selected_targets],
                     "image_to_text": image_to_text_meta,
+                    "retry_mode": source_meta.get("retry_mode", ""),
+                    "source_generation_id": source_meta.get("source_generation_id", ""),
+                    "source_record_id": source_meta.get("source_record_id", ""),
+                    "source_images": source_meta.get("source_images", []),
+                    "feedback": source_meta.get("feedback", ""),
+                    "last_feedback": source_meta.get("last_feedback", ""),
+                    "strength": source_meta.get("strength"),
+                    "negative_prompt": source_meta.get("negative_prompt", ""),
                 }
                 add_selection_metadata(request_data)
                 record_task(
@@ -564,12 +591,23 @@ async def run_image_generation_workflow(
             "requested_model",
             "resolved_model",
             "model_match_mode",
+            "retry_mode",
+            "source_generation_id",
+            "source_record_id",
+            "feedback",
+            "last_feedback",
+            "strength",
+            "reference_fidelity",
+            "negative_prompt",
         ):
             value = record_context.get(key)
             if isinstance(value, (str, int, float, bool)):
                 request_data[key] = value
             elif isinstance(value, list):
                 request_data[key] = [str(item).strip() for item in value if str(item).strip()][:24]
+        retry_sources = record_context.get("source_images")
+        if isinstance(retry_sources, list):
+            request_data["source_images"] = [dict(item) for item in retry_sources if isinstance(item, Mapping)][:8]
     if prompt_en_meta:
         request_data["prompt_en"] = dict(prompt_en_meta)
         if prompt_en_meta.get("applied"):
@@ -681,6 +719,11 @@ async def run_image_generation_workflow(
         allow_compat_retry=allow_compat_retry,
         max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
         reference_fidelity=reference_fidelity,
+        img2img_strength=img2img_strength,
+        negative_prompt=str(
+            record_context.get("negative_prompt") or ""
+            if isinstance(record_context, Mapping) else ""
+        ),
     )
 
     # A model-level translation opt-in is evaluated after target selection
@@ -724,6 +767,11 @@ async def run_image_generation_workflow(
             allow_compat_retry=allow_compat_retry,
             max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
             reference_fidelity=reference_fidelity if not use_text_description else "",
+            img2img_strength=img2img_strength if not use_text_description else None,
+            negative_prompt=str(
+                record_context.get("negative_prompt") or ""
+                if isinstance(record_context, Mapping) else ""
+            ),
         )
 
     started = time.monotonic()

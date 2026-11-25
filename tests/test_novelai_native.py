@@ -32,6 +32,7 @@ class Response:
     def __init__(self, data, status=200):
         self.data = data
         self.status = status
+        self.charset = "utf-8"
         self.headers = {"Content-Type": "application/zip" if isinstance(data, bytes) else "application/json"}
 
     async def __aenter__(self):
@@ -146,8 +147,46 @@ def test_novelai_payload_settings_come_from_channel_extra():
     assert official["v4_negative_prompt"]["caption"]["base_caption"] == "custom negative"
     assert official["strength"] == 0.28
     assert relay["negative_prompt"] == "custom negative"
+    assert relay["strength"] == 0.28
+    assert relay["noise"] == 0
     assert gateway["negative"] == "custom negative"
     assert fallback["negative_prompt"] == "custom negative"
+
+    retry_request = ImageGenerateRequest(
+        prompt="portrait",
+        images=[ImageReference(data=PNG)],
+        img2img_strength=0.48,
+        negative_prompt="elongated legs, plastic skin",
+    )
+    retry_payload = adapter.build_official_payload(retry_request)["parameters"]
+    assert retry_payload["strength"] == 0.48
+    assert retry_payload["negative_prompt"] == "custom negative, elongated legs, plastic skin"
+    relay_retry = json.loads(adapter.build_relay_payload(retry_request)["messages"][1]["content"])
+    assert relay_retry["strength"] == 0.48
+    assert relay_retry["negative_prompt"] == "custom negative, elongated legs, plastic skin"
+
+
+def test_novelai_img2img_stops_instead_of_falling_back_to_text_generation():
+    relay_target = channel_config("https://relay.test/v1", provider="openai").get_enabled_image_targets()[0]
+    relay_session = Session({"error": {"message": "route not found"}}, 404)
+    async def async_post(url, **kwargs):
+        relay_session.requests.append({"method": "POST", "url": url, **kwargs})
+        return relay_session.response
+
+    relay_session.post = async_post
+    relay_result = asyncio.run(NovelAIImageAdapter(relay_target, relay_session).generate(
+        ImageGenerateRequest(prompt="portrait", images=[ImageReference(data=PNG)])
+    ))
+    assert "未退化为纯文生图" in relay_result.error
+    assert len(relay_session.requests) == 1
+
+    gateway_target = channel_config("https://nai2api.test/generate").get_enabled_image_targets()[0]
+    gateway_session = Session(PNG)
+    gateway_result = asyncio.run(NovelAIImageAdapter(gateway_target, gateway_session).generate(
+        ImageGenerateRequest(prompt="portrait", images=[ImageReference(data=PNG)])
+    ))
+    assert "不支持图生图参考" in gateway_result.error
+    assert gateway_session.requests == []
 
 
 def test_novelai_payload_settings_validate_strength_and_allow_empty_negative():

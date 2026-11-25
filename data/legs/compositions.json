@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "proportion_guard": true,
   "framing": "成年人物的竖屏腿部穿搭近中景，以腿部服装、姿势关键轮廓和实际可见部位为画面主体，保留自然体态与比例。画面上缘严格按本次选定的 crop mode 执行，不自行扩展到头部或面部，也不强求头到脚完整入镜。所选服装原有的露肩、锁骨和腰腹自然保留，不额外添加衣物或物件遮挡。左右均指人物自身；脚只在姿势和机位允许时入镜，被腿、衣物或支撑面遮住的部位保持自然遮挡，不为展示而扭转补画，服装边缘保持连续自然。",
   "anatomy_rule": "双腿各自沿同侧髋、膝、踝连续，关节朝向自然，姿势受力稳定。",
   "hosiery_rule": "袜装按所属服饰与用户选定款式呈现：覆盖边界连续，织物贴合腿部自然起伏。",
@@ -11,7 +12,7 @@
   "full_framing": "成年人物的第三人称竖屏全身构图，头部到足部完整入镜；姿势确实遮挡的部位保持自然，不强行补画。身体比例自然，服装与动作轮廓清楚。仅在 crop mode 允许完整全身时使用。",
   "crop_modes": {
     "leg_full": "腿部穿搭与姿势为画面主体，取景范围服从姿势、支撑关系和已选面部模式。",
-    "shoulder_crop": "画面上缘严格裁在肩线下方，只呈现肩部以下至腿部的自然范围；头部、面部、下巴及以上区域完全不入镜。",
+    "shoulder_crop": "画面上缘严格裁在肩线下方，只呈现肩部以下至腿部的自然范围；头部与面部保持画外，头部、面部、下巴及以上区域完全不入镜。",
     "half_face": "只让自然侧脸或半脸进入画面，脸部裁切与当前姿势连贯。",
     "full_face": "完整面部清晰进入画面，额头、双眼、鼻部和下巴均自然可见。"
   },
@@ -674,7 +675,7 @@
       },
       "support_types": ["kneeling_surface"],
       "camera_views": {
-        "third": ["third_kneeling_oblique_down", "third_oblique_low"]
+        "third": ["third_oblique_low"]
       }
     },
     {
@@ -1029,18 +1030,20 @@
       "prompt": "自然跪坐在宽而平整的软垫上，双膝靠近并落稳，小腿一同收向身体右侧，臀部轻落在双腿左侧的软面。上身直立放松，一手轻搭同侧软垫保持稳定，膝踝顺着小腿方向自然延伸。",
       "crop_prompts": {"third": "呈现臀部落在腿侧软面、双膝靠近和小腿同向收拢的关系，脚部依自然遮挡呈现，软垫承托位置清楚。"},
       "support_types": ["kneeling_surface"],
-      "camera_views": {"third": ["third_kneeling_oblique_down", "third_oblique_level"]}
+      "camera_views": {"third": ["third_oblique_level"]}
     },
     {
       "id": "kneeling_single_knee_grounded",
       "title": "单膝跪地",
       "posture": "kneeling",
       "legacy_ids": [],
-      "aliases": ["单膝落垫", "一膝跪地一脚踩地"],
+      "aliases": ["单膝跪地", "单膝跪", "一膝跪地一脚踩地"],
       "weight": 1,
-      "prompt": "左膝自然跪在地面厚软垫上，左小腿向后平放；右脚向前踩稳垫前同一高度的地面，右膝舒适弯曲。上身直立，髋部保持低而稳定，一手轻放右大腿，动作幅度适中，腿部支撑自然。",
-      "crop_prompts": {"third": "看清左膝落在地垫与右脚落在地面的两处承托，右大腿、膝、小腿连贯，前侧脚与地垫处于同一地面高度。"},
-      "support_types": ["half_kneeling_surface"],
+      "risk": "high",
+      "prompt": "左膝与右脚掌直接落在同一块平整硬质地面上，地面没有软垫、台阶或高差；左小腿向后沿地面自然放平，右脚向前踩稳、右膝舒适弯曲。髋部保持低而稳定，一手掌自然撑在左膝旁的同一地面上，手腕与前臂方向连贯。",
+      "crop_prompts": {"third": "清楚呈现左膝和右脚掌直接接触同一块平整硬质地面的受力关系；右大腿、膝、小腿依同侧关节连续连接，不出现地垫、双层地面或高度差。"},
+      "support_types": ["flat_ground"],
+      "scene_ids": ["indoor_desk", "indoor_flat_ground"],
       "camera_views": {"third": ["third_kneeling_oblique_down", "third_oblique_level"]}
     },
     {
@@ -1053,7 +1056,7 @@
       "prompt": "双膝靠近落在柔软平面，小腿向后放平，臀部轻坐在脚跟；上身仅小幅前倾，双手掌自然扶在膝前同一软面上。手腕与手臂连接清楚，臀部由脚跟稳定承托，前倾幅度轻柔自然。",
       "crop_prompts": {"third": "保留跪坐大腿、并拢双膝与膝前双手的支撑关系，手掌接触面清楚，小腿和脚在身后按真实遮挡处理。"},
       "support_types": ["kneeling_surface"],
-      "camera_views": {"third": ["third_kneeling_oblique_down", "third_oblique_level"]}
+      "camera_views": {"third": ["third_oblique_level"]}
     }
   ],
   "scenes": [
@@ -1140,8 +1143,7 @@
         "wide_surface": "宽地垫与同一平面的地面",
         "ground_surface": "同一地面上的宽地垫与平整地面承托臀部与脚部",
         "long_surface": "宽地垫与前方平整地面",
-        "kneeling_surface": "厚实柔软的室内地垫",
-        "half_kneeling_surface": "地面厚软垫承托后侧膝部，垫前同一高度的平整地面承托前侧脚掌"
+        "kneeling_surface": "厚实柔软的室内地垫"
       }
     },
     {
@@ -1208,8 +1210,7 @@
         "wide_surface": "柔软平整的卧室地毯",
         "ground_surface": "同一地面上的平整卧室地毯承托臀部与脚部",
         "long_surface": "宽长平整的卧室地毯",
-        "kneeling_surface": "平整厚实的卧室地毯",
-        "half_kneeling_surface": "卧室地面厚地毯承托后侧膝部，同一高度的前方地面承托前侧脚掌"
+        "kneeling_surface": "平整厚实的卧室地毯"
       }
     },
     {
@@ -1226,8 +1227,7 @@
         "wide_surface": "宽敞平整的客厅地毯",
         "ground_surface": "同一地面上的宽敞客厅地毯承托臀部与脚部",
         "long_surface": "宽长平整的客厅地毯",
-        "kneeling_surface": "平整厚实的客厅地毯",
-        "half_kneeling_surface": "客厅地面厚地毯承托后侧膝部，同一高度的前方地面承托前侧脚掌"
+        "kneeling_surface": "平整厚实的客厅地毯"
       }
     },
     {
@@ -1265,8 +1265,20 @@
       "prompt": "卧室内的书桌旁放置一把稳固办公椅，桌面有摊开的笔记本、耳机、合到一半的笔电和一只水杯，台灯微亮，屏幕只留低亮待机光；桌面位于取景边缘，脚下地面无遮挡，氛围像工作结束后独自在房间稍作停留。",
       "supports": {
         "chair_seat": "书桌旁稳固办公椅的座面与脚下地面",
-        "standing_edge": "同一张稳固桌子的外侧边沿与脚下地面"
+        "standing_edge": "同一张稳固桌子的外侧边沿与脚下地面",
+        "flat_ground": "左膝与右脚掌直接接触同一片平整硬质地面，没有地垫、台阶或高度差"
       }
+    },
+    {
+      "id": "indoor_flat_ground",
+      "title": "室内平整地面",
+      "aliases": ["室内地面", "平地跪姿", "硬质地面"],
+      "prompt": "卧室空旷一角的平整硬质地面，人物与取景区域没有地垫、软垫、地毯、台阶或高差；墙边只有低矮收纳柜和一盏柔和台灯，背景留白克制，地面纹理连续平直。",
+      "supports": {
+        "flat_ground": "左膝和右脚掌直接落在同一块平整硬质地面，无垫子、无台阶、无高差"
+      },
+      "cameras": ["third"],
+      "capture_modes": ["direct"]
     },
     {
       "id": "indoor_cabinet",

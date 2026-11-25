@@ -92,8 +92,8 @@
       "category": "thigh_high",
       "wear": "黑丝",
       "accessory_ids": ["garter_over_thighhigh"],
-      "support": "half_kneeling_surface",
-      "angle": {"yaw": 45, "pitch": 35, "camera_height": "above_waist", "horizontal_position": "front_right"},
+      "support": "flat_ground",
+      "angle": {"yaw": 45, "pitch": 30, "camera_height": "above_waist", "horizontal_position": "front_right"},
       "weight": 1,
       "risk": "low"
     },

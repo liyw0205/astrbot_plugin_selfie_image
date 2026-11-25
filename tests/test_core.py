@@ -794,7 +794,7 @@ class ConfigModelTests(unittest.TestCase):
         zh = build_selfie_builtin_prompt(action, has_reference_image=True, appearance_type="real")
         self.assertEqual(zh.count(action), 1)
         self.assertNotIn("允许上身、肩颈和头脸入画", zh)
-        self.assertIn("头部与面部保持画外", zh)
+        self.assertTrue("头部与面部保持画外" in zh or "头部与面部完全不进入画面" in zh)
         translated_action = "Adult indoor lower-body photo. Sit on the bed edge; preserve the referenced clothes."
         en = build_selfie_builtin_prompt(
             action, language="en", has_reference_image=True, appearance_type="real",
@@ -6039,6 +6039,47 @@ class SessionModelAndTaskTests(unittest.TestCase):
         plugin.config.image_show_model_info = False
         self.assertEqual(plugin._build_success_text(1.25, 1, "primary/gpt-image-2", object()), "")
 
+    def test_success_text_shows_usage_and_unlimited_limit_without_explanation(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict(
+            {
+                "image": {
+                    "show_generation_info": True,
+                    "enable_daily_limit": True,
+                    "daily_limit_count": 5,
+                },
+                "permission": {
+                    "whitelist_users": ["white-user"],
+                    "whitelist_groups": ["white-group"],
+                },
+            }
+        )
+        plugin._usage_lock = threading.RLock()
+        plugin._usage_stats = {
+            "date": plugin._today_key(),
+            "users": {
+                "regular-user": {"count": 3},
+                "white-user": {"count": 3},
+                "group-user": {"count": 3},
+                "admin-user": {"count": 3},
+            },
+        }
+
+        regular = types.SimpleNamespace(user_id="regular-user")
+        white_user = types.SimpleNamespace(user_id="white-user")
+        white_group = types.SimpleNamespace(user_id="group-user", group_id="white-group")
+        admin = types.SimpleNamespace(
+            user_id="admin-user", sender=types.SimpleNamespace(role="admin"),
+        )
+
+        self.assertIn("今日用量：3/5", plugin._build_success_text(1, 1, "", regular))
+        for event in (white_user, white_group, admin):
+            with self.subTest(event=event):
+                text = plugin._build_success_text(1, 1, "", event)
+                self.assertIn("今日用量：3/∞", text)
+                self.assertNotIn("白名单", text)
+                self.assertNotIn("管理员", text)
+
     def test_admin_automatically_bypasses_audit_quota_and_rate_limit(self) -> None:
         plugin = self._plugin_stub()
         plugin.config = AICatConfig.from_dict(
@@ -7713,7 +7754,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 self.assertIn(line, legs)
             self.assertIn("【看看腿 / 单一室内构图】", legs)
             self.assertNotIn("允许上身、肩颈和头脸入画", legs)
-            self.assertIn("头部与面部保持画外", legs)
+            self.assertTrue("头部与面部保持画外" in legs or "头部与面部完全不进入画面" in legs)
             self.assertIn("保留自然体态与比例", legs)
             self.assertIn("【outfit:reference】", legs)
             self.assertEqual(legs.count("【legs:outfit】"), 1)
@@ -7838,7 +7879,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
             self.assertIn("【看看腿 / 单一室内构图】", prompt)
             self.assertNotIn("允许上身、肩颈和头脸入画", prompt)
-            self.assertIn("头部与面部保持画外", prompt)
+            self.assertTrue("头部与面部保持画外" in prompt or "头部与面部完全不进入画面" in prompt)
             self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("微胖软肉", prompt)
             self.assertNotIn("不要大象腿猪腿", prompt)
@@ -8163,7 +8204,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("袜装或鞋履仅按本次明确要求调整", text)
         self.assertEqual(text.count("腿部细节："), 1)
         self.assertNotIn("允许上身、肩颈和头脸入画", text)
-        self.assertIn("头部与面部保持画外", text)
+        self.assertTrue("头部与面部保持画外" in text or "头部与面部完全不进入画面" in text)
         for forbidden in ("白色不透连裤袜，完整日常穿搭", "小皮鞋", "日常长裤搭配", "全身穿搭展示"):
             self.assertNotIn(forbidden, text)
 
@@ -8217,7 +8258,7 @@ class LegFocusTests(unittest.TestCase):
                 self.assertIn(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"], action)
                 self.assertIn("【outfit:reference】", action)
                 self.assertNotIn("允许上身、肩颈和头脸入画", action)
-                self.assertIn("头部与面部保持画外", action)
+                self.assertTrue("头部与面部保持画外" in action or "头部与面部完全不进入画面" in action)
                 self.assertNotIn("本次随机腿部细节", action)
                 self.assertNotIn("户外小径漫步", action)
 
@@ -11224,14 +11265,12 @@ class StudioStoreTests(unittest.TestCase):
 
         first = asyncio.run(run(Event(quoted_a)))
         second = asyncio.run(run(Event(quoted_b)))
-        self.assertEqual(len(first), 4)
-        self.assertEqual(len(second), 4)
+        self.assertEqual(len(first), 2)
+        self.assertEqual(len(second), 2)
         self.assertIn("ABC234", first[0])
         self.assertIn("DEF567", second[0])
-        self.assertEqual(first[1], "原始提示词：\nprompt for quoted A")
-        self.assertEqual(second[1], "原始提示词：\nprompt for quoted B")
-        self.assertEqual(first[2], "实际发送提示词：\nprompt for quoted A")
-        self.assertEqual(second[2], "实际发送提示词：\nprompt for quoted B")
+        self.assertEqual(first[1], "prompt for quoted A")
+        self.assertEqual(second[1], "prompt for quoted B")
         self.assertEqual(len(collected_kwargs), 2)
         for kwargs in collected_kwargs:
             self.assertTrue(kwargs["include_image_alternates"])
@@ -11407,17 +11446,98 @@ class StudioStoreTests(unittest.TestCase):
         stub._context_max_sessions = 100
         stub._context_session_key = lambda event=None: "group:g1"
         stub._remember_llm_generation(None, "selfie", {"action": "窗边白裙", "count": 1})
+        cached_generation = stub._last_llm_generation(None)
+        self.assertEqual(cached_generation["params"]["action"], "窗边白裙")
+        self.assertEqual(cached_generation["kind"], "selfie")
+        source = {
+            "id": "record-1",
+            "image_code": "3K9ZH2",
+            "source": "llm-generate-selfie",
+            "original_prompt": "窗边白裙",
+            "generated_image_paths": ["cache/generated.png"],
+            "request_data": {"aspect_ratio": "9:16"},
+        }
+        stub._llm_retry_source_record = lambda event, cached: source
+        from astrbot_plugin_selfie_image.core.providers import ImageReference
+
+        previous_image = ImageReference(data=b"previous-image", mime_type="image/png")
+        stub._load_retry_source_image = lambda record: previous_image
+        async def current_refs(*args, **kwargs):
+            return []
+
+        stub._event_reference_images = current_refs
         received = {}
 
-        async def replay(event, **params):
+        async def replay(event, *args, **params):
+            received["prompt"] = args[0]
             received.update(params)
             return "ok"
 
-        stub.tool_generate_selfie = replay
-        result = asyncio.run(plugin_main.SelfieImagePlugin.tool_retry_last_generation(stub, object(), "更年轻一点"))
+        stub._run_llm_image_request = replay
+        result = asyncio.run(plugin_main.SelfieImagePlugin.tool_retry_last_generation(stub, None, "更年轻一点"))
         self.assertEqual(result, "ok")
-        self.assertIn("窗边白裙", received["action"])
-        self.assertIn("更年轻一点", received["action"])
+        self.assertIn("窗边白裙", received["prompt"])
+        self.assertIn("更年轻一点", received["prompt"])
+        self.assertEqual(received["reference_images"], [previous_image])
+        self.assertEqual(received["retry_context"]["retry_mode"], "retry_img2img")
+        self.assertEqual(received["retry_context"]["source_generation_id"], "3K9ZH2")
+        self.assertTrue(received["force_plain_image"])
+
+    def test_retry_last_generation_prefers_current_reference_and_soft_fails_without_images(self) -> None:
+        stub = SessionModelAndTaskTests()._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+        from astrbot_plugin_selfie_image.core.providers import ImageReference
+
+        stub._llm_generation_lock = __import__("threading").RLock()
+        stub._last_llm_generations = __import__("collections").OrderedDict()
+        stub._context_max_sessions = 100
+        stub._context_session_key = lambda event=None: "group:g1"
+        stub._remember_llm_generation(None, "image", {"prompt": "original prompt", "count": 1})
+        source = {
+            "id": "record-1",
+            "image_code": "3K9ZH2",
+            "source": "llm-generate-image",
+            "original_prompt": "original prompt",
+            "generated_image_paths": ["cache/generated.png"],
+            "request_data": {},
+        }
+        stub._llm_retry_source_record = lambda event, cached: source
+        previous = ImageReference(data=b"previous", mime_type="image/png")
+        current = ImageReference(data=b"current", mime_type="image/png")
+        stub._load_retry_source_image = lambda record: previous
+        async def current_refs(*args, **kwargs):
+            return [current]
+
+        stub._event_reference_images = current_refs
+        received = {}
+
+        async def replay(event, *args, **params):
+            received.update(params)
+            return "ok"
+
+        stub._run_llm_image_request = replay
+        result = asyncio.run(plugin_main.SelfieImagePlugin.tool_retry_last_generation(
+            stub, None, "比例不对",
+        ))
+        self.assertEqual(result, "ok")
+        self.assertEqual(received["reference_images"], [current, previous])
+        self.assertEqual(received["retry_context"]["source_images"][0]["kind"], "generated")
+        self.assertIn("negative_prompt", received["retry_context"])
+
+        stub._load_retry_source_image = lambda record: None
+        stub._event_reference_images = lambda *args, **kwargs: asyncio.sleep(0, result=[])
+        failed = asyncio.run(plugin_main.SelfieImagePlugin.tool_retry_last_generation(
+            stub, None, "",
+        ))
+        self.assertIn("[TOOL_FAILED] 找不到要重画的图", failed)
+
+    def test_natural_retry_intent_detector(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        detector = plugin_main.SelfieImagePlugin._is_retry_generation_request
+        self.assertTrue(detector("身材比例不对，真人感不足，重新画"))
+        self.assertTrue(detector("这张重画"))
+        self.assertFalse(detector("不要重新画"))
 
     def test_record_retry_payload_reuses_prompt_and_cached_references(self) -> None:
         from astrbot_plugin_selfie_image import main as plugin_main

@@ -373,12 +373,10 @@
       "elevation": "down",
       "weight": 2,
       "support_types": [
-        "kneeling_surface",
-        "half_kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
-        "leg_detail",
-        "full_outfit"
+        "leg_detail"
       ],
       "prompt": "相机位于跪姿人物斜前上方，从高于腰胯的位置以明确向下倾角拍摄，呈现腰胯、大腿与实际落地膝部的支撑关系；采用普通焦段和适中距离，不贴近单侧大腿，也不从头顶垂直拍摄。",
       "angle": {
@@ -387,10 +385,10 @@
           30,
           60
         ],
-        "pitch": 35,
+        "pitch": 30,
         "pitch_range": [
-          30,
-          40
+          25,
+          30
         ],
         "pitch_kind": "down",
         "camera_height": "above_waist",
@@ -629,7 +627,7 @@
         "lying_surface",
         "reclined_surface",
         "kneeling_surface",
-        "half_kneeling_surface",
+        "flat_ground",
         "chair_seat",
         "seat_edge",
         "wide_surface"

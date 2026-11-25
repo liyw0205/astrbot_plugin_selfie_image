@@ -187,6 +187,29 @@ def test_record_list_and_command_views_keep_unknown_separate_from_failure():
     assert "发送状态未知" in format_task_list_text([task], include_finished=True)
 
 
+def test_retry_task_list_and_detail_expose_img2img_context():
+    task = {
+        "task_id": "retry-1",
+        "status": "running",
+        "media_type": "image",
+        "request_data": {
+            "original_prompt": "portrait",
+            "retry_mode": "retry_img2img",
+            "source_generation_id": "3K9ZH2",
+            "feedback": "比例不对",
+            "strength": 0.5,
+            "source_images": [{"kind": "current_reference", "count": 1}],
+        },
+    }
+    listed = format_task_list_text([task])
+    detail = format_task_detail_text(task)
+    assert "图生图重绘 / 3K9ZH2" in listed
+    assert "参考上一张：3K9ZH2" in detail
+    assert "修正反馈：比例不对" in detail
+    assert "图生图强度：0.50" in detail
+    assert "本次引用图：1 张" in detail
+
+
 @pytest.mark.parametrize("source", ["record", "response"])
 @pytest.mark.parametrize("success", [True, False])
 def test_failed_only_retry_skips_unknown_receipts_but_allows_explicit_retry(source, success):

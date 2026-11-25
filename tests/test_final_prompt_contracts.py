@@ -1179,20 +1179,28 @@ def test_new_leg_self_view_seated_variants_keep_subjective_crop_and_compatible_s
 
 
 def test_leg_high_kneeling_camera_stays_off_seats_and_skirts(tmp_path):
-    pose_id, view_id = "kneeling_relaxed_apart", "third_kneeling_oblique_down"
+    pose_id, view_id = "kneeling_single_knee_grounded", "third_kneeling_oblique_down"
     for scene, support, view in compatible_leg_compositions(LEGFOCUS_POSE_BY_ID[pose_id], view_id=view_id):
-        assert support == "kneeling_surface"
+        assert support == "flat_ground"
         assert scene["id"] not in {"bed_edge", "gaming_chair", "desk_chair"}
         assert view["camera"] == "third" and view["elevation"] == "down"
-    action = build_leg_focus_action("床面分膝跪姿 俯拍", force_view=view_id)
+    action = build_leg_focus_action(
+        "室内平整地面 分膝跪姿 俯拍", force_pose=pose_id, force_view=view_id,
+        preferred_scene="室内平整地面",
+    )
     plugin = plugin_for_prompts(tmp_path)
     prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
-    assert "【leg_scene:bed_surface】" in prompt
+    assert "【leg_scene:indoor_flat_ground】" in prompt
     assert f"【pose:{pose_id}】" in prompt
     assert prompt.count(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"]) == 1
     assert "第一人称" not in prompt
+    assert "【crop_mode:shoulder_crop】" in prompt
+    assert "地面没有软垫、台阶或高差" in prompt
+    assert "左膝与右脚掌直接落在同一块平整硬质地面上" in prompt
+    assert "厚软垫上" not in prompt
     outfit = next(outfit for outfit in LEGFOCUS_OUTFIT_POOL if outfit["prompt"] in prompt)
-    assert outfit["capture_profile"] == "shorts"
+    assert outfit["capture_profile"] == "trousers"
+    assert "kneeling" in outfit["compatible_postures"]
     with pytest.raises(LegFocusDataError, match="不兼容"):
         build_leg_focus_action(force_pose=pose_id, force_view=view_id, force_outfit="blouse_fitted_mini")
 

@@ -279,6 +279,18 @@ class ConversationContextMixin:
             while len(records) > 100:
                 records.popitem(last=False)
 
+    def _update_last_llm_generation(self, event: Optional[AstrMessageEvent], **changes: Any) -> None:
+        """Attach completed-generation metadata to the request kept for retries."""
+        key = self._context_session_key(event)
+        lock = getattr(self, "_llm_generation_lock", None)
+        if lock is None:
+            return
+        with lock:
+            records = getattr(self, "_last_llm_generations", {})
+            record = records.get(key) if isinstance(records, dict) else None
+            if isinstance(record, dict):
+                record.update(copy.deepcopy(changes))
+
     def _last_llm_generation(self, event: Optional[AstrMessageEvent], feedback: str = "") -> Dict[str, Any]:
         """获取最近一次 LLM 生图请求；这不是会话历史存储。"""
         key = self._context_session_key(event)

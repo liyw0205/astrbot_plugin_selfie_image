@@ -213,7 +213,7 @@ def test_reference_sitting_poses_keep_mirror_and_direct_cameras_separate(query, 
     ("standing_chair_single_leg_back", "standing_chair", {"gaming_chair", "desk_chair", "living_room_chair"}),
     ("standing_one_foot_on_stool", "standing_stool", {"chair_footstool"}),
     ("reclined_feet_on_stool", "reclined_footstool", {"sofa_footstool"}),
-    ("kneeling_single_knee_grounded", "half_kneeling_surface", {"floor_cushion", "bedroom_rug", "living_room_rug"}),
+    ("kneeling_single_knee_grounded", "flat_ground", {"indoor_desk", "indoor_flat_ground"}),
 ])
 def test_special_supports_cannot_fall_back_to_an_incompatible_surface(pose_id, support, scenes):
     from astrbot_plugin_selfie_image.cos.leg_focus import compatible_leg_compositions

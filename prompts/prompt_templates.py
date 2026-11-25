@@ -292,7 +292,7 @@ def extract_user_prompt(action: str) -> str:
     match = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if match:
         value = match.group(1)
-        value = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|face_mode|crop_mode|leg_expression|wear|outfit|frame|legwear_category|hosiery|leg_accessory):[a-z0-9_|]+】\s*", " ", value)
+        value = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|face_mode|crop_mode|leg_expression|wear|outfit|frame|legwear_category|hosiery|leg_accessory):[a-z0-9_|,\u4e00-\u9fff]+】\s*", " ", value)
         value = re.sub(r"\s*【leg_view_title:[^】]+】\s*", " ", value)
         value = re.sub(r"\s*【(?:combo|angle):[^】]+】\s*", " ", value)
         value = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", value)

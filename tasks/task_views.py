@@ -123,6 +123,11 @@ def format_task_list_text(
         suffix += f" [{stage}]" if stage else ""
         delivery = _delivery_text(task)
         suffix += f" · {delivery}" if delivery else ""
+        retry_mode = str(request.get("retry_mode") or "").strip()
+        if retry_mode:
+            retry_label = "图生图重绘" if retry_mode == "retry_img2img" else "纯文生图重绘"
+            source_code = str(request.get("source_generation_id") or "").strip()
+            suffix += f" [{retry_label}{' / ' + source_code if source_code else ''}]"
         suffix += f"（{warning}）" if warning else ""
         lines.append(f"{index}. {task_id} [{status_cn}/{kind}] {prompt}{suffix}")
     if include_finished:
@@ -159,6 +164,30 @@ def format_task_detail_text(task: Mapping[str, Any]) -> str:
         f"类型：{MEDIA_LABELS.get(media_type, media_type)}",
         f"说明：{original_prompt[:120]}",
     ]
+    retry_mode = str(request.get("retry_mode") or "").strip()
+    if retry_mode:
+        lines.append("模式：" + ("图生图重绘" if retry_mode == "retry_img2img" else "纯文生图重绘"))
+        source_generation_id = str(request.get("source_generation_id") or "").strip()
+        if source_generation_id:
+            lines.append(f"参考上一张：{source_generation_id}")
+        source_images = request.get("source_images")
+        if isinstance(source_images, list):
+            current_count = 0
+            for item in source_images:
+                if not isinstance(item, Mapping) or item.get("kind") != "current_reference":
+                    continue
+                try:
+                    current_count += max(0, int(item.get("count") or 0))
+                except (TypeError, ValueError):
+                    continue
+            if current_count:
+                lines.append(f"本次引用图：{current_count} 张")
+        feedback = str(request.get("feedback") or "").strip()
+        if feedback:
+            lines.append(f"修正反馈：{feedback[:180]}")
+        strength = request.get("strength")
+        if isinstance(strength, (int, float)) and not isinstance(strength, bool):
+            lines.append(f"图生图强度：{strength:.2f}")
     if final_prompt:
         lines.append(f"最终提示词：{final_prompt[:240]}")
     progress = _progress_text(task)

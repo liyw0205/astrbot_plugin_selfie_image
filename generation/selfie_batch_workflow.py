@@ -124,6 +124,7 @@ class SelfieBatchWorkflow:
         self.used_cos_compositions: set[str] = set()
         self.used_cos_cameras: set[str] = set()
         self.used_leg_combinations: set[Tuple[str, str]] = set()
+        self.used_leg_combos: set[str] = set()
         self.used_leg_details: set[Tuple[str, str]] = set()
         self.extra_keep = ""
         self.force_legwear = ""
@@ -140,7 +141,7 @@ class SelfieBatchWorkflow:
         match = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
         if match:
             self.extra_keep = str(match.group(1) or "").strip()
-            self.extra_keep = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|face_mode|crop_mode|leg_expression|wear|outfit|frame|legwear_category|hosiery|leg_accessory):[a-z0-9_|]+】\s*", " ", self.extra_keep)
+            self.extra_keep = re.sub(r"\s*【(?:pose|pose_detail|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|legs_face|leg_view|leg_scene|leg_support|leg_capture_style|leg_state|face_mode|crop_mode|leg_expression|wear|outfit|frame|legwear_category|hosiery|leg_accessory):[a-z0-9_|,\u4e00-\u9fff]+】\s*", " ", self.extra_keep)
             self.extra_keep = re.sub(r"\s*【leg_view_title:[^】]+】\s*", " ", self.extra_keep)
             self.extra_keep = re.sub(r"\s*【(?:combo|angle):[^】]+】\s*", " ", self.extra_keep)
             self.extra_keep = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", self.extra_keep)
@@ -151,7 +152,7 @@ class SelfieBatchWorkflow:
             self.force_legwear = parse_requested_legwear(self.extra_keep)
             self.force_leg_pose = parse_requested_leg_pose(self.extra_keep)
             self.force_leg_camera = parse_requested_leg_camera(self.extra_keep)
-            self.force_leg_crop_mode = parse_requested_leg_crop_mode(str(action or ""))
+            self.force_leg_crop_mode = parse_requested_leg_crop_mode(self.extra_keep)
             if not self.force_legwear and self.total > 1:
                 self.legwear_categories = _plan_legwear_categories(self.total)
         pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
@@ -186,6 +187,9 @@ class SelfieBatchWorkflow:
                     else self.extra_keep
                 )
                 round_action = self._rebuild_action(variant_extra)
+            leg_combo = re.search(r"【combo:(combo_[0-9]{2})】", round_action)
+            if leg_combo:
+                self.used_leg_combos.add(leg_combo.group(1))
             leg_pose = re.search(r"【pose:([a-z_]+)】", round_action)
             leg_view = re.search(r"【leg_view:([a-z_]+)】", round_action)
             if leg_pose and leg_view:
@@ -208,17 +212,22 @@ class SelfieBatchWorkflow:
             if shot:
                 self.last_shot = str(shot.group(1) or self.last_shot)
         elif source == "command-look-legs" or "看看腿" in str(action or "") or "【legs:outfit】" in str(action or "") or "【pose:" in str(action or ""):
+            prefer_combo = source == "command-look-legs" and not variant_extra.strip() and (
+                len(self.used_leg_combos) < (self.total * 3 + 9) // 10
+            )
             round_action = plugin._build_leg_focus_action(
                 variant_extra,
                 bool(self.extra_refs),
                 avoid_pose=self.last_pose,
                 force_legwear=self.force_legwear,
-                force_legwear_category=self.current_legwear_category,
+                force_legwear_category="" if prefer_combo else self.current_legwear_category,
                 force_pose=self.force_leg_pose,
                 force_camera=self.force_leg_camera,
                 force_crop_mode=self.force_leg_crop_mode,
                 avoid_combinations=self.used_leg_combinations,
                 avoid_pose_details=self.used_leg_details,
+                avoid_combos=self.used_leg_combos,
+                prefer_combo=prefer_combo,
             )
             pose = re.search(r"【pose:([a-z_]+)】", round_action)
             if pose:
@@ -291,7 +300,7 @@ class SelfieBatchWorkflow:
             prompt, refs, prompt_en_meta = await plugin._build_selfie_prompt_and_refs_for_event(
                 self.event, action, self.extra_refs, cos_selection=self.cos_selection,
             )
-        reference_fidelity = "low" if refs and has_viewpoint_change_request(action) else ""
+        reference_fidelity = ""
         route_context = {
             "requested_model": str(self.model_request or "").strip(),
         }
@@ -312,6 +321,9 @@ class SelfieBatchWorkflow:
                 self.event,
                 target_pool,
             ))
+        reference_fidelity = str(route_context.get("reference_fidelity") or "").strip().lower()
+        if not reference_fidelity and refs and has_viewpoint_change_request(action):
+            reference_fidelity = "low"
         return await plugin._run_image_generation(
             prompt,
             self.aspect,

@@ -22,7 +22,7 @@ from astrbot_plugin_selfie_image.core.models import AICatConfig
 from astrbot_plugin_selfie_image.core.providers import ImageReference
 from astrbot_plugin_selfie_image.core.utils import save_json_file, summarize_record_for_list
 from astrbot_plugin_selfie_image.generation.prompt_lookup import (
-    CODE_PATTERN, fingerprint_distance, image_fingerprint, new_image_code,
+    CODE_PATTERN, fingerprint_distance, image_fingerprint, new_image_code, record_final_prompt,
 )
 from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 from astrbot_plugin_selfie_image.webui.services import record_matches_query
@@ -53,6 +53,17 @@ class Event:
     async def send(self, message):
         self.sent.append(message)
         return {"data": {"message_id": 700 + len(self.sent)}}
+
+
+def test_retry_prompt_lookup_returns_copyable_prompt_without_extra_labels():
+    record = {
+        "original_prompt": "base prompt",
+        "request_data": {
+            "retry_mode": "retry_img2img",
+            "request_prompt": "base prompt\n\nfeedback correction block",
+        },
+    }
+    assert record_final_prompt(record) == "base prompt\n\nfeedback correction block"
 
 
 @pytest.fixture
@@ -279,10 +290,8 @@ def test_onebot_get_msg_recovers_label_and_links_reply_id(plugin):
         return [value async for value in plugin.cmd_view_prompt(event)]
 
     results = asyncio.run(run())
-    assert len(results) == 4
-    assert "原始提示词：" in results[1] and "【pose:seated】【cam:third】 input" in results[1]
-    assert "实际发送提示词：" in results[2] and "final actual prompt" in results[2]
-    assert results[3] == "使用模型：（未记录）"
+    assert len(results) == 2
+    assert results[1] == "【pose:seated】【cam:third】 input"
     assert "引用消息" in results[0]
     assert plugin._records[0]["delivery_messages"][0]["message_id"] == "42"
 
@@ -328,10 +337,9 @@ def test_view_by_code_sends_metadata_then_exact_final_prompt_without_llm(plugin)
         return [value async for value in plugin.cmd_view_prompt(Event(), row["image_code"].lower())]
 
     results = asyncio.run(run())
-    assert len(results) == 4
+    assert len(results) == 2
     assert row["image_code"] in results[0]
     assert "【pose:seated】【cam:third】 input" in results[1]
-    assert "final actual prompt" in results[2]
     assert plugin._records[0]["prompt_selection"] == {"pose": "seated", "cam": "third"}
     plugin._reverse_image_prompt_with_llm.assert_not_awaited()
 
@@ -353,10 +361,9 @@ def test_view_prompt_preserves_original_clothing_terms_and_route_metadata(plugin
         return [value async for value in plugin.cmd_view_prompt(Event(), row["image_code"])]
 
     results = asyncio.run(run())
+    assert len(results) == 2
     assert original in results[1]
     assert "吊袜带" in results[1] and "高跟" in results[1]
-    assert "actual provider prompt" in results[2]
-    assert results[3] == "使用模型：NovelAI/nai-diffusion-4-5-full"
     saved = plugin._prompt_record_by_code(Event(), row["image_code"])
     assert saved["original_prompt"] == original
     assert saved["requested_model"] == "nai"

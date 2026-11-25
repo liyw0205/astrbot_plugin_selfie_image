@@ -1137,12 +1137,27 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "studio_template",
             "studio_source_asset_ids",
             "retry_record_id",
+            "retry_mode",
+            "source_generation_id",
+            "source_record_id",
+            "feedback",
+            "last_feedback",
+            "strength",
+            "reference_fidelity",
+            "negative_prompt",
         ):
             value = rd.get(key)
             if isinstance(value, (str, int, float, bool)):
                 slim_rd[key] = value
             elif isinstance(value, list):
                 slim_rd[key] = [str(item).strip() for item in value if str(item).strip()][:24]
+        source_images = rd.get("source_images")
+        if isinstance(source_images, list):
+            slim_rd["source_images"] = [
+                redact_sensitive_data(dict(item))
+                for item in source_images[:8]
+                if isinstance(item, Mapping)
+            ]
         pe = rd.get("prompt_en")
         if isinstance(pe, dict):
             slim_rd["prompt_en"] = {
