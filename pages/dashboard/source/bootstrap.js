@@ -52,6 +52,7 @@
       if (mask === $('channelModal')) closeChannelModal();
       else if (mask === $('proxyModal')) closeProxyModal();
       else if (mask === $('recordModal')) closeRecordDetail();
+      else if (mask === $('recordFieldModal')) closeRecordField();
       else if (mask === $('compareModal')) closeCompareModal();
       else if (mask === $('taskModal')) closeTaskDetail();
       else if (mask === $('metricsModal')) closeMetricsModal();
@@ -72,6 +73,7 @@
       if ($('backupRestoreModal')?.classList.contains('show')) { closeBackupRestore(); return; }
       if ($('mediaSourceModal')?.classList.contains('show')) { closeMediaSourceModal(); return; }
       if ($('mediaLightboxModal')?.classList.contains('show')) { closeMediaLightbox(); return; }
+      if ($('recordFieldModal')?.classList.contains('show')) { closeRecordField(); return; }
       if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }
       if ($('metricsModal')?.classList.contains('show')) { closeMetricsModal(); return; }
       if ($('metricAlertSettingsModal')?.classList.contains('show')) { closeMetricAlertSettings(); return; }
@@ -87,6 +89,7 @@
       if ($('groupConfigModal')?.classList.contains('show')) { closeGroupConfigModal(); return; }
     });
     if ($('cleanupCacheBtn')) $('cleanupCacheBtn').onclick = cleanupCache;
+    if ($('recordFieldCopy')) $('recordFieldCopy').innerHTML = copyIconSvg();
     if ($('mediaLightboxClose')) $('mediaLightboxClose').onclick = closeMediaLightbox;
     if ($('mediaLightboxDownload')) {
       $('mediaLightboxDownload').innerHTML = downloadIconSvg();

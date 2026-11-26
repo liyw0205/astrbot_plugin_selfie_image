@@ -1876,6 +1876,7 @@ def pick_cos_variation(
     camera: str = "",
     multi_view_collage: bool = False,
     use_combinations: bool = False,
+    suppress_pose: bool = False,
 ) -> Dict[str, Any]:
     """Pick a compatible scene and pose, honoring explicit user constraints."""
     profile = cos_look_compatibility(cos_id)
@@ -1886,7 +1887,7 @@ def pick_cos_variation(
     allowed_scenes = set(profile["recommended_scene_ids"])
     avoided_poses = _as_id_set(avoid_poses) | _as_id_set(avoid_pose)
     avoided_scenes = _as_id_set(avoid_scenes) | _as_id_set(avoid_scene)
-    requested_pose = _requested_cos_pose(extra_request)
+    requested_pose = "user" if suppress_pose else _requested_cos_pose(extra_request)
     requested_scene = _requested_cos_scene(extra_request)
     selection_notice = ""
     rejected_pose_ids: set[str] = set()
@@ -3132,6 +3133,7 @@ def build_cos_look_action(
     match_query: str = "",
     force_id: str = "",
     force_multi_view_collage: bool = False,
+    suppress_cos_pose: bool = False,
     picker: Optional[Callable[..., Mapping[str, Any]]] = None,
 ) -> str:
     """Build one matched or random COS action with a compatible camera."""
@@ -3173,7 +3175,7 @@ def build_cos_look_action(
         requested_camera = "third"
     phone_face_cover = requests_phone_face_cover(extra_request)
     look_profile = cos_look_compatibility(cos_id)
-    requested_pose = _requested_cos_pose(extra_request)
+    requested_pose = "user" if suppress_cos_pose else _requested_cos_pose(extra_request)
     requested_scene = _requested_cos_scene(extra_request)
     requested_orientation = _requested_cos_orientation(extra_request)
     framing_detection_text = _strip_parsed_cos_request_terms(
@@ -3223,6 +3225,7 @@ def build_cos_look_action(
         camera=requested_camera or camera_kind,
         multi_view_collage=collage_active,
         use_combinations=True,
+        suppress_pose=suppress_cos_pose,
     )
     collage_active = bool(variation.get("panel_prompt"))
     recline_handheld_fallback = bool(
@@ -3295,6 +3298,7 @@ def build_cos_look_action(
                 camera=requested_camera or camera_kind,
                 multi_view_collage=collage_active,
                 use_combinations=True,
+                suppress_pose=suppress_cos_pose,
             )
             retry_framing = pick_cos_framing(
                 outfit=outfit,
@@ -3466,7 +3470,7 @@ def build_cos_look_action(
         base
         + f" 【cos:{cos_id}】 【cam:{camera_kind}】"
         + (f" 【cos_eye:{cos_eye_mode(cos_id)}】" if cos_eye_mode(cos_id) != "unspecified" else "")
-        + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else "")
+        + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] and not suppress_cos_pose else "")
         + (f" 【cos_scene:{variation['scene_id']}】" if variation["scene_id"] else "")
         + (f" 【cos_style:{variation['style_id']}】" if variation.get("style_id") else "")
         + (f" 【cos_lighting:{variation['lighting_id']}】" if variation.get("lighting_id") else "")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -156,3 +157,35 @@ def test_explicit_nai_route_keeps_only_enabled_nai_models_in_priority_order() ->
 
     assert routed == [nai5, nai4]
     assert not plugin._nai_model_unavailable(None, "nai")
+
+
+def test_llm_default_target_pool_excludes_nai_models() -> None:
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    nai = make_nai_target("native", "nai-diffusion-5-full")
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin._resolve_generation_targets = lambda _event=None: [TARGETS[0], nai]
+
+    assert plugin._resolve_llm_generation_targets() == [TARGETS[0]]
+
+
+@pytest.mark.parametrize("model", ["nai", "NovelAI", "nai5", "nai-diffusion-5-full"])
+@pytest.mark.parametrize("entrypoint", ["image", "selfie"])
+def test_llm_nai_model_requests_are_rejected_even_when_enabled(model: str, entrypoint: str) -> None:
+    from astrbot_plugin_selfie_image.features.model_selection import NAI_LLM_REQUEST_DISALLOWED
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.config = SimpleNamespace(image_enable_llm_tool=True)
+    plugin._normalize_count = lambda count: count
+    plugin._quota_error_message = lambda *_args: ""
+    plugin._rate_limit_error_message = lambda *_args: ""
+    plugin._tool_soft_fail = lambda error: error
+
+    if entrypoint == "image":
+        result = asyncio.run(plugin._run_llm_image_request(None, "portrait", model=model))
+    else:
+        result = asyncio.run(plugin._run_llm_selfie_flow(
+            None, "portrait", 1, "", "", model_request=model,
+        ))
+    assert result == NAI_LLM_REQUEST_DISALLOWED

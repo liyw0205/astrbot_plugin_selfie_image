@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "scene_state_probability": 0.3,
+  "scene_states": [
+    {
+      "id": "pool_water_wet",
+      "title": "泳池上岸水湿",
+      "weight": 1,
+      "environments": [
+        "outdoor"
+      ],
+      "scene_ids": [
+        "outdoor_pool_edge",
+        "pool_lounger"
+      ],
+      "prompt": "成年女性刚从室外泳池上岸，裸露皮肤、头发和当前服饰带有自然的池水湿润感，衣料颜色略深并柔和贴合原有轮廓，不改变款式、颜色、剪裁和覆盖范围。已有丝袜保留原袜型、颜色、透明度与细密织纹，湿润观感克制，不变成裸腿或塑料膜。湿润来自泳池水，不额外添加汗湿或运动后状态。"
+    },
+    {
+      "id": "beach_sweat_damp",
+      "title": "沙滩热日汗湿",
+      "weight": 1,
+      "environments": [
+        "outdoor"
+      ],
+      "scene_ids": [
+        "beach_mat",
+        "beach_canvas_chair"
+      ],
+      "prompt": "成年女性在炎热晴日的沙滩停留后回到遮阳处，裸露皮肤呈现轻微自然汗光，当前服饰局部有淡淡汗湿感、颜色略深但保持原款式、颜色、剪裁和覆盖范围。已有丝袜继续呈现原面料与织纹，不画成油湿皮肤。湿润来自天气闷热，不额外添加刚出水或池水湿身状态。"
+    }
+  ]
+}

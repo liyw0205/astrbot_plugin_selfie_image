@@ -19,9 +19,10 @@
         "long_surface",
         "reclined_surface",
         "lying_surface",
+        "standing_edge",
         "armrest",
         "backrest",
-        "kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
         "leg_detail"
@@ -62,9 +63,10 @@
         "long_surface",
         "reclined_surface",
         "lying_surface",
+        "standing_edge",
         "armrest",
         "backrest",
-        "kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
         "leg_detail"
@@ -105,9 +107,10 @@
         "long_surface",
         "reclined_surface",
         "lying_surface",
+        "standing_edge",
         "armrest",
         "backrest",
-        "kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
         "leg_detail"
@@ -142,7 +145,7 @@
         "ground_surface",
         "wide_surface",
         "long_surface",
-        "kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
         "leg_detail"
@@ -174,7 +177,7 @@
       "elevation": "down",
       "weight": 3,
       "support_types": [
-        "kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
         "leg_detail"
@@ -206,7 +209,7 @@
       "elevation": "down",
       "weight": 2,
       "support_types": [
-        "kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
         "leg_detail"
@@ -238,7 +241,7 @@
       "elevation": "down",
       "weight": 2,
       "support_types": [
-        "kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
         "leg_detail"
@@ -268,6 +271,7 @@
       "capture_mode": "mirror",
       "direction": "front",
       "elevation": "down",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "wide_surface",
@@ -302,6 +306,7 @@
       "capture_mode": "mirror",
       "direction": "left",
       "elevation": "down",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "selection_weight": 3,
       "support_types": [
@@ -337,6 +342,7 @@
       "capture_mode": "mirror",
       "direction": "right",
       "elevation": "down",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "selection_weight": 3,
       "support_types": [
@@ -362,6 +368,40 @@
         "pitch_kind": "down",
         "camera_height": "above_shoulder",
         "horizontal_position": "right",
+        "roll": 0
+      }
+    },
+    {
+      "id": "self_mirror_standing_front_level",
+      "title": "镜前站姿轻俯自拍",
+      "camera": "selfie",
+      "capture_mode": "mirror",
+      "direction": "front",
+      "elevation": "level",
+      "face_modes": ["none", "half", "full"],
+      "weight": 2,
+      "selection_weight": 3,
+      "support_types": [
+        "standing_edge"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人站在落地镜前，以胸口附近的自然高度持手机对镜拍摄；镜面呈现站姿与双腿，手机不遮挡腰胯和腿部，头部与面部按所选裁切范围自然取景，反射方向与人物站位一致。",
+      "angle": {
+        "yaw": 0,
+        "yaw_range": [
+          -10,
+          10
+        ],
+        "pitch": 0,
+        "pitch_range": [
+          -5,
+          5
+        ],
+        "pitch_kind": "level",
+        "camera_height": "upper_body",
+        "horizontal_position": "front",
         "roll": 0
       }
     },
@@ -441,6 +481,7 @@
       "camera": "third",
       "direction": "front",
       "elevation": "up",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "chair_seat",
@@ -479,6 +520,7 @@
       "camera": "third",
       "direction": "oblique",
       "elevation": "up",
+      "face_modes": ["none", "half", "full"],
       "weight": 3,
       "support_types": [
         "chair_seat",
@@ -488,7 +530,7 @@
         "wide_edge",
         "armrest",
         "backrest",
-        "kneeling_surface"
+        "flat_ground"
       ],
       "framings": [
         "leg_detail",
@@ -518,6 +560,7 @@
       "camera": "third",
       "direction": "side",
       "elevation": "up",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "chair_seat",
@@ -556,6 +599,7 @@
       "camera": "third",
       "direction": "front",
       "elevation": "up",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "standing_edge"
@@ -588,6 +632,7 @@
       "camera": "third",
       "direction": "oblique",
       "elevation": "up",
+      "face_modes": ["none", "half", "full"],
       "weight": 3,
       "support_types": [
         "standing_edge",
@@ -622,11 +667,11 @@
       "camera": "third",
       "direction": "oblique",
       "elevation": "level",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "lying_surface",
         "reclined_surface",
-        "kneeling_surface",
         "flat_ground",
         "chair_seat",
         "seat_edge",
@@ -660,6 +705,7 @@
       "camera": "third",
       "direction": "side",
       "elevation": "up",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "standing_edge",
@@ -690,10 +736,12 @@
     },
     {
       "id": "third_lying_side_level",
+      "camera_height_prompt": "腿部与唯一主承托面附近，保持与腿线大致同高",
       "title": "卧姿侧面平视",
       "camera": "third",
       "direction": "side",
       "elevation": "level",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "lying_surface",
@@ -703,7 +751,7 @@
         "leg_detail",
         "full_outfit"
       ],
-      "prompt": "相机位于卧姿人物的无遮挡侧前方，与腿部和软面大致同高平视；使用普通焦段和适中距离，头肩、髋部、膝踝沿自然姿态连贯过渡，双腿保持各自轮廓和轻微错位。不贴近脸、髋或脚端，不用极端纵深把腿拉成长直线，保留动作中实际抬起的膝部或脚端，不绕到人物背后。",
+      "prompt": "相机位于卧姿人物的无遮挡侧方，与腿部和软面大致同高平视；使用普通焦段和适中距离，头肩、髋部、膝踝沿自然姿态连贯过渡，双腿保持各自轮廓和轻微错位。不贴近脸、髋或脚端，不用极端纵深把腿拉成长直线，保留动作中实际抬起的膝部或脚端，不绕到人物背后。",
       "angle": {
         "yaw": 90,
         "yaw_range": [
@@ -723,10 +771,12 @@
     },
     {
       "id": "third_reclined_stool_oblique_level",
+      "camera_height_prompt": "腿部与主承托面附近，保持与腿线大致同高",
       "title": "脚凳半躺斜前方平视",
       "camera": "third",
       "direction": "oblique",
       "elevation": "level",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "reclined_footstool"
@@ -755,10 +805,12 @@
     },
     {
       "id": "third_reclined_stool_side_level",
+      "camera_height_prompt": "腿部与主承托面附近，保持与腿线大致同高",
       "title": "脚凳半躺侧面平视",
       "camera": "third",
       "direction": "side",
       "elevation": "level",
+      "face_modes": ["none", "half", "full"],
       "weight": 2,
       "support_types": [
         "reclined_footstool"

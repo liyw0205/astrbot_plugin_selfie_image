@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import random
 import re
 import sys
@@ -10,6 +11,51 @@ import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+
+
+def _leg_pool_payload_for_path(module, path, payload, view_payload=None):
+    split = {
+        module.POSE_DATA_PATH: "poses",
+        module.SCENE_DATA_PATH: "scenes",
+        module.SCENE_STATE_DATA_PATH: "scene_states",
+        module.CAPTURE_STYLE_DATA_PATH: "capture_styles",
+    }
+    if path == module.DATA_PATH:
+        return payload
+    if path == module.VIEW_DATA_PATH:
+        return view_payload or {"views": payload.get("views", [])}
+    if path == module.SCENE_STATE_DATA_PATH:
+        return {
+            "scene_state_probability": payload.get("scene_state_probability", 0.3),
+            "scene_states": payload.get("scene_states", []),
+        }
+    if path in split:
+        key = split[path]
+        return {key: payload.get(key, [])}
+    return {}
+
+
+def _leg_outfit_payload_for_path(module, path, payload):
+    rule_paths = {
+        module.PRESERVE_PROMPTS_DATA_PATH: "preserve_prompts",
+        module.POOL_REFERENCE_PROMPTS_DATA_PATH: "pool_reference_prompts",
+        module.WEAR_PROMPTS_DATA_PATH: "wear_prompts",
+        module.WEAR_LABELS_DATA_PATH: "wear_labels",
+    }
+    if path in rule_paths:
+        key = rule_paths[path]
+        return {"version": 1, key: payload.get(key)}
+    categories = {
+        module.OUTFIT_DATA_PATH: "outfits",
+        module.CAPTURE_PROFILE_DATA_PATH: "capture_profiles",
+        module.HOSIERY_STYLE_DATA_PATH: "hosiery_styles",
+        module.LEG_ACCESSORY_DATA_PATH: "leg_accessories",
+        module.RANDOM_LEG_DETAIL_DATA_PATH: "random_leg_details",
+    }
+    if path in categories:
+        key = categories[path]
+        return {"version": 1, key: payload.get(key)}
+    return {}
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -31,6 +77,31 @@ except ImportError:
 
 
 class PromptPoolJsonTests(unittest.TestCase):
+    def test_leg_json_files_have_one_category_each(self) -> None:
+        data_dir = Path(__file__).resolve().parents[1] / "data" / "legs"
+        expected = {
+            "prompt_rules.json": {"version", "proportion_guard", "framing", "anatomy_rule", "hosiery_rule", "camera_framings", "full_framing", "crop_modes", "reference_rules", "scene_rule", "appearance_prompts"},
+            "poses.json": {"version", "poses"},
+            "scenes.json": {"version", "scenes"},
+            "scene_states.json": {"version", "scene_state_probability", "scene_states"},
+            "capture_styles.json": {"version", "capture_styles"},
+            "views.json": {"version", "views"},
+            "outfits.json": {"version", "outfits"},
+            "capture_profiles.json": {"version", "capture_profiles"},
+            "preserve_prompts.json": {"version", "preserve_prompts"},
+            "pool_reference_prompts.json": {"version", "pool_reference_prompts"},
+            "wear_prompts.json": {"version", "wear_prompts"},
+            "wear_labels.json": {"version", "wear_labels"},
+            "hosiery_styles.json": {"version", "hosiery_styles"},
+            "leg_accessories.json": {"version", "leg_accessories"},
+            "random_leg_details.json": {"version", "random_leg_details"},
+            "combo_presets.json": {"version", "combos"},
+        }
+        self.assertEqual({path.name for path in data_dir.glob("*.json")}, set(expected))
+        for filename, fields in expected.items():
+            with self.subTest(filename=filename):
+                self.assertEqual(set(json.loads((data_dir / filename).read_text(encoding="utf-8"))), fields)
+
     def test_leg_pose_support_matches_the_selected_scene(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_BY_ID, build_leg_focus_action, compatible_leg_compositions
 
@@ -38,8 +109,8 @@ class PromptPoolJsonTests(unittest.TestCase):
             "sofa_side_sit_knees_together",
             "chair_thigh_cross_slant",
             "edge_knees_together_dangle", "edge_knees_together_ankles_apart",
-            "kneeling_sit_back", "kneeling_upright", "chair_parallel_legs_slant",
-            "bed_supine_knees_together", "chair_one_foot_on_stool",
+            "kneeling_sit_back", "kneeling_upright",
+            "bed_supine_knees_together",
             "edge_knees_together_slant", "seated_knees_offset", "seated_ankles_softly_crossed",
             "reclined_same_side_knees", "standing_weight_shift",
             "seated_thigh_gentle_pinch", "kneeling_relaxed_apart",
@@ -74,7 +145,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(window)
         self.assertTrue(all(view["camera"] == "selfie" for _, _, view in window))
         action = build_leg_focus_action(force_pose="kneeling_sit_back", force_view="self_forward_down")
-        self.assertIn("双手轻搭大腿外侧", action)
+        self.assertIn("一手在上身旁持机向下拍摄并留在画外", action)
         self.assertIn("第一人称自拍机位由人物手持手机拍摄", action)
         for pose_id in ("edge_knees_together_dangle", "supine_parallel_extended", "side_lying_knees_bent"):
             with self.subTest(support_pose=pose_id):
@@ -96,6 +167,8 @@ class PromptPoolJsonTests(unittest.TestCase):
             "side_lying_top_knee_forward",
             "kneeling_side_sit",
             "kneeling_single_knee_grounded",
+            "side_lying_knees_bent",
+            "prone_both_knees_bent",
         }
         self.assertEqual(
             {pose["id"] for pose in leg_focus.LEGFOCUS_POSE_POOL if pose.get("risk") == "high"},
@@ -116,7 +189,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         pose = leg_focus.LEGFOCUS_POSE_BY_ID["edge_knees_together_dangle"]
         with patch.object(leg_focus.random, "choices", return_value=[pose["detail_variants"][0]]) as choose:
             leg_focus._weighted_pose_detail_choice(pose, camera="third", capture_mode="direct")
-        self.assertEqual(choose.call_args.kwargs["weights"], [2, 0.15])
+        self.assertEqual(choose.call_args.kwargs["weights"], [2])
 
         forbidden_pose_negations = re.compile(
             r"(?:不|别|避免|不要|不得|禁止)[^，。；]{0,8}"
@@ -145,25 +218,28 @@ class PromptPoolJsonTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.cos import leg_focus
 
         pose_id = "kneeling_single_knee_grounded"
-        knee_outfits = {
-            "kneeling_slim_trousers", "kneeling_fitted_leggings", "kneeling_ribbed_leggings",
-        }
+        knee_outfits = {"sport_shorts_set", "tee_cargo_shorts", "knit_camisole_shorts_set"}
         self.assertEqual(
             {item["id"] for item in leg_focus._compatible_leg_outfits(posture="kneeling")},
             knee_outfits,
         )
         for _ in range(20):
             action = leg_focus.build_leg_focus_action(force_pose=pose_id)
-            self.assertIn("【crop_mode:shoulder_crop】", action)
+            face_mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+            if face_mode == "none":
+                self.assertIn("【crop_mode:shoulder_crop】", action)
+            else:
+                self.assertIn(f"【crop_mode:{face_mode}_face】", action)
+                self.assertIn("本次神态按 COS 表情模板执行", action)
             self.assertNotIn("【crop_mode:leg_full】", action)
             self.assertIn("【leg_support:flat_ground】", action)
             self.assertIn("即便画面只出现大腿到脚", action)
             self.assertIn("左膝与右脚掌直接落在同一块平整硬质地面", action)
             self.assertIn("【outfit:", action)
-            self.assertRegex(action, r"【outfit:(?:kneeling_slim_trousers|kneeling_fitted_leggings|kneeling_ribbed_leggings)】")
+            self.assertRegex(action, r"【outfit:(?:sport_shorts_set|tee_cargo_shorts|knit_camisole_shorts_set)】")
             self.assertTrue(leg_focus.has_leg_focus_contract(action))
             self.assertFalse(leg_focus.has_leg_focus_contract(
-                action.replace("【crop_mode:shoulder_crop】", "【crop_mode:leg_full】")
+                re.sub(r"【crop_mode:[a-z_]+】", "【crop_mode:leg_full】", action)
             ))
 
         forced_crop = leg_focus.build_leg_focus_action(
@@ -173,14 +249,14 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertIn("【angle:pitch=30,yaw=45】", forced_crop)
         with self.assertRaisesRegex(leg_focus.LegFocusDataError, "不兼容"):
             leg_focus.build_leg_focus_action(
-                force_pose=pose_id, force_outfit="sleep_fleece_cardigan",
+                force_pose="standing_weight_shift", force_outfit="sport_shorts_set",
             )
 
-        trousers = leg_focus.LEGFOCUS_OUTFIT_BY_ID["kneeling_slim_trousers"]
+        shorts = leg_focus.LEGFOCUS_OUTFIT_BY_ID["tee_cargo_shorts"]
         ankle_style = next(style for style in leg_focus.LEGFOCUS_HOSIERY_STYLES if style["id"] == "black_ankle_socks")
         with patch.object(leg_focus.random, "choices", return_value=[ankle_style]) as choose:
             leg_focus._pick_hosiery_style(
-                "黑丝", trousers, pose=leg_focus.LEGFOCUS_POSE_BY_ID[pose_id],
+                "黑丝", shorts, pose=leg_focus.LEGFOCUS_POSE_BY_ID[pose_id],
             )
         weights = choose.call_args.kwargs["weights"]
         self.assertIn(ankle_style["weight"] * 0.15, weights)
@@ -192,18 +268,20 @@ class PromptPoolJsonTests(unittest.TestCase):
         sheer = next(style for style in leg_focus.LEGFOCUS_HOSIERY_STYLES if style["id"] == "white_sheer")
         opaque = next(style for style in leg_focus.LEGFOCUS_HOSIERY_STYLES if style["id"] == "white_opaque")
         pose = leg_focus.LEGFOCUS_POSE_BY_ID["standing_weight_shift"]
-        scarf = leg_focus.LEGFOCUS_ACCESSORY_BY_ID["thigh_silk_scarf"]
+        ring = leg_focus.LEGFOCUS_ACCESSORY_BY_ID["thigh_double_strap_ring"]
         self.assertEqual(
-            leg_focus._pick_leg_accessory("白丝", outfit, sheer, pose, "加大腿丝巾"),
-            [],
+            [item["id"] for item in leg_focus._pick_leg_accessory("白丝", outfit, sheer, pose, "加金属腿环")],
+            ["thigh_double_strap_ring"],
         )
         self.assertEqual(
-            [item["id"] for item in leg_focus._pick_leg_accessory("白丝", outfit, opaque, pose, "加大腿丝巾")],
-            ["thigh_silk_scarf"],
+            [item["id"] for item in leg_focus._pick_leg_accessory("白丝", outfit, opaque, pose, "加金属腿环")],
+            ["thigh_double_strap_ring"],
         )
-        prompt = leg_focus._leg_accessory_prompt(scarf, "白丝", opaque)
-        for phrase in ("紧贴袜料", "宽度不超过约两指", "袜色同色系、低反光", "不勒入皮肤", "禁止打结团块"):
+        prompt = leg_focus._leg_accessory_prompt(ring, "白丝", opaque)
+        for phrase in ("紧贴袜料", "宽度不超过约两指", "保留该款指定的环带配色", "不勒入皮肤", ring["title"]):
             self.assertIn(phrase, prompt)
+        for style in leg_focus.LEGFOCUS_HOSIERY_STYLES:
+            self.assertNotRegex(style["prompt"], r"(?:不加|不增加|不要|不出现)[^。；]*腿环")
 
         with patch.object(leg_focus.random, "random", return_value=0.9), patch.object(
             leg_focus.random, "choices", side_effect=lambda pool, **_kwargs: [pool[0]],
@@ -212,7 +290,8 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertEqual(len(default), 1)
         self.assertTrue(all(item["risk"] != "high" for item in choose.call_args.args[0]))
         combo_action = leg_focus.build_leg_focus_action("combo_06")
-        self.assertIn("【leg_accessory:garter_over_thighhigh|thin|贴合】", combo_action)
+        self.assertIn("【legwear_category:ankle_sock】", combo_action)
+        self.assertNotIn("【leg_accessory:garter_over_thighhigh", combo_action)
         self.assertTrue(leg_focus.has_leg_focus_contract(combo_action))
 
     def test_daily_and_builtin_pools_load_complete_versioned_records(self) -> None:
@@ -367,7 +446,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             compatible_leg_compositions,
         )
 
-        self.assertEqual(len(LEGFOCUS_POSE_POOL), 41)
+        self.assertEqual(len(LEGFOCUS_POSE_POOL), 39)
         for pose in LEGFOCUS_POSE_POOL:
             if pose["id"] == "kneeling_single_knee_grounded":
                 self.assertEqual(set(pose["scene_ids"]), {"indoor_desk", "indoor_flat_ground"})
@@ -375,9 +454,7 @@ class PromptPoolJsonTests(unittest.TestCase):
                 self.assertNotIn("scene_ids", pose)
             self.assertIn("camera_views", pose)
             scene_ids = {scene["id"] for scene, _, _ in compatible_leg_compositions(pose)}
-            if pose["id"] == "chair_one_foot_on_stool":
-                self.assertEqual(scene_ids, {"chair_footstool", "beach_canvas_chair"})
-            elif pose["id"] == "standing_one_foot_on_stool":
+            if pose["id"] == "standing_one_foot_on_stool":
                 self.assertEqual(scene_ids, {"chair_footstool"})
             elif pose["id"] == "reclined_feet_on_stool":
                 self.assertEqual(scene_ids, {"sofa_footstool"})
@@ -410,23 +487,20 @@ class PromptPoolJsonTests(unittest.TestCase):
                             for phrase in ("干爽", "水珠", "水痕", "汗湿"):
                                 self.assertNotIn(phrase, action)
 
-    def test_new_leg_poses_keep_scene_support_and_camera_compatibility(self) -> None:
+    def test_removed_awkward_pose_is_not_available(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
-            LEGFOCUS_POSE_BY_ID, LEGFOCUS_VIEW_BY_ID, build_leg_focus_action,
-            compatible_leg_compositions,
+            LEGFOCUS_POSE_BY_ID, build_leg_focus_action, compatible_leg_compositions,
+            parse_requested_leg_pose,
         )
 
-        chair_pose = LEGFOCUS_POSE_BY_ID["chair_parallel_legs_slant"]
-        chair_combos = compatible_leg_compositions(chair_pose)
-        self.assertTrue(chair_combos)
-        self.assertTrue(all(scene["id"] in {
-            "gaming_chair", "desk_chair", "living_room_chair", "indoor_desk", "indoor_cabinet",
-            "beach_canvas_chair",
-        } for scene, _, _ in chair_combos))
-        self.assertEqual(
-            set(chair_pose["camera_views"]["third"]),
-            {"third_oblique_low", "third_side_low", "third_seated_oblique_down", "third_oblique_level"},
-        )
+        self.assertNotIn("chair_parallel_legs_slant", LEGFOCUS_POSE_BY_ID)
+        self.assertEqual(parse_requested_leg_pose("椅上并膝同向斜放"), "")
+        replacement = build_leg_focus_action("椅上并膝同向斜放")
+        self.assertNotIn("【pose:chair_parallel_legs_slant】", replacement)
+        self.assertNotIn("chair_one_foot_on_stool", LEGFOCUS_POSE_BY_ID)
+        self.assertEqual(parse_requested_leg_pose("椅上单脚搭低脚凳"), "")
+        replacement = build_leg_focus_action("椅上单脚搭低脚凳")
+        self.assertNotIn("【pose:chair_one_foot_on_stool】", replacement)
 
         bed_pose = LEGFOCUS_POSE_BY_ID["bed_supine_knees_together"]
         bed_combos = compatible_leg_compositions(bed_pose)
@@ -434,22 +508,86 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(all(support == "lying_surface" for _, support, _ in bed_combos))
         self.assertTrue({"bed_surface", "bedroom_chaise"} <= {scene["id"] for scene, _, _ in bed_combos})
         self.assertEqual(bed_pose["camera_views"]["third"], ["third_oblique_level"])
-        self.assertEqual(LEGFOCUS_VIEW_BY_ID["third_oblique_level"]["elevation"], "level")
 
-        stool_pose = LEGFOCUS_POSE_BY_ID["chair_one_foot_on_stool"]
-        stool_combos = compatible_leg_compositions(stool_pose)
-        self.assertTrue(stool_combos)
-        self.assertTrue(all(
-            scene["id"] in {"chair_footstool", "beach_canvas_chair"}
-            and support == "chair_footstool"
-            for scene, support, _ in stool_combos
+    def test_leg_focus_random_outfits_exclude_full_length_trousers(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_OUTFIT_POOL, LEGFOCUS_OUTFIT_BY_ID, LEGFOCUS_OUTFIT_CAPTURE_PROFILES,
+            _compatible_leg_outfits,
+            build_leg_focus_action,
+        )
+
+        self.assertFalse(any(item["capture_profile"] == "trousers" for item in LEGFOCUS_OUTFIT_POOL))
+        self.assertEqual(set(LEGFOCUS_OUTFIT_CAPTURE_PROFILES), {"skirt", "shorts"})
+        self.assertFalse(any(
+            re.search(r"trouser|legging|长裤|紧身裤", json.dumps(item, ensure_ascii=False), re.IGNORECASE)
+            for item in LEGFOCUS_OUTFIT_POOL
         ))
-        for scene, support, view in stool_combos:
-            action = build_leg_focus_action(
-                force_pose=stool_pose["id"], force_camera="third", force_view=view["id"],
-            )
-            self.assertIn("脚凳", action)
-            self.assertIn(f"【leg_support:{support}】", action)
+        knee_outfits = {
+            item["id"] for item in _compatible_leg_outfits(posture="kneeling")
+        }
+        self.assertEqual(knee_outfits, {"sport_shorts_set", "tee_cargo_shorts", "knit_camisole_shorts_set"})
+        self.assertTrue(all(
+            LEGFOCUS_OUTFIT_BY_ID[item_id]["capture_profile"] == "shorts"
+            and "thigh_high" in LEGFOCUS_OUTFIT_BY_ID[item_id]["category"]
+            for item_id in knee_outfits
+        ))
+
+    def test_leg_accessory_prompt_blends_with_surface_instead_of_looking_pasted_on(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import _leg_accessory_prompt
+
+        prompt = _leg_accessory_prompt(
+            {"title": "黑色星星爱心金属腿环", "prompt": "窄幅黑色皮革环带贴合大腿。"}, "光腿", {},
+        )
+        self.assertIn("接触阴影", prompt)
+        self.assertIn("不悬浮、不像贴片", prompt)
+
+    def test_distinctive_thigh_ring_names_and_aliases_select_the_requested_variant(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        outfit = leg_focus.LEGFOCUS_OUTFIT_BY_ID["lace_blouse_skirt"]
+        pose = leg_focus.LEGFOCUS_POSE_BY_ID["standing_weight_shift"]
+        for item in leg_focus.LEGFOCUS_ACCESSORIES:
+            for term in (item["id"], item["title"], *item["aliases"]):
+                with self.subTest(accessory=item["id"], term=term):
+                    selected = leg_focus._pick_leg_accessory("光腿", outfit, {}, pose, f"请加{term}")
+                    self.assertEqual([choice["id"] for choice in selected], [item["id"]])
+        self.assertEqual(
+            leg_focus._requested_leg_accessory("不要黑色猫耳蝴蝶结腿环，请加白色猫耳蝴蝶结腿环")["id"],
+            "thigh_white_cat_bow_cross",
+        )
+        self.assertEqual(leg_focus._requested_leg_accessory("不要白色猫耳蝴蝶结腿环"), {})
+
+    def test_distinctive_thigh_ring_details_survive_final_prompts_and_match_the_leg_surface(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+
+        cases = (
+            ("standing_weight_shift", "bare_legs", "皮肤", "buckle_wrap_mini"),
+            ("standing_weight_shift", "sheer", "袜料", "lace_blouse_skirt"),
+            ("sofa_side_sit_knees_together", "thigh_high", "皮肤", "resort_open_shirt_shorts"),
+            ("supine_parallel_extended", "bare_legs", "皮肤", "resort_open_shirt_shorts"),
+        )
+        for item in leg_focus.LEGFOCUS_ACCESSORIES:
+            for pose_id, category, surface, outfit_id in cases:
+                with self.subTest(accessory=item["id"], pose=pose_id, category=category):
+                    action = leg_focus.build_leg_focus_action(
+                        f"加{item['title']}", force_pose=pose_id, force_camera="third",
+                        force_outfit=outfit_id, force_legwear_category=category,
+                        force_face_mode="none",
+                    )
+                    self.assertIn(f"【leg_accessory:{item['id']}|thin|贴合】", action)
+                    self.assertTrue(leg_focus.has_leg_focus_contract(action))
+                    prompt = build_selfie_builtin_prompt(action)
+                    self.assertIn(item["prompt"], prompt)
+                    self.assertIn(f"紧贴{surface}", prompt)
+                    self.assertIn("保留该款指定的环带配色、金属色和材质", prompt)
+                    self.assertIn("随当前姿势受重力", prompt)
+                    self.assertIn("不跨接双腿", prompt)
+                    self.assertNotIn("厚度低且不凸起", prompt)
+                    self.assertNotRegex(prompt, r"颜色与(?:肤色|袜色)同色系")
+                    self.assertNotIn("不增加腿环", prompt)
+                    if category == "thigh_high":
+                        self.assertIn("不与袜口合并", prompt)
 
     def test_leg_camera_contracts_keep_self_view_separate_from_external_crop(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
@@ -470,10 +608,16 @@ class PromptPoolJsonTests(unittest.TestCase):
                     self.assertNotIn(LEGFOCUS_CAMERA_FRAMINGS[other], action)
                     self.assertEqual(action.count(view["prompt"]), 1)
                     self.assertNotIn("允许上身、肩颈和头脸入画", action)
-                    self.assertTrue(
-                        "头部与面部保持画外" in action
-                        or "头部与面部完全不进入画面" in action
-                    )
+                    face_mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+                    self.assertIn(face_mode, view.get("face_modes", ["none"]))
+                    if face_mode == "none":
+                        self.assertTrue(
+                            "头部与面部保持画外" in action
+                            or "头部与面部完全不进入画面" in action
+                        )
+                    else:
+                        self.assertIn(f"【crop_mode:{face_mode}_face】", action)
+                        self.assertIn("本次神态按 COS 表情模板执行", action)
                     self.assertIn("不额外添加衣物或物件遮挡", action)
                     self.assertNotIn("头部、脸部和肩部不入镜", action)
                     if camera == "selfie":
@@ -534,20 +678,12 @@ class PromptPoolJsonTests(unittest.TestCase):
             with self.subTest(pose=pose["id"]):
                 face_combinations = [
                     item for item in compatible_leg_compositions(
-                        pose, camera="third", framing="full_outfit",
+                        pose, camera="third", framing="full_outfit", allow_explicit=True,
                     )
-                    if pose["posture"] not in {"lying", "side_lying", "prone"}
-                    and item[2].get("elevation") not in {"down", "top"}
+                    if "full" in item[2].get("face_modes", ["none"])
                 ]
-                if pose["posture"] in {"lying", "side_lying", "prone"}:
-                    with self.assertRaises(LegFocusDataError):
-                        build_leg_focus_action(
-                            force_pose=pose["id"], force_camera="third",
-                            force_framing="full_outfit", force_face_mode="full",
-                        )
-                    continue
-                if pose["posture"] == "kneeling":
-                    with self.assertRaisesRegex(LegFocusDataError, "跪姿"):
+                if not face_combinations:
+                    with self.assertRaisesRegex(LegFocusDataError, "不支持指定的露脸方式"):
                         build_leg_focus_action(
                             has_refs=True, force_pose=pose["id"], force_camera="third",
                             force_framing="full_outfit", force_face_mode="full",
@@ -606,7 +742,10 @@ class PromptPoolJsonTests(unittest.TestCase):
                 with self.subTest(field=field, value=invalid):
                     payload = dict(leg_focus._POOL)
                     payload[field] = invalid
-                    with patch.object(leg_focus, "read_versioned_json", side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL}):
+                    with patch.object(
+                        leg_focus, "read_versioned_json",
+                        side_effect=lambda path, _label: _leg_pool_payload_for_path(leg_focus, path, payload),
+                    ):
                         with self.assertRaisesRegex(leg_focus.LegFocusDataError, field):
                             leg_focus._load_pool()
 
@@ -618,7 +757,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             payload[field] = value
             with patch.object(
                 leg_focus, "read_versioned_json",
-                side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL},
+                side_effect=lambda path, _label: _leg_pool_payload_for_path(leg_focus, path, payload),
             ):
                 with self.assertRaisesRegex(leg_focus.LegFocusDataError, message):
                     leg_focus._load_pool()
@@ -627,7 +766,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         payload["poses"][0]["risk"] = []
         with patch.object(
             leg_focus, "read_versioned_json",
-            side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL},
+            side_effect=lambda path, _label: _leg_pool_payload_for_path(leg_focus, path, payload),
         ):
             with self.assertRaisesRegex(leg_focus.LegFocusDataError, "字段不完整或引用无效"):
                 leg_focus._load_pool()
@@ -638,7 +777,7 @@ class PromptPoolJsonTests(unittest.TestCase):
                 payload["scene_state_probability"] = probability
                 with patch.object(
                     leg_focus, "read_versioned_json",
-                    side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL},
+                    side_effect=lambda path, _label: _leg_pool_payload_for_path(leg_focus, path, payload),
                 ):
                     with self.assertRaisesRegex(leg_focus.LegFocusDataError, "scene_state_probability"):
                         leg_focus._load_pool()
@@ -783,7 +922,7 @@ class PromptPoolJsonTests(unittest.TestCase):
                 pose_id = re.search(r"【pose:([a-z_]+)】", action).group(1)
                 posture = LEGFOCUS_POSE_BY_ID[pose_id]["posture"]
                 if posture == "kneeling":
-                    self.assertRegex(action, r"【leg_support:(?:kneeling_surface|flat_ground)】")
+                    self.assertRegex(action, r"【leg_support:(?:flat_ground|flat_ground)】")
                 else:
                     self.assertEqual(posture, "seated")
                     self.assertIn("【leg_support:", action)
@@ -894,7 +1033,12 @@ class PromptPoolJsonTests(unittest.TestCase):
                     next(pose for pose in payload["poses"] if pose["id"] == "kneeling_upright")["hand_prompts"].pop("mirror")
                 else:
                     view_payload["views"][0]["elevation"] = "up"
-                with patch.object(leg_focus, "read_versioned_json", side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else view_payload):
+                with patch.object(
+                    leg_focus, "read_versioned_json",
+                    side_effect=lambda path, _label: _leg_pool_payload_for_path(
+                        leg_focus, path, payload, view_payload,
+                    ),
+                ):
                     with self.assertRaises(leg_focus.LegFocusDataError):
                         leg_focus._load_pool()
 
@@ -936,11 +1080,10 @@ class PromptPoolJsonTests(unittest.TestCase):
 
         for pose_id in ("mirror_side_sit_shins_overlap", "mirror_seated_knees_apart_feet_together"):
             def select_weighted_pose(pool):
-                candidate = next(pose for pose in pool if pose["id"] == pose_id)
-                self.assertLess(candidate["_selection_weight"], candidate["weight"])
-                return dict(candidate)
+                self.assertNotIn(pose_id, {pose["id"] for pose in pool})
+                return dict(pool[0])
 
-            with self.subTest(pose=pose_id, random_pool="high_risk_downweighted"), patch.object(
+            with self.subTest(pose=pose_id, random_pool="high_risk_excluded"), patch.object(
                 leg_focus.random, "random", return_value=1,
             ), patch.object(leg_focus, "_weighted_pose_choice", side_effect=select_weighted_pose):
                 leg_focus.build_leg_focus_action()
@@ -972,11 +1115,15 @@ class PromptPoolJsonTests(unittest.TestCase):
                 LEGFOCUS_POSE_BY_ID["chair_thigh_cross_slant"], scene_ids="gaming_chair",
             )
         })
-        result = asyncio.run(plugin._run_selfie_batches_unlocked(
-            task_id="legs-view-test", event=None, action=action, extra_refs=[],
-            source="command-look-legs", requested_count=count, aspect="9:16",
-            resolution="1K", fail_label="失败", rebuild_extra_request=request,
-        ))
+        with patch(
+            "astrbot_plugin_selfie_image.generation.selfie_batch_workflow._plan_legwear_categories",
+            return_value=["bare_legs"] * count,
+        ):
+            result = asyncio.run(plugin._run_selfie_batches_unlocked(
+                task_id="legs-view-test", event=None, action=action, extra_refs=[],
+                source="command-look-legs", requested_count=count, aspect="9:16",
+                resolution="1K", fail_label="失败", rebuild_extra_request=request,
+            ))
         self.assertTrue(result["success"])
         requests = [call.args[0] for call in plugin._run_image_generation.await_args_list]
         self.assertEqual(len(requests), count)
@@ -985,7 +1132,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             self.assertIn("【pose:chair_thigh_cross_slant】", prompt)
             self.assertIn("【leg_scene:gaming_chair】", prompt)
         for call in plugin._run_image_generation.await_args_list:
-            self.assertEqual(call.kwargs["original_prompt"], action)
+            self.assertEqual(call.kwargs["original_prompt"], call.args[0])
 
     def test_leg_legacy_contract_is_rebuilt_without_repeating_its_old_furniture_or_camera(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
@@ -1056,13 +1203,21 @@ class PromptPoolJsonTests(unittest.TestCase):
 
     def test_hosiery_styles_follow_outfit_compatibility_and_explicit_requests(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
-            LEGFOCUS_HOSIERY_STYLES, LEGFOCUS_OUTFIT_POOL, build_leg_focus_action,
+            LEGFOCUS_HOSIERY_STYLES, LEGFOCUS_OUTFIT_POOL, LegFocusDataError, build_leg_focus_action,
         )
 
         for outfit in LEGFOCUS_OUTFIT_POOL:
             for wear in ("黑丝", "白丝", "连裤袜", "赤足"):
                 kneeling_only = "kneeling" in outfit.get("compatible_postures", [])
                 pose_id = "kneeling_single_knee_grounded" if kneeling_only else "standing_weight_shift"
+                if outfit.get("capture_profile") != "skirt" and wear == "连裤袜":
+                    with self.subTest(outfit=outfit["id"], wear=wear), self.assertRaises(LegFocusDataError):
+                        build_leg_focus_action(
+                            wear, force_pose=pose_id,
+                            force_camera="third" if kneeling_only else "selfie",
+                            force_outfit=outfit["id"],
+                        )
+                    continue
                 with self.subTest(outfit=outfit["id"], wear=wear), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_outfit", return_value=outfit,
                 ):
@@ -1115,13 +1270,21 @@ class PromptPoolJsonTests(unittest.TestCase):
             for wear in ("黑丝", "白丝"):
                 with self.subTest(outfit=outfit["id"], wear=wear):
                     style = _pick_hosiery_style(wear, outfit, category="sheer")
-                    self.assertTrue(style)
-                    self.assertEqual(style["category"], "sheer")
+                    if outfit.get("capture_profile") == "skirt":
+                        self.assertTrue(style)
+                        self.assertEqual(style["category"], "sheer")
+                    else:
+                        self.assertEqual(style, {})
+                        ankle_style = _pick_hosiery_style(wear, outfit, category="ankle_sock")
+                        self.assertEqual(ankle_style["kind"], "ankle")
 
         for _ in range(30):
             self.assertNotEqual(_weighted_detail_choice()["wear"], "赤足")
 
-        stirrup = build_leg_focus_action("踩脚黑丝", force_pose="kneeling_sit_back", force_camera="selfie")
+        stirrup = build_leg_focus_action(
+            "踩脚黑丝", force_pose="standing_weight_shift", force_camera="selfie",
+            force_outfit="jk_cardigan_pleats",
+        )
         self.assertIn("黑色过膝踩脚长袜", stirrup)
         barefoot = build_leg_focus_action("赤足", force_pose="kneeling_sit_back", force_camera="selfie")
         self.assertIn("脚趾数量正确", barefoot)
@@ -1134,14 +1297,12 @@ class PromptPoolJsonTests(unittest.TestCase):
 
     def test_outfit_pool_is_json_owned_and_contains_no_source_policy_prompt(self) -> None:
         from astrbot_plugin_selfie_image.core.prompt_data import read_versioned_json
-        from astrbot_plugin_selfie_image.cos.leg_focus import (
-            OUTFIT_DATA_PATH, LEGFOCUS_OUTFIT_POOL, LEGFOCUS_HOSIERY_STYLES,
-        )
+        from astrbot_plugin_selfie_image.cos.leg_focus import OUTFIT_DATA_PATH, LEGFOCUS_OUTFIT_POOL
 
         payload = read_versioned_json(OUTFIT_DATA_PATH, "test")
         self.assertNotIn("source_rule", payload)
+        self.assertEqual(set(payload), {"version", "outfits"})
         self.assertEqual(payload["outfits"], LEGFOCUS_OUTFIT_POOL)
-        self.assertEqual(payload["hosiery_styles"], LEGFOCUS_HOSIERY_STYLES)
 
     def test_leg_outfit_capture_rules_keep_skirts_off_front_cameras(self) -> None:
         from astrbot_plugin_selfie_image.cos import leg_focus
@@ -1163,7 +1324,10 @@ class PromptPoolJsonTests(unittest.TestCase):
                 self.assertTrue(leg_focus.has_leg_focus_contract(action))
                 if kneeling_only:
                     self.assertIn(view["id"], {"third_kneeling_oblique_down", "third_oblique_level"})
-                    self.assertIn("【crop_mode:shoulder_crop】", action)
+                    face_mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+                    self.assertIn(face_mode, view.get("face_modes", ["none"]))
+                    crop = "shoulder_crop" if face_mode == "none" else f"{face_mode}_face"
+                    self.assertIn(f"【crop_mode:{crop}】", action)
                     with self.assertRaisesRegex(leg_focus.LegFocusDataError, "不兼容"):
                         leg_focus.build_leg_focus_action(
                             force_pose="edge_knees_together_dangle", force_outfit=outfit["id"],
@@ -1189,7 +1353,7 @@ class PromptPoolJsonTests(unittest.TestCase):
                 self.assertIn(f"【outfit:{outfit['id']}】", self_view)
                 self.assertIn("【cam:selfie】", self_view)
 
-    def test_leg_outfit_filter_does_not_fall_back_to_an_incompatible_skirt(self) -> None:
+    def test_leg_outfit_filter_only_returns_compatible_skirts(self) -> None:
         from astrbot_plugin_selfie_image.cos import leg_focus
 
         compositions = leg_focus.compatible_leg_compositions(
@@ -1197,18 +1361,20 @@ class PromptPoolJsonTests(unittest.TestCase):
         )
         skirts = [outfit for outfit in leg_focus.LEGFOCUS_OUTFIT_POOL if outfit["capture_profile"] == "skirt"]
         with patch.object(leg_focus, "LEGFOCUS_OUTFIT_POOL", skirts):
-            with self.assertRaisesRegex(leg_focus.LegFocusDataError, "没有兼容"):
-                leg_focus.pick_leg_focus_outfit(compositions=compositions, avoid_id=skirts[0]["id"])
+            selected = leg_focus.pick_leg_focus_outfit(compositions=compositions, avoid_id=skirts[0]["id"])
+            self.assertIn(selected, leg_focus._compatible_leg_outfits(compositions=compositions))
         action = leg_focus.build_leg_focus_action(force_pose="edge_knees_together_ankles_apart")
         outfit_id = re.search(r"【outfit:([a-z_]+)】", action).group(1)
-        self.assertEqual(leg_focus.get_leg_focus_outfit(outfit_id)["capture_profile"], "shorts")
+        outfit = leg_focus.get_leg_focus_outfit(outfit_id)
+        self.assertIn(outfit, leg_focus._compatible_leg_outfits(
+            posture="seated", compositions=compositions,
+        ))
 
     def test_outfit_environment_rules_keep_sleepwear_indoors_and_resort_clothes_outdoors(self) -> None:
         from astrbot_plugin_selfie_image.cos import leg_focus
 
         outfits = {item["id"]: item for item in leg_focus.LEGFOCUS_OUTFIT_POOL}
         indoor_only_ids = {
-            "home_cotton_shorts", "satin_piped_home_set",
             *(outfit_id for outfit_id in outfits if outfit_id.startswith("sleep_")),
         }
         for outfit_id in indoor_only_ids:
@@ -1228,7 +1394,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(leg_focus._leg_outfit_allows_environment(general_outfit, "indoor"))
         self.assertTrue(leg_focus._leg_outfit_allows_environment(general_outfit, "outdoor"))
 
-        pose = leg_focus.LEGFOCUS_POSE_BY_ID["chair_one_foot_on_stool"]
+        pose = leg_focus.LEGFOCUS_POSE_BY_ID["seated_knees_offset"]
         beach_compositions = leg_focus.compatible_leg_compositions(
             pose, scene_ids="beach_canvas_chair",
         )
@@ -1245,12 +1411,12 @@ class PromptPoolJsonTests(unittest.TestCase):
             self.assertTrue(leg_focus._leg_outfit_allows_environment(outfits[outfit_id], "outdoor"))
 
         indoor_action = leg_focus.build_leg_focus_action(
-            "单椅与低脚凳", force_pose=pose["id"], force_outfit="home_cotton_shorts",
+            "客厅单椅", force_pose=pose["id"], force_outfit="sleep_drop_shoulder_shorts",
         )
-        self.assertIn("【outfit:home_cotton_shorts】", indoor_action)
+        self.assertIn("【outfit:sleep_drop_shoulder_shorts】", indoor_action)
         with self.assertRaisesRegex(leg_focus.LegFocusDataError, "不兼容"):
             leg_focus.build_leg_focus_action(
-                "海边帆布椅", force_pose=pose["id"], force_outfit="home_cotton_shorts",
+                "海边帆布椅", force_pose=pose["id"], force_outfit="sleep_drop_shoulder_shorts",
             )
 
     def test_white_tights_and_supine_pose_prompts_keep_fabric_and_relaxed_shape(self) -> None:
@@ -1297,7 +1463,10 @@ class PromptPoolJsonTests(unittest.TestCase):
                     }[error]
                 else:
                     payload["hosiery_styles"][1].pop("category", None)
-                with patch.object(leg_focus, "read_versioned_json", return_value=payload):
+                with patch.object(
+                    leg_focus, "read_versioned_json",
+                    side_effect=lambda path, _label: _leg_outfit_payload_for_path(leg_focus, path, payload),
+                ):
                     with self.assertRaises(leg_focus.LegFocusDataError):
                         leg_focus._load_outfit_pool()
 
@@ -1319,29 +1488,33 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertNotRegex(bare_detail["prompt"], r"袜|织物|纤维|白丝|冷调|丝袜")
 
         explicit_black = leg_focus.build_leg_focus_action(
-            "黑丝", force_legwear_category="bare_legs", force_pose="kneeling_sit_back", force_camera="selfie",
+            "黑丝", force_legwear_category="bare_legs", force_pose="standing_weight_shift", force_camera="selfie",
         )
         self.assertIn("【wear:black】", explicit_black)
-        self.assertIn("【legwear_category:sheer】", explicit_black)
+        outfit_id = re.search(r"【outfit:([a-z_]+)】", explicit_black).group(1)
+        expected_category = (
+            "thigh_high" if leg_focus.LEGFOCUS_OUTFIT_BY_ID[outfit_id]["capture_profile"] == "shorts" else "sheer"
+        )
+        self.assertIn(f"【legwear_category:{expected_category}】", explicit_black)
 
         outfit = leg_focus.LEGFOCUS_OUTFIT_BY_ID["lace_blouse_skirt"]
         thigh_high = next(item for item in leg_focus.LEGFOCUS_HOSIERY_STYLES if item["id"] == "black_lace_top")
         pose = leg_focus.LEGFOCUS_POSE_BY_ID["standing_weight_shift"]
         self.assertEqual(
             [item["id"] for item in leg_focus._pick_leg_accessory("黑丝", outfit, thigh_high, pose, "加吊袜带")],
-            ["garter_over_thighhigh"],
+            [],
         )
         bare_outfit = leg_focus.LEGFOCUS_OUTFIT_POOL[0]
-        toe_ring = leg_focus._pick_leg_accessory(
-            "赤足", bare_outfit, {}, pose, "请加脚趾戒",
+        thigh_ring = leg_focus._pick_leg_accessory(
+            "赤足", bare_outfit, {}, pose, "请加金属腿环",
         )
-        self.assertEqual([item["id"] for item in toe_ring], ["toe_ring"])
+        self.assertEqual([item["id"] for item in thigh_ring], ["thigh_double_strap_ring"])
         self.assertEqual(leg_focus._pick_leg_accessory("黑丝", bare_outfit, {}, pose, "请加脚趾戒"), [])
 
     def test_leg_combo_presets_are_selectable_random_and_keep_contracts(self) -> None:
         from astrbot_plugin_selfie_image.cos import leg_focus
 
-        self.assertEqual(len(leg_focus.LEGFOCUS_COMBO_POOL), 8)
+        self.assertEqual(len(leg_focus.LEGFOCUS_COMBO_POOL), 10)
         for combo in leg_focus.LEGFOCUS_COMBO_POOL:
             with self.subTest(combo=combo["id"]):
                 action = leg_focus.build_leg_focus_action(combo["id"])
@@ -1352,7 +1525,7 @@ class PromptPoolJsonTests(unittest.TestCase):
                 self.assertIn(f"【angle:pitch={combo['angle']['pitch']},yaw={combo['angle']['yaw']}】", action)
                 self.assertTrue(leg_focus.has_leg_focus_contract(action))
                 tail = action.rsplit("【combo:", 1)[1]
-                self.assertRegex(tail, r"^combo_[0-9]{2}】 【leg_view:[a-z_]+】 【pose:[a-z_]+】 【crop_mode:[a-z_]+】 【angle:pitch=-?[0-9]+,yaw=-?[0-9]+】$")
+                self.assertRegex(tail, r"^combo_[0-9]{2}】 【leg_view:[a-z_]+】 【pose:[a-z_]+】 【crop_mode:[a-z_]+】 【angle:pitch=-?[0-9]+,yaw=-?[0-9]+】 【cam:(?:selfie|third)】$")
 
         state = random.getstate()
         try:
@@ -1368,22 +1541,24 @@ class PromptPoolJsonTests(unittest.TestCase):
         hit_counts = {key: value for key, value in counts.items() if key != "none"}
         self.assertEqual(set(hit_counts), {
             combo["id"] for combo in leg_focus.LEGFOCUS_COMBO_POOL
-            if combo["face_mode"] != "full"
+            if combo["risk"] != "high"
+            and leg_focus.LEGFOCUS_POSE_BY_ID[combo["pose"]].get("risk") != "high"
         })
         self.assertGreaterEqual(sum(hit_counts.values()) / 1000, 0.3)
         self.assertLessEqual(max(hit_counts.values()) / 1000, 0.25)
-        self.assertFalse(any(
-            "【face_mode:full】" in leg_focus.build_leg_focus_action("")
-            for _ in range(100)
-        ))
+        for _ in range(100):
+            action = leg_focus.build_leg_focus_action("")
+            mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+            view_id = re.search(r"【leg_view:([a-z_]+)】", action).group(1)
+            self.assertIn(mode, leg_focus.LEGFOCUS_VIEW_BY_ID[view_id].get("face_modes", ["none"]))
         self.assertIn("【combo:combo_03】", leg_focus.build_leg_focus_action(
             "完整露脸", prefer_combo=True,
         ))
         used = set()
-        for _ in range(7):
+        for _ in range(8):
             action = leg_focus.build_leg_focus_action("", avoid_combos=used, prefer_combo=True)
             used.add(re.search(r"【combo:(combo_[0-9]{2})】", action).group(1))
-        self.assertEqual(len(used), 7)
+        self.assertEqual(len(used), 8)
         risky_poses = {
             pose_id for pose_id, pose in leg_focus.LEGFOCUS_POSE_BY_ID.items()
             if pose.get("risk") == "high"
@@ -1455,17 +1630,18 @@ class PromptPoolJsonTests(unittest.TestCase):
             "shoulder_crop",
         )
         self.assertEqual(cleaned, "")
-        third = leg_focus.build_leg_focus_action("第三人称")
+        with patch.object(leg_focus.random, "random", return_value=1):
+            third = leg_focus.build_leg_focus_action("第三人称 不露脸")
         self.assertIn("第三人称画外相机", third)
         self.assertRegex(third, r"第三人称画外相机位于.+偏航角[+-]?\d+度")
         self.assertRegex(third, r"【angle:pitch=-?\d+,yaw=-?\d+】")
         self.assertIn("肩线下方", third)
         accessories = leg_focus.LEGFOCUS_ACCESSORY_BY_ID
-        self.assertTrue({
-            "thigh_metal_band", "thigh_lace_band", "thigh_silk_scarf", "silk_side_ribbon",
-            "lace_garter_double", "ankle_silk_cuff", "layered_anklet", "knee_high_top_band",
-            "fishnet_edge_band", "stirrup_ankle_wrap", "leg_harness_light",
-        } <= set(accessories))
+        self.assertTrue(set(accessories).isdisjoint({
+            "thigh_metal_band", "thigh_lace_band", "thigh_satin_band", "thigh_double_chain",
+            "thigh_pearl_band", "thigh_leather_band", "thigh_bow_band", "thigh_crystal_band",
+        }))
+        self.assertTrue(all(item["accessory_type"] == "thigh_band" for item in accessories.values()))
         self.assertTrue(all(
             "皮肤保持本人自然肤色" in leg_focus._leg_accessory_prompt(item, "光腿", {})
             for item in accessories.values()
@@ -1474,9 +1650,9 @@ class PromptPoolJsonTests(unittest.TestCase):
             {item["id"] for item in leg_focus._pick_leg_accessory(
                 "光腿", leg_focus.LEGFOCUS_OUTFIT_POOL[0], {},
                 leg_focus.LEGFOCUS_POSE_BY_ID["standing_weight_shift"],
-                "大腿环和脚踝软环", force_ids=["thigh_metal_band", "ankle_silk_cuff"],
+                "大腿环", force_ids=["thigh_cat_bat_paw", "thigh_white_cat_chain"],
             )},
-            {"thigh_metal_band", "ankle_silk_cuff"},
+            {"thigh_cat_bat_paw"},
         )
 
     def test_canvas_leg_outfits_distinguish_persona_from_uploaded_or_parent_images(self) -> None:
@@ -1547,7 +1723,11 @@ class PromptPoolJsonTests(unittest.TestCase):
 
         self.assertIn(action, prompt_zh)
         self.assertNotIn("允许上身、肩颈和头脸入画", prompt_zh)
-        self.assertIn("头部与面部保持画外", prompt_zh)
+        face_mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+        if face_mode == "none":
+            self.assertIn("头部与面部保持画外", prompt_zh)
+        else:
+            self.assertIn(f"【face_mode:{face_mode}】", prompt_zh)
         self.assertIn("所选服装原有的露肩、锁骨和腰腹自然保留", prompt_zh)
         self.assertNotIn("头部、脸部和肩部不入镜", prompt_zh)
         self.assertNotIn("全身镜前自拍", prompt_zh)
@@ -1724,7 +1904,7 @@ class PromptPoolJsonTests(unittest.TestCase):
 
         self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", prompt)
         self.assertIn("【cam:selfie】", prompt)
-        self.assertIn("【leg_support:kneeling_surface】", prompt)
+        self.assertIn("【leg_support:flat_ground】", prompt)
         self.assertNotIn("城市天台步道", prompt)
         self.assertNotIn("当前日程场景", prompt)
 

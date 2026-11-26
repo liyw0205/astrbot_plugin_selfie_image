@@ -30,6 +30,7 @@ from ..core.utils import (
     detect_mime_by_bytes,
     extract_event_text,
     event_user_id,
+    event_group_id,
     image_validation_limits,
     redact_sensitive_text,
 )
@@ -370,8 +371,22 @@ class ReferenceMediaMixin:
             return Image.from_file_system(path)
         return Image(file=path)
 
-    async def _generated_image_component(self, file_path: str, record: Optional[dict]) -> Any:
-        if not getattr(getattr(self, "config", None), "image_enable_preview_hidden", False):
+    def _preview_hidden_enabled_for_event(self, event: Any = None) -> bool:
+        config = getattr(self, "config", None)
+        enabled = bool(getattr(config, "image_enable_preview_hidden", False))
+        group_id = event_group_id(event) if event is not None else ""
+        group_config = getattr(config, "group_chat_configs", {}).get(group_id, {}) if group_id else {}
+        mode = str(group_config.get("preview_hidden_mode") or "default").strip().lower()
+        if mode == "on":
+            return True
+        if mode == "off":
+            return False
+        return enabled
+
+    async def _generated_image_component(
+        self, file_path: str, record: Optional[dict], event: Any = None,
+    ) -> Any:
+        if not self._preview_hidden_enabled_for_event(event):
             return self._create_image_component(file_path)
         dimension, pixels, frames = image_validation_limits(self.config)
         data = await asyncio.to_thread(
@@ -459,7 +474,7 @@ class ReferenceMediaMixin:
                 except Exception as exc:
                     logger.warning("[SelfieImage] image code lookup failed: %s", redact_sensitive_text(str(exc)))
                 try:
-                    component = await self._generated_image_component(file_path, record)
+                    component = await self._generated_image_component(file_path, record, event=event)
                     result = event.chain_result([component])
                     if (
                         record

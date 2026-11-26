@@ -1835,16 +1835,30 @@ def test_llm_leg_route_marker_does_not_force_a_selfie_camera():
             for camera in ("selfie", "third"):
                 with patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_outfit",
-                    return_value=get_leg_focus_outfit("tee_denim_shorts"),
+                    return_value=get_leg_focus_outfit("jk_cardigan_pleats"),
                 ), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus._weighted_pose_choice",
-                    side_effect=lambda options: next(item for item in options if item["id"] == "bed_supine_knees_together"),
+                    side_effect=lambda options: next(
+                        item for item in options
+                        if item["posture"] == "seated"
+                        and not item.get("camera_preference")
+                        and {"selfie", "third"} <= set(item["camera_views"])
+                    ),
                 ), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.random.choices",
-                    side_effect=lambda options, **_kwargs: [next((item for item in options if item.get("camera") == camera), options[0])],
+                    side_effect=lambda options, **_kwargs: [next(
+                        (item for item in options if isinstance(item, dict) and item.get("camera") == camera),
+                        next((item for item in options if item == "none"), options[0]),
+                    )],
                 ), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.random.choice",
                     side_effect=lambda options: camera if camera in options else options[0],
+                ), patch(
+                    "astrbot_plugin_selfie_image.cos.leg_focus.random.random",
+                    return_value=1,
+                ), patch(
+                    "astrbot_plugin_selfie_image.cos.leg_focus._leg_outfit_allows_composition",
+                    return_value=True,
                 ):
                     action, rebuild_extra, _ = plugin._prepare_llm_selfie_action(
                         f"{prefix}看看腿 白丝", False,

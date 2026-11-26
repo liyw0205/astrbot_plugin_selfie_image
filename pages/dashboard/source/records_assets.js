@@ -108,8 +108,13 @@
       params.set('offset', String((Math.max(1, page) - 1) * pageSize));
       return `${parts[0]}?${params.toString()}`;
     }
-    function recordPagePayload(res) {
-      const rows = Array.isArray(res.data) ? res.data : [];
+    function recordPagePayload(res, cached = null) {
+      let rows = Array.isArray(res.data) ? res.data : [];
+      if (cached && Array.isArray(res.page_ids)) {
+        const combined = new Map(cached.rows.map(row => [String(row.id || ''), row]));
+        rows.forEach(row => combined.set(String(row.id || ''), row));
+        rows = res.page_ids.map(id => combined.get(String(id))).filter(Boolean);
+      }
       return {
         rows,
         meta: {
@@ -117,7 +122,8 @@
           filtered: Number(res.filtered ?? rows.length),
           offset: Number(res.offset ?? 0),
           limit: Number(res.limit ?? MONITOR_PAGE_SIZE),
-          scope_stats: res.scope_stats && typeof res.scope_stats === 'object' ? res.scope_stats : null
+          scope_stats: res.scope_stats && typeof res.scope_stats === 'object' ? res.scope_stats : null,
+          record_revisions: res.record_revisions || {}
         }
       };
     }
@@ -171,34 +177,35 @@
       clearDashboardPersistNamespace('asset-page');
     }
 
-    async function loadRecords(showRefreshToast = false) {
+    async function loadRecords(showRefreshToast = false, {background = false} = {}) {
       await ensureDashboardPersistentCachesHydrated();
       if (showRefreshToast) clearGalleryPickerCache();
       const requestSeq = ++RECORD_LOAD_SEQ;
       const cacheVersion = RECORD_PAGE_CACHE_VERSION;
       const requestPath = monitorQueryPath(MONITOR_PAGE);
-      abortPageRequests(RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, requestPath);
       const cached = showRefreshToast ? null : usablePageCache(RECORD_PAGE_CACHE, requestPath);
+      const params = new URLSearchParams(requestPath.split('?')[1] || '');
+      if (cached?.meta.record_revisions) params.set('known_records', JSON.stringify(cached.meta.record_revisions));
+      const fetchPath = '/api/records?' + params.toString();
+      abortPageRequests(RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, fetchPath);
       if (showRefreshToast) RECORD_PAGE_CACHE.delete(requestPath);
       if (showRefreshToast) removeDashboardPersistCache('record-page', requestPath);
       if (cached) {
         applyRecordPage(cached);
         RECORD_LOADING = false;
         setPagerLoading('monitorPager', false);
-        renderRecords();
-        const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / MONITOR_PAGE_SIZE));
-        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION && requestSeq === RECORD_LOAD_SEQ);
-        return;
+        if (!background) renderRecords();
       } else {
         RECORD_LOADING = true;
         setPagerLoading('monitorPager', true);
       }
       try {
         // The cached equivalent of api(monitorQueryPath(MONITOR_PAGE)).
-        const res = await requestCachedPage(requestPath, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, showRefreshToast);
+        const res = await requestCachedPage(fetchPath, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, showRefreshToast);
         if (requestSeq !== RECORD_LOAD_SEQ) return;
         if (cacheVersion !== RECORD_PAGE_CACHE_VERSION) return;
-        const payload = recordPagePayload(res);
+        const payload = recordPagePayload(res, cached);
+        const changed = !cached || JSON.stringify(payload) !== JSON.stringify({rows: cached.rows, meta: cached.meta});
         rememberPageCache(RECORD_PAGE_CACHE, requestPath, payload);
         applyRecordPage(payload);
         const totalPages = Math.max(1, Math.ceil((RECORD_META.filtered || 0) / MONITOR_PAGE_SIZE));
@@ -207,7 +214,7 @@
           return await loadRecords(showRefreshToast);
         }
         RECORD_LOADING = false;
-        renderRecords();
+        if (!background || changed) renderRecords();
         prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION && requestSeq === RECORD_LOAD_SEQ);
         if (showRefreshToast) showToast('记录已刷新', 'ok');
       } catch (e) {

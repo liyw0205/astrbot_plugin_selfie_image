@@ -12,6 +12,7 @@ import pytest
 from astrbot_plugin_selfie_image.cos.leg_focus import (
     LEGFOCUS_EXPLICIT_ONLY_POSE_IDS,
     LEGFOCUS_POSE_BY_ID,
+    LEGFOCUS_VIEW_BY_ID,
     LegFocusDataError,
     build_leg_focus_action,
     ensure_leg_focus_action,
@@ -52,6 +53,7 @@ def test_category_selects_all_and_only_compatible_postures(query, postures):
     assert {pose["id"] for pose in candidates} == {
         pose["id"] for pose in LEGFOCUS_POSE_BY_ID.values()
         if pose["posture"] in postures and pose["id"] not in LEGFOCUS_EXPLICIT_ONLY_POSE_IDS
+        and pose.get("risk") != "high"
     }
     assert has_leg_focus_contract(action)
     assert has_leg_focus_contract(ensure_leg_focus_action(action))
@@ -64,7 +66,6 @@ def test_conflicting_categories_are_rejected(query):
 
 
 @pytest.mark.parametrize("query,options", [
-    ("站姿 自拍", {}),
     ("俯卧 自拍", {}),
     ("站姿 床面", {}),
     ("侧躺", {"force_pose": "standing_weight_shift"}),
@@ -73,6 +74,14 @@ def test_conflicting_categories_are_rejected(query):
 def test_category_does_not_fall_back_to_another_posture(query, options):
     with pytest.raises(LegFocusDataError, match="不兼容"):
         build_leg_focus_action(query, **options)
+
+
+def test_standing_pose_supports_floor_mirror_selfie():
+    action = build_leg_focus_action(
+        "站姿 自拍", force_pose="standing_weight_shift", force_view="self_mirror_standing_front_level",
+    )
+    assert "【cam:selfie】" in action
+    assert "【leg_scene:floor_mirror】" in action
 
 
 @pytest.mark.parametrize("query", ["不要并膝自然跪坐", "不要并膝坐姿轻捏大腿"])
@@ -100,7 +109,7 @@ def test_pose_detail_is_randomized_inside_the_selected_pose_and_preserved_by_rec
     from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_BY_ID
 
     pose_id = "edge_knees_together_dangle"
-    expected = {item["id"] for item in LEGFOCUS_POSE_BY_ID[pose_id]["detail_variants"]}
+    expected = {item["id"] for item in LEGFOCUS_POSE_BY_ID[pose_id]["detail_variants"] if item.get("risk") != "high"}
     selected = set()
     with patch("astrbot_plugin_selfie_image.cos.leg_focus.random", random.Random(41)):
         for _ in range(80):
@@ -131,7 +140,7 @@ def test_exact_pose_name_still_selects_the_requested_pose(pose_id):
 
 def test_expansion_has_the_accepted_posture_distribution():
     assert Counter(pose["posture"] for pose in LEGFOCUS_POSE_BY_ID.values()) == {
-        "standing": 7, "seated": 13, "lying": 5, "side_lying": 3,
+        "standing": 7, "seated": 11, "lying": 5, "side_lying": 3,
         "prone": 3, "reclined": 4, "kneeling": 6,
     }
 
@@ -173,17 +182,20 @@ def test_reference_sitting_poses_keep_mirror_and_direct_cameras_separate(query, 
     for _, _, view in combinations:
         assert view["camera"] == "selfie"
         assert view["elevation"] == "down"
-        assert (view.get("capture_mode") == "mirror") == mirror
+        capture_mode = view.get("capture_mode", "direct")
         action = build_leg_focus_action(query, has_refs=True, force_view=view["id"])
         assert f"【pose:{pose_id}】" in action
         assert f"【leg_support:{support}】" in action
         assert "【outfit:reference】" in action
-        framing_key = "mirror" if mirror else "selfie"
-        other_key = "selfie" if mirror else "mirror"
+        framing_key = "mirror" if capture_mode == "mirror" else "selfie"
+        other_key = "selfie" if capture_mode == "mirror" else "mirror"
         assert action.count(LEGFOCUS_CAMERA_FRAMINGS[framing_key]) == 1
         assert LEGFOCUS_CAMERA_FRAMINGS[other_key] not in action
-        assert action.count(pose["crop_prompts"][framing_key]) == 1
-        assert action.count(pose["hand_prompts"]["mirror" if mirror else "direct"]) == 1
+        face_mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+        assert face_mode in view.get("face_modes", ["none"])
+        assert action.count(pose["crop_prompts"][framing_key]) == (1 if face_mode == "none" else 0)
+        if capture_mode in pose.get("hand_prompts", {}):
+            assert action.count(pose["hand_prompts"][capture_mode]) == 1
         assert has_leg_focus_contract(action)
         assert ensure_leg_focus_action(action, has_refs=True) == action
     if mirror:
@@ -207,6 +219,37 @@ def test_reference_sitting_poses_keep_mirror_and_direct_cameras_separate(query, 
         else:
             with pytest.raises(LegFocusDataError, match="不兼容"):
                 build_leg_focus_action(query, force_view=incompatible_view)
+
+
+@pytest.mark.parametrize("pose_id,view_ids", [
+    ("standing_weight_shift", {"self_forward_down", "self_left_down", "self_right_down"}),
+    ("standing_front_toe_touch", {"self_forward_down", "self_left_down", "self_right_down"}),
+    ("standing_side_staggered", {"self_left_down", "self_right_down"}),
+    ("standing_supported_tiptoe", {"self_forward_down", "self_left_down", "self_right_down"}),
+    ("sofa_side_sit_knees_together", {"self_forward_down", "self_left_down", "self_right_down"}),
+    ("edge_knees_together_dangle", {"self_forward_down", "self_left_down", "self_right_down"}),
+    ("edge_knees_together_ankles_apart", {"self_forward_down", "self_left_down", "self_right_down"}),
+    ("edge_knees_together_slant", {"self_forward_down", "self_left_down", "self_right_down"}),
+    ("side_lying_legs_staggered", {"self_left_down", "self_right_down"}),
+])
+def test_first_person_down_views_expand_only_over_supported_pose_combinations(pose_id, view_ids):
+    from astrbot_plugin_selfie_image.cos.leg_focus import compatible_leg_compositions
+
+    pose = LEGFOCUS_POSE_BY_ID[pose_id]
+    combinations = compatible_leg_compositions(pose, camera="selfie")
+    direct_view_ids = {
+        view["id"] for _, _, view in combinations
+        if view.get("capture_mode", "direct") == "direct"
+    }
+    assert view_ids <= direct_view_ids
+    for view_id in view_ids:
+        action = build_leg_focus_action(
+            has_refs=True, force_pose=pose_id, force_camera="selfie", force_view=view_id,
+        )
+        assert f"【pose:{pose_id}】" in action
+        assert f"【leg_view:{view_id}】" in action
+        assert "【cam:selfie】" in action
+        assert "【face_mode:none】" in action
 
 
 @pytest.mark.parametrize("pose_id,support,scenes", [
@@ -286,17 +329,24 @@ def test_batch_rebuild_keeps_category_without_locking_one_pose(tmp_path, query, 
 
     plugin._run_counted_generation_shots = run_shots
     action = build_leg_focus_action(query)
-    asyncio.run(plugin._run_selfie_batches_unlocked(
-        "", None, action, [], "command-look-legs", 3, "9:16", "1K", "失败",
-        rebuild_extra_request=query,
-    ))
+    with patch("astrbot_plugin_selfie_image.cos.leg_focus.random.random", return_value=1):
+        asyncio.run(plugin._run_selfie_batches_unlocked(
+            "", None, action, [], "command-look-legs", 3, "9:16", "1K", "失败",
+            rebuild_extra_request=query,
+        ))
     poses = [
         re.search(r"【pose:([a-z_]+)】", call.args[0]).group(1)
         for call in plugin._run_image_generation.call_args_list
     ]
     assert len(poses) == 3
     assert all(LEGFOCUS_POSE_BY_ID[pose_id]["posture"] in postures for pose_id in poses)
-    assert len(set(poses)) > 1
+    available = {
+        pose["id"] for pose in LEGFOCUS_POSE_BY_ID.values()
+        if pose["posture"] in postures and pose.get("risk") != "high"
+        and pose["id"] not in LEGFOCUS_EXPLICIT_ONLY_POSE_IDS
+    }
+    assert len(set(poses)) >= min(2, len(available))
+    assert set(poses) <= available
 
 
 def test_batch_rebuild_uses_distinct_details_before_repeating_a_fixed_pose(tmp_path):
@@ -315,8 +365,8 @@ def test_batch_rebuild_uses_distinct_details_before_repeating_a_fixed_pose(tmp_p
         return [await kwargs["run_one"](index) for index in range(kwargs["total"])]
 
     plugin._run_counted_generation_shots = run_shots
-    query = "第三人称 床沿 并膝悬腿"
-    action = build_leg_focus_action(query, force_pose="edge_knees_together_dangle")
+    query = "第三人称 床沿 双膝前后错位"
+    action = build_leg_focus_action(query, force_pose="seated_knees_offset")
     asyncio.run(plugin._run_selfie_batches_unlocked(
         "", None, action, [], "command-look-legs", 2, "9:16", "1K", "失败",
         rebuild_extra_request=query,
@@ -327,3 +377,99 @@ def test_batch_rebuild_uses_distinct_details_before_repeating_a_fixed_pose(tmp_p
     ]
     assert len(details) == 2
     assert len(set(details)) == 2
+
+
+def test_default_ten_leg_batch_guarantees_three_first_person_shots(tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(tmp_path)
+    plugin.config = SimpleNamespace(image_max_batch_count=10)
+    plugin._ensure_daily_selfie_schedule = AsyncMock()
+    plugin._persona_identity_reference = lambda **_kw: None
+    plugin._prompt_en_needed = lambda *_a, **_kw: False
+    plugin._resolve_model_request_targets = lambda targets, _request: (targets, "", "")
+    plugin._run_image_generation = AsyncMock(return_value={"success": True})
+
+    async def run_shots(**kwargs):
+        return [await kwargs["run_one"](index) for index in range(kwargs["total"])]
+
+    plugin._run_counted_generation_shots = run_shots
+    action = build_leg_focus_action()
+    asyncio.run(plugin._run_selfie_batches_unlocked(
+        "", None, action, [], "command-look-legs", 10, "9:16", "1K", "失败",
+    ))
+    cameras = [
+        re.search(r"【cam:(selfie|third)】", call.args[0]).group(1)
+        for call in plugin._run_image_generation.await_args_list
+    ]
+    assert cameras.count("selfie") == 3
+    assert cameras.count("third") == 7
+
+
+def test_default_face_mode_randomizes_none_half_and_full_according_to_view():
+    modes = set()
+    with patch("astrbot_plugin_selfie_image.cos.leg_focus.random", random.Random(20261126)):
+        for _ in range(80):
+            action = build_leg_focus_action()
+            mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+            view_id = re.search(r"【leg_view:([a-z_]+)】", action).group(1)
+            modes.add(mode)
+            assert mode in LEGFOCUS_VIEW_BY_ID[view_id].get("face_modes", ["none"])
+    assert modes == {"none", "half", "full"}
+    assert "【face_mode:none】" in build_leg_focus_action("不露脸")
+
+
+@pytest.mark.parametrize("query,options", [
+    ("第三人称", {}),
+    ("站姿", {}),
+    ("室内桌边", {}),
+    ("", {"force_pose": "standing_weight_shift", "force_camera": "third"}),
+    ("", {"force_pose": "standing_weight_shift", "force_view": "third_standing_front_low"}),
+    ("", {"force_pose": "standing_weight_shift", "force_view": "self_mirror_standing_front_level"}),
+])
+def test_camera_pose_scene_and_view_requests_preserve_automatic_face_selection(query, options):
+    modes = set()
+    with patch("astrbot_plugin_selfie_image.cos.leg_focus.random", random.Random(20261126)):
+        for _ in range(60):
+            action = build_leg_focus_action(query, **options)
+            mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+            view_id = re.search(r"【leg_view:([a-z_]+)】", action).group(1)
+            assert mode in LEGFOCUS_VIEW_BY_ID[view_id].get("face_modes", ["none"])
+            assert has_leg_focus_contract(action)
+            assert ensure_leg_focus_action(action) == action
+            modes.add(mode)
+    assert modes == {"none", "half", "full"}
+
+
+def test_face_contract_rejects_incompatible_views_and_crop_ranges():
+    action = build_leg_focus_action(
+        force_pose="standing_weight_shift", force_view="third_standing_front_low", force_face_mode="full",
+    )
+    assert has_leg_focus_contract(action)
+    assert not has_leg_focus_contract(action.replace("【crop_mode:full_face】", "【crop_mode:half_face】"))
+    assert not has_leg_focus_contract(action.replace("【face_mode:full】", "【face_mode:none】"))
+    assert not has_leg_focus_contract(action.replace("【legs_face:context】", ""))
+    direct = build_leg_focus_action(
+        force_pose="standing_weight_shift", force_view="self_forward_down",
+    )
+    assert "【face_mode:none】" in direct
+    assert not has_leg_focus_contract(direct.replace("【face_mode:none】", "【face_mode:full】"))
+
+
+def test_kneeling_batch_legwear_plan_repeats_only_compatible_ankle_socks():
+    from astrbot_plugin_selfie_image.generation.selfie_batch_workflow import _plan_legwear_categories
+
+    plan = _plan_legwear_categories(10, ("ankle_sock",))
+    assert len(plan) == 10
+    assert plan.count("ankle_sock") == 5
+    assert plan.count("bare_legs") == 5
+
+
+def test_explicit_first_person_overrides_default_combo_camera():
+    from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
+
+    action = build_leg_focus_action("第一人称", prefer_combo=True)
+    assert "【cam:selfie】" in action
+    assert re.search(r"【combo:combo_(?:09|10|11|12)】", action)

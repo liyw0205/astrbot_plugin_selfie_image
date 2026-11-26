@@ -7,6 +7,8 @@ one implementation so the adapters cannot silently drift.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import time
@@ -347,13 +349,34 @@ def filter_record_page(records: list[Any], params: Mapping[str, Any]) -> tuple[l
         and (not tag or tag in {str(item).strip().lower() for item in (record.get("tags") or [])})
     ]
     page = filtered[offset : offset + limit]
-    return page, {
+    revisions = {
+        str(row.get("id") or ""): hashlib.sha256(
+            json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:16]
+        for row in page
+    }
+    meta = {
         "total": len(records),
         "filtered": len(filtered),
         "offset": offset,
         "limit": limit,
         "scope_stats": build_record_scope_stats(filtered),
+        "page_ids": [str(row.get("id") or "") for row in page],
+        "record_revisions": revisions,
     }
+    known_text = query_value(params, "known_records")
+    if known_text:
+        try:
+            if len(known_text) > 100_000:
+                raise ValueError("oversized record manifest")
+            known = json.loads(known_text)
+            if not isinstance(known, dict) or len(known) > 1000:
+                raise ValueError("invalid record manifest")
+        except (ValueError, TypeError) as exc:
+            raise WebContractError("known_records 必须是记录版本对象") from exc
+        page = [row for row in page if known.get(str(row.get("id") or "")) != revisions[str(row.get("id") or "")]]
+        meta["incremental"] = True
+    return page, meta
 
 
 def normalize_task_ids(

@@ -9,6 +9,7 @@ from ..core.models import ImageModelTarget
 
 
 NAI_MODEL_UNAVAILABLE = "当前没启用 NAI 模型，请管理员在渠道里启用 NovelAI / nai-diffusion 模型"
+NAI_LLM_REQUEST_DISALLOWED = "LLM 生图不能指定或调用 NAI，请通过受白名单保护的 /nai 或 /nai5 指令使用。"
 _NAI_MODEL_ID = re.compile(r"(?<![a-z0-9])nai-diffusion(?:-[a-z0-9]+(?:\.[a-z0-9]+)*)*")
 
 
@@ -32,7 +33,7 @@ def is_nai_model_request(raw: str) -> bool:
     )
 
 
-def _is_nai_target(target: ImageModelTarget) -> bool:
+def is_nai_target(target: ImageModelTarget) -> bool:
     provider = str(getattr(target, "provider_type", "") or "").strip().lower().replace("-", "_")
     model = str(getattr(target, "model", "") or "").strip().lower()
     return provider == "novelai" or model.startswith("nai-diffusion")
@@ -52,7 +53,7 @@ def route_model_request(
     nai_model = _NAI_MODEL_ID.search(lowered)
     alias = "" if nai_model else _nai_request_alias(lowered)
     if alias:
-        nai_targets = [target for target in items if _is_nai_target(target)]
+        nai_targets = [target for target in items if is_nai_target(target)]
         if alias in {"nai4_alias", "nai5_alias"}:
             family = alias[3]
             nai_targets = [

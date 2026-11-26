@@ -4,14 +4,75 @@
     function openIconSvg() {
       return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>';
     }
-    function promptDetailBlock(title, field, text) {
-      return `
-        <div class="detail-title">
-          <h3>${escapeHtml(title)}</h3>
-          <button class="copy-btn" type="button" title="复制${escapeHtml(title)}" aria-label="复制${escapeHtml(title)}" onclick="copyRecordField('${field}')">${copyIconSvg()}</button>
-        </div>
-        <pre>${escapeHtml(text || '')}</pre>
-      `;
+    const RECORD_FIELD_LABELS = {
+      original_prompt: '原始提示词', request_prompt: '请求提示词', final_prompt: '最终实际提示词（发送给模型）',
+      request_prompt_en: '英文请求提示词', request_data: '请求数据', response_data: '响应数据'
+    };
+    const RECORD_FIELD_CACHE = new Map();
+    const RECORD_FIELD_REQUESTS = new Map();
+    let RECORD_DETAIL_SEQ = 0;
+    let RECORD_FIELD_SEQ = 0;
+    let CURRENT_RECORD_FIELD = '';
+    function recordFieldButtons() {
+      return `<div class="actions record-field-actions">${Object.entries(RECORD_FIELD_LABELS).map(([field, label]) =>
+        `<button class="secondary mini" type="button" onclick="openRecordField('${field}')">${escapeHtml(label)}</button>`
+      ).join('')}</div>`;
+    }
+    async function loadRecordField(field, id = String(CURRENT_RECORD?.id || '')) {
+      if (!id || !RECORD_FIELD_LABELS[field]) throw new Error('记录字段不存在');
+      const scope = dashboardPersistScope();
+      const key = JSON.stringify([scope, id, field]);
+      if (RECORD_FIELD_CACHE.has(key)) return RECORD_FIELD_CACHE.get(key);
+      if (RECORD_FIELD_REQUESTS.has(key)) return RECORD_FIELD_REQUESTS.get(key);
+      const request = api('/api/records/' + encodeURIComponent(id) + '?field=' + encodeURIComponent(field))
+        .then(res => {
+          const value = res.data?.[field] ?? (field.endsWith('_data') ? {} : '');
+          if (scope === dashboardPersistScope()) {
+            RECORD_FIELD_CACHE.set(key, value);
+            while (RECORD_FIELD_CACHE.size > 48) RECORD_FIELD_CACHE.delete(RECORD_FIELD_CACHE.keys().next().value);
+          }
+          return value;
+        })
+        .finally(() => RECORD_FIELD_REQUESTS.delete(key));
+      RECORD_FIELD_REQUESTS.set(key, request);
+      return request;
+    }
+    function closeRecordField() {
+      RECORD_FIELD_SEQ += 1;
+      CURRENT_RECORD_FIELD = '';
+      $('recordFieldModal')?.classList.remove('show');
+      $('recordFieldBody')?.replaceChildren();
+    }
+    async function openRecordField(field) {
+      const id = String(CURRENT_RECORD?.id || '');
+      const modal = $('recordFieldModal');
+      const body = $('recordFieldBody');
+      if (!id || !modal || !body || !RECORD_FIELD_LABELS[field]) return;
+      const seq = ++RECORD_FIELD_SEQ;
+      CURRENT_RECORD_FIELD = field;
+      $('recordFieldTitle').textContent = RECORD_FIELD_LABELS[field];
+      $('recordFieldCopy').disabled = true;
+      body.textContent = '正在加载…';
+      modal.classList.add('show');
+      try {
+        const value = await loadRecordField(field, id);
+        if (seq !== RECORD_FIELD_SEQ || id !== String(CURRENT_RECORD?.id || '')) return;
+        if (field === 'response_data') body.innerHTML = responseDataDetailBlock(value);
+        else {
+          const pre = document.createElement('pre');
+          pre.textContent = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value || '内容为空');
+          body.replaceChildren(pre);
+        }
+        $('recordFieldCopy').disabled = false;
+      } catch (error) {
+        if (seq !== RECORD_FIELD_SEQ) return;
+        body.textContent = error.message || '读取失败';
+        const retry = document.createElement('button');
+        retry.className = 'secondary mini';
+        retry.textContent = '重试';
+        retry.onclick = () => openRecordField(field);
+        body.appendChild(retry);
+      }
     }
     function collectResponseBase64Copies(value, path = [], result = []) {
       if (Array.isArray(value)) {
@@ -209,10 +270,6 @@
       RECORD_MEDIA_SOURCE_REQUESTS.set(id, request);
       return request;
     }
-    function prefetchRecordMediaSources() {
-      if (!String(CURRENT_RECORD?.id || '').trim()) return;
-      loadRecordMediaSources().catch(() => {});
-    }
     function cachedRecordMediaSources() {
       const id = String(CURRENT_RECORD?.id || '').trim();
       return id ? RECORD_MEDIA_SOURCE_CACHE.get(id) || null : null;
@@ -342,22 +399,10 @@
     }
     async function copyRecordField(field) {
       const r = CURRENT_RECORD || {};
-      const text = field === 'image_code' ? String(r.image_code || '') : field === 'request_prompt'
-        ? (r.request_prompt || r.prompt || '')
-        : field === 'final_prompt'
-          ? (r.final_prompt || r.request_data?.request_prompt_en || r.request_prompt || r.prompt || '')
-          : field === 'request_prompt_en'
-            ? (r.request_data?.request_prompt_en || '')
-        : field === 'request_data'
-          ? JSON.stringify(r.request_data || {}, null, 2)
-          : field === 'response_data'
-            ? JSON.stringify(r.response_data || {}, null, 2)
-            : (r.original_prompt || '');
-      if (!text) {
-        showToast('内容为空', 'bad');
-        return;
-      }
       try {
+        const value = field === 'image_code' ? String(r.image_code || '') : await loadRecordField(field, String(r.id || ''));
+        const text = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value || '');
+        if (!text) throw new Error('内容为空');
         await copyTextToClipboard(text);
         showToast('已复制到剪贴板', 'ok');
       } catch (e) {
@@ -389,7 +434,11 @@
     async function copyRecordDiagnostics() {
       if (!CURRENT_RECORD) return;
       try {
-        await copyTextToClipboard(recordDiagnosticsText(CURRENT_RECORD));
+        const record = CURRENT_RECORD;
+        const [original, final] = await Promise.all([
+          loadRecordField('original_prompt', record.id), loadRecordField('final_prompt', record.id)
+        ]);
+        await copyTextToClipboard(recordDiagnosticsText({...record, original_prompt: original, final_prompt: final}));
         showToast('排查信息已复制', 'ok');
       } catch (e) {
         showToast(e.message || '复制失败', 'bad');
@@ -414,20 +463,24 @@
     }
     async function openRecordDetail(id) {
       closeMediaSourceModal();
+      closeRecordField();
+      const seq = ++RECORD_DETAIL_SEQ;
+      CURRENT_RECORD = null;
       if ($('recordDetailBody')) {
         $('recordDetailBody').innerHTML = '<div class="status">正在加载记录详情…</div>';
         $('recordModal')?.classList.add('show');
       }
       let r = RECORDS.find(item => String(item.id || '') === String(id || ''));
       try {
-        const res = await api('/api/records/' + encodeURIComponent(String(id || '')));
+        const res = await api('/api/records/' + encodeURIComponent(String(id || '')) + '?view=summary');
         r = res.data || r;
       } catch (e) {
+        if (seq !== RECORD_DETAIL_SEQ) return;
         showToast(e.message || '记录详情读取失败', 'bad');
       }
+      if (seq !== RECORD_DETAIL_SEQ) return;
       if (!r) return;
       CURRENT_RECORD = r;
-      prefetchRecordMediaSources();
       $('recordDetailBody').innerHTML = `
         <div class="detail-title"><h3 class="mono">${escapeHtml(r.image_code || '')}</h3><div class="actions"><button class="secondary mini" type="button" onclick="copyRecordField('image_code')">复制编号</button><button class="secondary mini" type="button" onclick="copyRecordDiagnostics()">复制排查信息</button></div></div>
         <div class="record-detail-grid">
@@ -448,10 +501,7 @@
         ${recordTaskSummaryBlock(r)}
         ${recordFailureReasonsBlock(r)}
         ${recordParameterBlock(r)}
-        ${promptDetailBlock('原始提示词', 'original_prompt', r.original_prompt || '')}
-        ${promptDetailBlock('请求提示词', 'request_prompt', r.request_prompt || r.prompt || '')}
-        ${r.final_prompt || r.request_data?.request_prompt_en ? promptDetailBlock('最终实际提示词（发送给模型）', 'final_prompt', r.final_prompt || r.request_data?.request_prompt_en || '') : ''}
-        ${r.request_data?.request_prompt_en ? promptDetailBlock('英文请求提示词', 'request_prompt_en', r.request_data.request_prompt_en) : ''}
+        ${recordFieldButtons()}
         <div class="detail-title"><h3>资产标记</h3></div>
         <div class="record-detail-grid">
           <label class="checkline"><input id="recordFavorite" type="checkbox" ${r.favorite ? 'checked' : ''}> 收藏</label>
@@ -464,8 +514,6 @@
         <div class="grid"><div><label>修改要求（可选）</label><input id="recordRetryFeedback" maxlength="2000" placeholder="例如：更明亮、动作更自然"></div></div>
         <div><label>重试策略</label><select id="recordRetryStrategy"><option value="full">完整保留参数</option><option value="model_only">只换模型</option><option value="channel_only">只换渠道</option><option value="lower_resolution">降低分辨率</option></select></div>
         <div class="actions"><button class="ok mini" type="button" onclick="retryCurrentRecord()">重试生成</button><span id="recordRetryStatus" class="muted"></span></div>
-        ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
-        ${responseDataDetailBlock(r.response_data || {})}
         ${recordRequestReferences(r)}
         ${generatedMediaDetailBlock(r)}
       `;
@@ -480,6 +528,8 @@
       loadPersonaReferenceThumbs($('recordDetailBody')).catch(() => {});
     }
     function closeRecordDetail() {
+      RECORD_DETAIL_SEQ += 1;
+      closeRecordField();
       closeMediaSourceModal();
       $('recordModal').classList.remove('show');
       CURRENT_RECORD = null;

@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "capture_styles": [
+    {
+      "id": "private_phone_flash",
+      "title": "私密手机闪光快照",
+      "weight": 2,
+      "environments": [
+        "indoor"
+      ],
+      "modes": [
+        "selfie",
+        "mirror",
+        "third"
+      ],
+      "scene_ids": [
+        "*"
+      ],
+      "prompt": "采用日常手机近距离闪光快照质感：闪光灯照亮人物和近处环境，背景自然压暗，皮肤或衣料的高光只在受光处细微显现；保留轻微颗粒和不完美的随手构图，但人物脸部、腿部轮廓与服装纹理清楚。保持上文已经确定的拍摄人称、机位方向、焦段和取景范围。"
+    },
+    {
+      "id": "home_ccd_snapshot",
+      "title": "家用CCD私房快照",
+      "weight": 2,
+      "environments": [
+        "indoor"
+      ],
+      "modes": [
+        "selfie",
+        "mirror",
+        "third"
+      ],
+      "scene_ids": [
+        "*"
+      ],
+      "prompt": "呈现轻微低像素家用CCD快照质感：有限动态范围、细颗粒和克制的边缘泛光带出随手记录感，近处人物与衣料保持清楚，面部正常曝光对焦，不做整体失焦、运动模糊或塑料质感处理。保持上文已经确定的拍摄人称、机位方向、焦段和取景范围，不添加时间戳、文字或水印。"
+    },
+    {
+      "id": "bedside_lamp_snapshot",
+      "title": "床头暖灯睡前快照",
+      "weight": 2,
+      "modes": [
+        "selfie",
+        "mirror",
+        "third"
+      ],
+      "scene_ids": [
+        "bed_edge",
+        "bed_surface",
+        "bedroom_bench",
+        "bedroom_rug",
+        "bedroom_chaise",
+        "sofa",
+        "sofa_footstool"
+      ],
+      "prompt": "采用睡前顺手拍下的暖灯快照质感：床头灯或房间现有暖灯作为近处主光，亮度由人物向房间深处自然衰减，暗部保留细节，环境安静而有生活气息。保持上文已经确定的拍摄人称、机位方向、焦段和取景范围，不额外生成新的灯具位置。"
+    },
+    {
+      "id": "late_night_screen_glow",
+      "title": "深夜屏幕余光",
+      "weight": 2,
+      "modes": [
+        "selfie",
+        "third"
+      ],
+      "scene_ids": [
+        "indoor_desk",
+        "gaming_chair",
+        "desk_chair"
+      ],
+      "prompt": "采用深夜刚结束学习或游戏时的手机照片质感：已调暗的屏幕只给环境边缘带来很弱的冷色余光，人物仍由场景内台灯或室内环境光照清，肤色与衣料颜色自然，背景屏幕不出现可读文字或醒目内容。保持上文已经确定的拍摄人称、机位方向、焦段和取景范围。"
+    },
+    {
+      "id": "rain_window_contrast",
+      "title": "雨夜窗边冷暖对照",
+      "weight": 2,
+      "modes": [
+        "selfie",
+        "third"
+      ],
+      "scene_ids": [
+        "floor_window"
+      ],
+      "prompt": "采用安静雨夜的手机近拍质感：窗外冷色反光只留在玻璃和背景边缘，室内现有暖光照清人物，形成克制冷暖层次；雨痕轻微可辨，不雾化人物，不改变人物肤色与衣料质感。保持上文已经确定的拍摄人称、机位方向、焦段和取景范围，不拍成窗外观察者视角。"
+    },
+    {
+      "id": "post_workout_mirror_flash",
+      "title": "健身后镜前汗光检查",
+      "weight": 1,
+      "modes": [
+        "mirror"
+      ],
+      "scene_ids": [
+        "floor_mirror"
+      ],
+      "prompt": "这是成年女性刚结束训练后的镜前检查快照：闷热让额角、手臂和腿部有细密汗珠与汗湿反光，手机闪光在汗湿皮肤上形成清楚但自然的亮点，脸颊微红，神情认真查看训练状态中带一点被镜头捕捉的羞涩。镜边可见一条运动毛巾、半瓶水或卷起的训练垫，只有少量物件且不挡住人物。镜中本人、姿势、服装和光线严格对应，不改变当前腿部近中景、持机关系和已选机位。"
+    },
+    {
+      "id": "outdoor_day_snapshot",
+      "title": "户外自然光手机快照",
+      "weight": 3,
+      "environments": [
+        "outdoor"
+      ],
+      "modes": [
+        "selfie",
+        "third"
+      ],
+      "scene_ids": [
+        "outdoor_pool_edge",
+        "pool_lounger",
+        "beach_mat",
+        "beach_canvas_chair"
+      ],
+      "prompt": "采用普通手机在户外随手记录的近中景质感：自然日光清楚呈现人物、腿部轮廓和衣料纹理，控制曝光以保留浅色袜装与皮肤的层次，不让阳光或天空反射造成大片发白；背景只留下少量池水、沙滩或遮阳区线索。保持已经确定的人称、机位、焦段和取景范围。"
+    },
+    {
+      "id": "pool_shade_soft_light",
+      "title": "泳池遮阳柔影",
+      "weight": 2,
+      "environments": [
+        "outdoor"
+      ],
+      "modes": [
+        "selfie",
+        "third"
+      ],
+      "scene_ids": [
+        "outdoor_pool_edge",
+        "pool_lounger"
+      ],
+      "prompt": "遮阳伞在人物身上形成均匀柔影，边缘保留少量自然日光，泳池水面只在画面边缘提供克制的蓝绿色反光；腿部袜装的织物纹理、皮肤明暗和支撑接触清楚可辨，不因反光变白或失去层次。保持已经确定的人称、机位、焦段和取景范围。"
+    },
+    {
+      "id": "pool_water_reflection",
+      "title": "泳池水面折光",
+      "weight": 1,
+      "environments": [
+        "outdoor"
+      ],
+      "modes": [
+        "selfie",
+        "third"
+      ],
+      "scene_ids": [
+        "outdoor_pool_edge",
+        "pool_lounger"
+      ],
+      "state_ids": [
+        "pool_water_wet"
+      ],
+      "prompt": "仅在泳池水湿状态下采用池水折射光：水面反光在地面、腿部和衣料边缘形成少量自然亮点，不投射成蓝紫色发光纹路，不吞没袜面织纹；湿润观感服从已选状态，不额外叠加其他来源。保持已经确定的人称、机位、焦段和取景范围。"
+    },
+    {
+      "id": "beach_shade_detail",
+      "title": "沙滩遮阳柔光",
+      "weight": 2,
+      "environments": [
+        "outdoor"
+      ],
+      "modes": [
+        "selfie",
+        "third"
+      ],
+      "scene_ids": [
+        "beach_mat",
+        "beach_canvas_chair"
+      ],
+      "prompt": "遮阳伞过滤正午日光，在腿部形成均匀柔和的亮度；远处海线与浅金色沙面只作为低对比背景，肤色、袜装颜色和细小织纹准确，不让强光把浅色腿部冲白。保持已经确定的人称、机位、焦段和取景范围。"
+    },
+    {
+      "id": "coastal_evening_warm",
+      "title": "海边暖色夕照",
+      "weight": 2,
+      "environments": [
+        "outdoor"
+      ],
+      "modes": [
+        "selfie",
+        "third"
+      ],
+      "scene_ids": [
+        "beach_mat",
+        "beach_canvas_chair"
+      ],
+      "prompt": "夕阳从侧面形成柔和暖色轮廓光，正面仍保留足够环境补光；海面和沙滩不染橙成一片，袜装、鞋履与服装保持原色和明暗层次，不形成逆光剪影。保持已经确定的人称、机位、焦段和取景范围。"
+    },
+    {
+      "id": "summer_ccd_snapshot",
+      "title": "夏日CCD随拍",
+      "weight": 2,
+      "environments": [
+        "outdoor"
+      ],
+      "modes": [
+        "selfie",
+        "third"
+      ],
+      "scene_ids": [
+        "outdoor_pool_edge",
+        "pool_lounger",
+        "beach_mat",
+        "beach_canvas_chair"
+      ],
+      "prompt": "呈现轻微低像素 CCD 随拍质感：有限动态范围和细颗粒带出日常记录感，但人物、腿部姿势与丝袜织物仍清楚；只在阴影或傍晚环境使用克制闪光，不加时间戳、文字、水印、整体虚焦或过曝泛白。保持已经确定的人称、机位、焦段和取景范围。"
+    }
+  ]
+}

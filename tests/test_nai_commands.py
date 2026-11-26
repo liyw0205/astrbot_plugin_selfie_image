@@ -126,6 +126,7 @@ def plugin_for_nai(tmp_path, models=("gpt-image-2", "nai5", "nai4.5"), refs=()):
     plugin.nai_artist_presets = NaiArtistPresetManager(str(tmp_path))
     plugin.config = config_with_models(list(models), enabled_image_model_priority=["relay/gpt-image-2"])
     plugin._claim_media_command_event = Mock()
+    plugin._is_whitelisted = lambda _event: True
     plugin._quota_error_message = Mock(return_value="")
     plugin._rate_limit_error_message = Mock(return_value="")
     plugin._record_bot_text_context = Mock()
@@ -198,6 +199,18 @@ def test_missing_model_exits_without_falling_back_to_other_image_models(tmp_path
     assert "没有已启用" in messages[0]
     assert "runner" not in captured
     plugin._run_image_generation.assert_not_awaited()
+
+
+def test_nai_commands_are_restricted_to_whitelisted_users(tmp_path):
+    plugin, captured = plugin_for_nai(tmp_path)
+    plugin._is_whitelisted = lambda _event: False
+
+    messages = run_command(plugin, captured, "/nai portrait")
+
+    assert messages == ["仅白名单用户可以使用 /nai 和 /nai5。"]
+    plugin._claim_media_command_event.assert_not_called()
+    plugin._run_image_generation.assert_not_awaited()
+    assert "runner" not in captured
 
 
 def test_reference_images_are_reversed_without_persona_or_second_rewrite(tmp_path):

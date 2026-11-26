@@ -539,6 +539,8 @@
         if (loadSeq !== TASK_LOAD_SEQ) return;
         const data = res.data || {};
         const summary = data.summary || {};
+        // Every successful task poll checks for new/changed records without discarding cached pages.
+        if ($('monitor')?.classList.contains('active')) void loadRecords(false, {background: true});
         const prefix = scope === 'recent' ? '最近任务' : '活动任务';
         const filteredTotal = Number(data.filtered_total ?? summary.filtered_total ?? (Array.isArray(data.tasks) ? data.tasks.length : 0));
         const pageCount = Math.max(1, Math.ceil(filteredTotal / TASK_PAGE_SIZE));

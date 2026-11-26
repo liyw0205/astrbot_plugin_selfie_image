@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "pool_reference_prompts": {
+    "zh": "本次已从看看腿服饰池随机选定一套新穿搭，必须实际替换参考图中画面可见的原有衣物；不得保留、混穿或叠穿原服饰。参考图仅用于同一人物身份与自然体态，服饰按本次完整搭配和袜鞋选择重新生成。",
+    "en": "The legwear outfit pool selected a new complete outfit for this image. Actually dress the subject in that selected outfit, replacing the reference image's visible original garments; do not preserve, layer, or mix in the original clothes. Use the reference only for the same person's identity and natural body proportions, and render the selected outfit and hosiery/footwear as specified."
+  }
+}

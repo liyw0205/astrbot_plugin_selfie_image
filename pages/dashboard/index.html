@@ -330,6 +330,13 @@
     .modal-mask { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(27,28,29,.42); padding: 14px; z-index: 50; }
     .modal-mask.show { display: flex; }
     #mediaSourceModal { z-index: 70; }
+    #recordFieldModal { z-index: 60; }
+    #recordFieldModal .between { flex: 0 0 auto; flex-wrap: wrap; }
+    #recordFieldModal h2 { min-width: 0; overflow-wrap: anywhere; margin: 0; }
+    #recordFieldModal .actions { margin: 0; }
+    #recordFieldBody { min-height: 160px; margin-top: 12px; }
+    #recordFieldBody pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .record-field-actions { gap: 8px; }
     #mediaLightboxModal { z-index: 80; background: rgba(8, 12, 16, .88); }
     #confirmModal { z-index: 90; }
     .confirm-dialog { width: min(460px, 100%); }
@@ -347,11 +354,15 @@
     #channelModal .modal { max-height: 96vh; }
     #channelModal .modal > .between { flex: 0 0 auto; }
     #channelModal .modal-body { flex: 1 1 auto; min-height: 0; }
-    #channelModal .modal-footer { flex: 0 0 auto; max-height: 40vh; overflow: auto; }
-    #channelModal #modalStatus { max-height: 18vh; overflow: auto; overscroll-behavior: contain; }
-    #channelModal #modalStatus details { margin-top: 6px; }
+    #channelModal .modal-footer { flex: 0 0 auto; overflow: visible; }
+    #channelModal #modalStatus { position: relative; overflow: visible; }
+    #channelModal #modalStatus details { position: relative; margin-top: 6px; }
     #channelModal #modalStatus summary { cursor: pointer; }
-    #channelModal #modalStatus pre { max-height: 15vh; overflow: auto; margin: 8px 0 0; }
+    #channelModal #modalStatus details[open] pre {
+      position: absolute; z-index: 2; left: 0; right: 0; bottom: calc(100% + 8px);
+      max-height: min(38vh, 360px); overflow: auto; margin: 0; background: #fff;
+      box-shadow: 0 8px 24px rgba(27,28,29,.18);
+    }
     .media-source-modal-dialog { width: min(960px, 100%); max-height: 92vh; background: #111; color: #fff; }
     .media-source-modal-dialog .modal-footer { background: linear-gradient(180deg, rgba(17,17,17,0), #111 24px); }
     .media-source-preview { min-height: 220px; max-height: calc(92vh - 120px); overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 4px; }
@@ -436,6 +447,8 @@
     .group-config-head, .group-config-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(70px, .65fr) minmax(86px, .8fr) minmax(120px, 1.1fr); align-items: center; gap: 10px; }
     .group-config-head { min-height: 36px; padding: 0 10px; background: #f4f6fa; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
     .group-config-row { min-height: 58px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+    .group-config-fixed-panel { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(70px, .25fr) minmax(0, 1fr); align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel-soft); }
+    .group-config-fixed-panel > strong { color: var(--text-secondary); font-size: 12px; }
     .group-config-identity { display: grid; gap: 2px; min-width: 0; }
     .group-config-identity strong, .group-config-identity span, .group-config-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .group-config-identity strong { font-size: 12px; font-weight: 700; }
@@ -1360,7 +1373,7 @@
         <div id="groupAccessSummary" class="group-access-summary" aria-live="polite"></div>
       </div>
       <div class="group-config-list" id="groupConfigTable" style="margin-top:12px">
-        <div class="group-config-head" role="row"><span>群聊</span><span>类型</span><span>模型模式</span><span>固定模型</span></div>
+        <div class="group-config-head" role="row"><span>群聊</span><span>类型</span><span>模型模式</span><span>预览</span></div>
         <div id="groupConfigRows"><div class="muted">点击“刷新群列表”读取 QQ 群。</div></div>
       </div>
     </section>
@@ -1991,7 +2004,7 @@
         <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理</label><select id="modalProxyId"><option value="">直连（不使用代理）</option></select></div>
       </div>
-      <details id="modalNaiSettings" style="margin-top:12px" open>
+      <details id="modalNaiSettings" style="margin-top:12px;display:none" open>
         <summary>NovelAI 参数</summary>
         <div class="grid" style="margin-top:8px">
           <div><label for="modalNaiNegative">负向提示词</label><textarea id="modalNaiNegative" rows="2" placeholder="留空使用插件默认值"></textarea></div>
@@ -2077,6 +2090,19 @@
         <button class="secondary" type="button" onclick="closeRecordDetail()">关闭</button>
       </div>
       <div class="modal-body"><div id="recordDetailBody"></div></div>
+    </div>
+  </div>
+
+  <div id="recordFieldModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="recordFieldTitle">
+    <div class="modal">
+      <div class="between">
+        <h2 id="recordFieldTitle">记录数据</h2>
+        <div class="actions">
+          <button id="recordFieldCopy" class="copy-btn" type="button" title="复制内容" aria-label="复制内容" onclick="copyRecordField(CURRENT_RECORD_FIELD)"></button>
+          <button class="secondary" type="button" onclick="closeRecordField()">关闭</button>
+        </div>
+      </div>
+      <div id="recordFieldBody" class="modal-body"></div>
     </div>
   </div>
 
@@ -4189,6 +4215,7 @@ Source prompt:
       }
       ch = normalizeChannel(ch);
       $('manualFillNai').style.display = EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none';
+      $('modalNaiSettings').style.display = EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none';
       const enabled = ch.enabled_models || [];
       const search = $('cacheSearch').value.trim().toLowerCase();
       const cacheItems = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
@@ -4484,8 +4511,6 @@ Source prompt:
       };
       prunePriorityList('image', labels);
       prunePriorityList('audit', audits);
-      preserveSelection('priorityPicker', labels, labels[0] || '');
-      preserveSelection('auditPriorityPicker', audits, audits[0] || '');
       const auditLabels = [''].concat(audits);
       preserveSelection('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       preserveSelection('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
@@ -4625,8 +4650,9 @@ Source prompt:
     let QQ_GROUP_MODAL = null;
     const QQ_GROUP_CHAT_TYPES = [['none', '无', '不额外限制群聊'], ['black', '黑', '禁止此群使用生图'], ['white', '白', '允许此群使用生图']];
     const QQ_GROUP_MODEL_MODES = [['default', '默认', '跟随全局默认调用模式'], ['sequence', '顺序', '按全局模型优先级顺序尝试'], ['random', '随机', '按全局模型优先级随机选择'], ['fixed', '固定', '固定使用指定模型']];
+    const QQ_GROUP_PREVIEW_MODES = [['default', '默认', '跟随全局“启用预览隐藏”设置'], ['on', '开启', '此群开启预览隐藏，覆盖全局设置'], ['off', '关闭', '此群关闭预览隐藏，覆盖全局设置']];
     function groupConfigValue(index, field) {
-      return String(QQ_GROUP_ROWS[index]?.config?.[field] || (field === 'chat_type' ? 'none' : field === 'model_priority_mode' ? 'default' : ''));
+      return String(QQ_GROUP_ROWS[index]?.config?.[field] || (field === 'chat_type' ? 'none' : field === 'fixed_model' ? '' : 'default'));
     }
     function globalUsableGateActive() {
       return !!$('groupUsableEnabled')?.checked && textList('groupUsableUsers').length > 0;
@@ -4664,7 +4690,7 @@ Source prompt:
       target.textContent = groups.length ? groups.join(' | ') : '暂无名单条目';
     }
     function groupConfigLabel(field, value) {
-      const choices = field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : QQ_GROUP_MODEL_MODES;
+      const choices = field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : field === 'preview_hidden_mode' ? QQ_GROUP_PREVIEW_MODES : QQ_GROUP_MODEL_MODES;
       return choices.find(item => item[0] === value)?.[1] || '未设置';
     }
     function closeGroupConfigModal() {
@@ -4677,7 +4703,7 @@ Source prompt:
       if (!row) return;
       QQ_GROUP_MODAL = {index, field};
       const modal = $('groupConfigModal');
-      const title = field === 'chat_type' ? '群聊类型' : field === 'model_priority_mode' ? '模型模式' : '固定模型';
+      const title = field === 'chat_type' ? '群聊类型' : field === 'model_priority_mode' ? '模型模式' : field === 'preview_hidden_mode' ? '预览隐藏' : '固定模型';
       $('groupConfigModalTitle').textContent = title;
       $('groupConfigModalHint').textContent = `${row.group_id}${row.group_name ? ` · ${row.group_name}` : ''}`;
       $('groupConfigSearchWrap').style.display = field === 'fixed_model' ? '' : 'none';
@@ -4697,7 +4723,7 @@ Source prompt:
         body.innerHTML = models.length ? `<div class="group-config-model-list">${models.map(model => `<button class="group-config-option" type="button" aria-pressed="${model === current}" onclick="selectGroupConfigValue('${escapeJs(model)}')"><strong>${escapeHtml(model)}</strong><span>${model === current ? '当前使用' : '点击设为固定模型'}</span></button>`).join('')}</div>` : '<div class="group-config-empty">暂无匹配的已启用模型。</div>';
         return;
       }
-      const choices = state.field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : QQ_GROUP_MODEL_MODES;
+      const choices = state.field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : state.field === 'preview_hidden_mode' ? QQ_GROUP_PREVIEW_MODES : QQ_GROUP_MODEL_MODES;
       body.innerHTML = `<div class="group-config-options">${choices.map(([value, label, hint]) => `<button class="group-config-option" type="button" aria-pressed="${value === current}" onclick="selectGroupConfigValue('${value}')"><strong>${label}</strong><span>${hint}</span></button>`).join('')}</div>`;
     }
     function selectGroupConfigValue(value) {
@@ -4719,13 +4745,14 @@ Source prompt:
       body.innerHTML = QQ_GROUP_ROWS.map((row, index) => {
         const config = row.config || {};
         const mode = config.model_priority_mode || 'default';
-        const fixed = mode === 'fixed' ? (config.fixed_model || '未选择') : '不适用';
+        const previewMode = config.preview_hidden_mode || 'default';
+        const fixedPanel = mode === 'fixed' ? `<div class="group-config-fixed-panel"><strong>固定模型</strong><button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'fixed_model')"><span>${escapeHtml(config.fixed_model || '请选择模型')}</span></button></div>` : '';
         return `<div class="group-config-row" data-group-index="${index}" role="row">
           <div class="group-config-identity"><strong>${escapeHtml(row.group_id)}</strong><span title="${escapeHtml(row.group_name || '')}">${escapeHtml(row.group_name || '未命名群')}</span></div>
           <button class="group-config-trigger${globalUsableGateActive() ? ' policy-overridden' : ''}" data-config-field="chat_type" type="button" ${globalUsableGateActive() ? 'disabled title="由全局可用名单覆盖"' : `onclick="openGroupConfigModal(${index}, 'chat_type')"`}><span>${escapeHtml(groupConfigLabel('chat_type', config.chat_type || 'none'))}</span></button>
           <button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'model_priority_mode')"><span>${escapeHtml(groupConfigLabel('model_priority_mode', mode))}</span></button>
-          <button class="group-config-trigger" type="button" ${mode === 'fixed' ? `onclick="openGroupConfigModal(${index}, 'fixed_model')"` : 'disabled'}><span>${escapeHtml(fixed)}</span></button>
-        </div>`;
+          <button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'preview_hidden_mode')"><span>${escapeHtml(groupConfigLabel('preview_hidden_mode', previewMode))}</span></button>
+        </div>${fixedPanel}`;
       }).join('');
     }
     async function loadQQGroups(force = false) {
@@ -4743,6 +4770,7 @@ Source prompt:
           chat_type: row.config?.chat_type || 'none',
           model_priority_mode: row.config?.model_priority_mode || 'default',
           fixed_model: row.config?.fixed_model || '',
+          preview_hidden_mode: row.config?.preview_hidden_mode || 'default',
         }}));
         $('saveGroupsBtn').disabled = false;
         const resultText = data.available ? `已读取 ${QQ_GROUP_ROWS.length} 个群` : (data.message || 'QQ 平台不可用');
@@ -6152,6 +6180,8 @@ Source prompt:
         if (loadSeq !== TASK_LOAD_SEQ) return;
         const data = res.data || {};
         const summary = data.summary || {};
+        // Every successful task poll checks for new/changed records without discarding cached pages.
+        if ($('monitor')?.classList.contains('active')) void loadRecords(false, {background: true});
         const prefix = scope === 'recent' ? '最近任务' : '活动任务';
         const filteredTotal = Number(data.filtered_total ?? summary.filtered_total ?? (Array.isArray(data.tasks) ? data.tasks.length : 0));
         const pageCount = Math.max(1, Math.ceil(filteredTotal / TASK_PAGE_SIZE));
@@ -6333,8 +6363,13 @@ Source prompt:
       params.set('offset', String((Math.max(1, page) - 1) * pageSize));
       return `${parts[0]}?${params.toString()}`;
     }
-    function recordPagePayload(res) {
-      const rows = Array.isArray(res.data) ? res.data : [];
+    function recordPagePayload(res, cached = null) {
+      let rows = Array.isArray(res.data) ? res.data : [];
+      if (cached && Array.isArray(res.page_ids)) {
+        const combined = new Map(cached.rows.map(row => [String(row.id || ''), row]));
+        rows.forEach(row => combined.set(String(row.id || ''), row));
+        rows = res.page_ids.map(id => combined.get(String(id))).filter(Boolean);
+      }
       return {
         rows,
         meta: {
@@ -6342,7 +6377,8 @@ Source prompt:
           filtered: Number(res.filtered ?? rows.length),
           offset: Number(res.offset ?? 0),
           limit: Number(res.limit ?? MONITOR_PAGE_SIZE),
-          scope_stats: res.scope_stats && typeof res.scope_stats === 'object' ? res.scope_stats : null
+          scope_stats: res.scope_stats && typeof res.scope_stats === 'object' ? res.scope_stats : null,
+          record_revisions: res.record_revisions || {}
         }
       };
     }
@@ -6396,34 +6432,35 @@ Source prompt:
       clearDashboardPersistNamespace('asset-page');
     }
 
-    async function loadRecords(showRefreshToast = false) {
+    async function loadRecords(showRefreshToast = false, {background = false} = {}) {
       await ensureDashboardPersistentCachesHydrated();
       if (showRefreshToast) clearGalleryPickerCache();
       const requestSeq = ++RECORD_LOAD_SEQ;
       const cacheVersion = RECORD_PAGE_CACHE_VERSION;
       const requestPath = monitorQueryPath(MONITOR_PAGE);
-      abortPageRequests(RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, requestPath);
       const cached = showRefreshToast ? null : usablePageCache(RECORD_PAGE_CACHE, requestPath);
+      const params = new URLSearchParams(requestPath.split('?')[1] || '');
+      if (cached?.meta.record_revisions) params.set('known_records', JSON.stringify(cached.meta.record_revisions));
+      const fetchPath = '/api/records?' + params.toString();
+      abortPageRequests(RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, fetchPath);
       if (showRefreshToast) RECORD_PAGE_CACHE.delete(requestPath);
       if (showRefreshToast) removeDashboardPersistCache('record-page', requestPath);
       if (cached) {
         applyRecordPage(cached);
         RECORD_LOADING = false;
         setPagerLoading('monitorPager', false);
-        renderRecords();
-        const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / MONITOR_PAGE_SIZE));
-        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION && requestSeq === RECORD_LOAD_SEQ);
-        return;
+        if (!background) renderRecords();
       } else {
         RECORD_LOADING = true;
         setPagerLoading('monitorPager', true);
       }
       try {
         // The cached equivalent of api(monitorQueryPath(MONITOR_PAGE)).
-        const res = await requestCachedPage(requestPath, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, showRefreshToast);
+        const res = await requestCachedPage(fetchPath, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, showRefreshToast);
         if (requestSeq !== RECORD_LOAD_SEQ) return;
         if (cacheVersion !== RECORD_PAGE_CACHE_VERSION) return;
-        const payload = recordPagePayload(res);
+        const payload = recordPagePayload(res, cached);
+        const changed = !cached || JSON.stringify(payload) !== JSON.stringify({rows: cached.rows, meta: cached.meta});
         rememberPageCache(RECORD_PAGE_CACHE, requestPath, payload);
         applyRecordPage(payload);
         const totalPages = Math.max(1, Math.ceil((RECORD_META.filtered || 0) / MONITOR_PAGE_SIZE));
@@ -6432,7 +6469,7 @@ Source prompt:
           return await loadRecords(showRefreshToast);
         }
         RECORD_LOADING = false;
-        renderRecords();
+        if (!background || changed) renderRecords();
         prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION && requestSeq === RECORD_LOAD_SEQ);
         if (showRefreshToast) showToast('记录已刷新', 'ok');
       } catch (e) {
@@ -8122,14 +8159,75 @@ Source prompt:
     function openIconSvg() {
       return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>';
     }
-    function promptDetailBlock(title, field, text) {
-      return `
-        <div class="detail-title">
-          <h3>${escapeHtml(title)}</h3>
-          <button class="copy-btn" type="button" title="复制${escapeHtml(title)}" aria-label="复制${escapeHtml(title)}" onclick="copyRecordField('${field}')">${copyIconSvg()}</button>
-        </div>
-        <pre>${escapeHtml(text || '')}</pre>
-      `;
+    const RECORD_FIELD_LABELS = {
+      original_prompt: '原始提示词', request_prompt: '请求提示词', final_prompt: '最终实际提示词（发送给模型）',
+      request_prompt_en: '英文请求提示词', request_data: '请求数据', response_data: '响应数据'
+    };
+    const RECORD_FIELD_CACHE = new Map();
+    const RECORD_FIELD_REQUESTS = new Map();
+    let RECORD_DETAIL_SEQ = 0;
+    let RECORD_FIELD_SEQ = 0;
+    let CURRENT_RECORD_FIELD = '';
+    function recordFieldButtons() {
+      return `<div class="actions record-field-actions">${Object.entries(RECORD_FIELD_LABELS).map(([field, label]) =>
+        `<button class="secondary mini" type="button" onclick="openRecordField('${field}')">${escapeHtml(label)}</button>`
+      ).join('')}</div>`;
+    }
+    async function loadRecordField(field, id = String(CURRENT_RECORD?.id || '')) {
+      if (!id || !RECORD_FIELD_LABELS[field]) throw new Error('记录字段不存在');
+      const scope = dashboardPersistScope();
+      const key = JSON.stringify([scope, id, field]);
+      if (RECORD_FIELD_CACHE.has(key)) return RECORD_FIELD_CACHE.get(key);
+      if (RECORD_FIELD_REQUESTS.has(key)) return RECORD_FIELD_REQUESTS.get(key);
+      const request = api('/api/records/' + encodeURIComponent(id) + '?field=' + encodeURIComponent(field))
+        .then(res => {
+          const value = res.data?.[field] ?? (field.endsWith('_data') ? {} : '');
+          if (scope === dashboardPersistScope()) {
+            RECORD_FIELD_CACHE.set(key, value);
+            while (RECORD_FIELD_CACHE.size > 48) RECORD_FIELD_CACHE.delete(RECORD_FIELD_CACHE.keys().next().value);
+          }
+          return value;
+        })
+        .finally(() => RECORD_FIELD_REQUESTS.delete(key));
+      RECORD_FIELD_REQUESTS.set(key, request);
+      return request;
+    }
+    function closeRecordField() {
+      RECORD_FIELD_SEQ += 1;
+      CURRENT_RECORD_FIELD = '';
+      $('recordFieldModal')?.classList.remove('show');
+      $('recordFieldBody')?.replaceChildren();
+    }
+    async function openRecordField(field) {
+      const id = String(CURRENT_RECORD?.id || '');
+      const modal = $('recordFieldModal');
+      const body = $('recordFieldBody');
+      if (!id || !modal || !body || !RECORD_FIELD_LABELS[field]) return;
+      const seq = ++RECORD_FIELD_SEQ;
+      CURRENT_RECORD_FIELD = field;
+      $('recordFieldTitle').textContent = RECORD_FIELD_LABELS[field];
+      $('recordFieldCopy').disabled = true;
+      body.textContent = '正在加载…';
+      modal.classList.add('show');
+      try {
+        const value = await loadRecordField(field, id);
+        if (seq !== RECORD_FIELD_SEQ || id !== String(CURRENT_RECORD?.id || '')) return;
+        if (field === 'response_data') body.innerHTML = responseDataDetailBlock(value);
+        else {
+          const pre = document.createElement('pre');
+          pre.textContent = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value || '内容为空');
+          body.replaceChildren(pre);
+        }
+        $('recordFieldCopy').disabled = false;
+      } catch (error) {
+        if (seq !== RECORD_FIELD_SEQ) return;
+        body.textContent = error.message || '读取失败';
+        const retry = document.createElement('button');
+        retry.className = 'secondary mini';
+        retry.textContent = '重试';
+        retry.onclick = () => openRecordField(field);
+        body.appendChild(retry);
+      }
     }
     function collectResponseBase64Copies(value, path = [], result = []) {
       if (Array.isArray(value)) {
@@ -8327,10 +8425,6 @@ Source prompt:
       RECORD_MEDIA_SOURCE_REQUESTS.set(id, request);
       return request;
     }
-    function prefetchRecordMediaSources() {
-      if (!String(CURRENT_RECORD?.id || '').trim()) return;
-      loadRecordMediaSources().catch(() => {});
-    }
     function cachedRecordMediaSources() {
       const id = String(CURRENT_RECORD?.id || '').trim();
       return id ? RECORD_MEDIA_SOURCE_CACHE.get(id) || null : null;
@@ -8460,22 +8554,10 @@ Source prompt:
     }
     async function copyRecordField(field) {
       const r = CURRENT_RECORD || {};
-      const text = field === 'image_code' ? String(r.image_code || '') : field === 'request_prompt'
-        ? (r.request_prompt || r.prompt || '')
-        : field === 'final_prompt'
-          ? (r.final_prompt || r.request_data?.request_prompt_en || r.request_prompt || r.prompt || '')
-          : field === 'request_prompt_en'
-            ? (r.request_data?.request_prompt_en || '')
-        : field === 'request_data'
-          ? JSON.stringify(r.request_data || {}, null, 2)
-          : field === 'response_data'
-            ? JSON.stringify(r.response_data || {}, null, 2)
-            : (r.original_prompt || '');
-      if (!text) {
-        showToast('内容为空', 'bad');
-        return;
-      }
       try {
+        const value = field === 'image_code' ? String(r.image_code || '') : await loadRecordField(field, String(r.id || ''));
+        const text = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value || '');
+        if (!text) throw new Error('内容为空');
         await copyTextToClipboard(text);
         showToast('已复制到剪贴板', 'ok');
       } catch (e) {
@@ -8507,7 +8589,11 @@ Source prompt:
     async function copyRecordDiagnostics() {
       if (!CURRENT_RECORD) return;
       try {
-        await copyTextToClipboard(recordDiagnosticsText(CURRENT_RECORD));
+        const record = CURRENT_RECORD;
+        const [original, final] = await Promise.all([
+          loadRecordField('original_prompt', record.id), loadRecordField('final_prompt', record.id)
+        ]);
+        await copyTextToClipboard(recordDiagnosticsText({...record, original_prompt: original, final_prompt: final}));
         showToast('排查信息已复制', 'ok');
       } catch (e) {
         showToast(e.message || '复制失败', 'bad');
@@ -8532,20 +8618,24 @@ Source prompt:
     }
     async function openRecordDetail(id) {
       closeMediaSourceModal();
+      closeRecordField();
+      const seq = ++RECORD_DETAIL_SEQ;
+      CURRENT_RECORD = null;
       if ($('recordDetailBody')) {
         $('recordDetailBody').innerHTML = '<div class="status">正在加载记录详情…</div>';
         $('recordModal')?.classList.add('show');
       }
       let r = RECORDS.find(item => String(item.id || '') === String(id || ''));
       try {
-        const res = await api('/api/records/' + encodeURIComponent(String(id || '')));
+        const res = await api('/api/records/' + encodeURIComponent(String(id || '')) + '?view=summary');
         r = res.data || r;
       } catch (e) {
+        if (seq !== RECORD_DETAIL_SEQ) return;
         showToast(e.message || '记录详情读取失败', 'bad');
       }
+      if (seq !== RECORD_DETAIL_SEQ) return;
       if (!r) return;
       CURRENT_RECORD = r;
-      prefetchRecordMediaSources();
       $('recordDetailBody').innerHTML = `
         <div class="detail-title"><h3 class="mono">${escapeHtml(r.image_code || '')}</h3><div class="actions"><button class="secondary mini" type="button" onclick="copyRecordField('image_code')">复制编号</button><button class="secondary mini" type="button" onclick="copyRecordDiagnostics()">复制排查信息</button></div></div>
         <div class="record-detail-grid">
@@ -8566,10 +8656,7 @@ Source prompt:
         ${recordTaskSummaryBlock(r)}
         ${recordFailureReasonsBlock(r)}
         ${recordParameterBlock(r)}
-        ${promptDetailBlock('原始提示词', 'original_prompt', r.original_prompt || '')}
-        ${promptDetailBlock('请求提示词', 'request_prompt', r.request_prompt || r.prompt || '')}
-        ${r.final_prompt || r.request_data?.request_prompt_en ? promptDetailBlock('最终实际提示词（发送给模型）', 'final_prompt', r.final_prompt || r.request_data?.request_prompt_en || '') : ''}
-        ${r.request_data?.request_prompt_en ? promptDetailBlock('英文请求提示词', 'request_prompt_en', r.request_data.request_prompt_en) : ''}
+        ${recordFieldButtons()}
         <div class="detail-title"><h3>资产标记</h3></div>
         <div class="record-detail-grid">
           <label class="checkline"><input id="recordFavorite" type="checkbox" ${r.favorite ? 'checked' : ''}> 收藏</label>
@@ -8582,8 +8669,6 @@ Source prompt:
         <div class="grid"><div><label>修改要求（可选）</label><input id="recordRetryFeedback" maxlength="2000" placeholder="例如：更明亮、动作更自然"></div></div>
         <div><label>重试策略</label><select id="recordRetryStrategy"><option value="full">完整保留参数</option><option value="model_only">只换模型</option><option value="channel_only">只换渠道</option><option value="lower_resolution">降低分辨率</option></select></div>
         <div class="actions"><button class="ok mini" type="button" onclick="retryCurrentRecord()">重试生成</button><span id="recordRetryStatus" class="muted"></span></div>
-        ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
-        ${responseDataDetailBlock(r.response_data || {})}
         ${recordRequestReferences(r)}
         ${generatedMediaDetailBlock(r)}
       `;
@@ -8598,6 +8683,8 @@ Source prompt:
       loadPersonaReferenceThumbs($('recordDetailBody')).catch(() => {});
     }
     function closeRecordDetail() {
+      RECORD_DETAIL_SEQ += 1;
+      closeRecordField();
       closeMediaSourceModal();
       $('recordModal').classList.remove('show');
       CURRENT_RECORD = null;
@@ -13221,6 +13308,7 @@ Source prompt:
       if (mask === $('channelModal')) closeChannelModal();
       else if (mask === $('proxyModal')) closeProxyModal();
       else if (mask === $('recordModal')) closeRecordDetail();
+      else if (mask === $('recordFieldModal')) closeRecordField();
       else if (mask === $('compareModal')) closeCompareModal();
       else if (mask === $('taskModal')) closeTaskDetail();
       else if (mask === $('metricsModal')) closeMetricsModal();
@@ -13241,6 +13329,7 @@ Source prompt:
       if ($('backupRestoreModal')?.classList.contains('show')) { closeBackupRestore(); return; }
       if ($('mediaSourceModal')?.classList.contains('show')) { closeMediaSourceModal(); return; }
       if ($('mediaLightboxModal')?.classList.contains('show')) { closeMediaLightbox(); return; }
+      if ($('recordFieldModal')?.classList.contains('show')) { closeRecordField(); return; }
       if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }
       if ($('metricsModal')?.classList.contains('show')) { closeMetricsModal(); return; }
       if ($('metricAlertSettingsModal')?.classList.contains('show')) { closeMetricAlertSettings(); return; }
@@ -13256,6 +13345,7 @@ Source prompt:
       if ($('groupConfigModal')?.classList.contains('show')) { closeGroupConfigModal(); return; }
     });
     if ($('cleanupCacheBtn')) $('cleanupCacheBtn').onclick = cleanupCache;
+    if ($('recordFieldCopy')) $('recordFieldCopy').innerHTML = copyIconSvg();
     if ($('mediaLightboxClose')) $('mediaLightboxClose').onclick = closeMediaLightbox;
     if ($('mediaLightboxDownload')) {
       $('mediaLightboxDownload').innerHTML = downloadIconSvg();

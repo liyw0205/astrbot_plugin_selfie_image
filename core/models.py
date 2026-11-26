@@ -1385,10 +1385,14 @@ def normalize_group_chat_configs(value: Any) -> Dict[str, Dict[str, Any]]:
         model_priority_mode = str(raw_config.get("model_priority_mode") or "default").strip().lower()
         if model_priority_mode not in {"default", "sequence", "random", "fixed"}:
             model_priority_mode = "default"
+        preview_hidden_mode = str(raw_config.get("preview_hidden_mode") or "default").strip().lower()
+        if preview_hidden_mode not in {"default", "on", "off"}:
+            preview_hidden_mode = "default"
         result[group_id] = {
             "chat_type": chat_type,
             "model_priority_mode": model_priority_mode,
             "fixed_model": str(raw_config.get("fixed_model") or "").strip()[:240],
+            "preview_hidden_mode": preview_hidden_mode,
         }
     return result
 

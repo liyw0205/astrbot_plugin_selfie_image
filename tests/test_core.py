@@ -790,6 +790,7 @@ class ConfigModelTests(unittest.TestCase):
 
         action = build_leg_focus_action(
             force_pose="chair_thigh_cross_slant", force_camera="third", has_refs=True,
+            force_face_mode="none",
         )
         zh = build_selfie_builtin_prompt(action, has_reference_image=True, appearance_type="real")
         self.assertEqual(zh.count(action), 1)
@@ -7750,11 +7751,21 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("幽灵手", selfie)
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿 【wear:white】", "小助", "温柔", True, 0)
+            from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_VIEW_BY_ID
+
             for line in anatomy_constraint_lines(style="legs"):
                 self.assertIn(line, legs)
             self.assertIn("【看看腿 / 单一室内构图】", legs)
             self.assertNotIn("允许上身、肩颈和头脸入画", legs)
-            self.assertTrue("头部与面部保持画外" in legs or "头部与面部完全不进入画面" in legs)
+            face_mode = re.search(r"【face_mode:(none|half|full)】", legs).group(1)
+            view_id = re.search(r"【leg_view:([a-z_]+)】", legs).group(1)
+            self.assertIn(face_mode, LEGFOCUS_VIEW_BY_ID[view_id].get("face_modes", ["none"]))
+            if face_mode == "none":
+                self.assertTrue("头部与面部保持画外" in legs or "头部与面部完全不进入画面" in legs)
+            elif face_mode == "half":
+                self.assertIn("仅呈现自然侧脸或半脸", legs)
+            else:
+                self.assertIn("完整面部清晰进入画面", legs)
             self.assertIn("保留自然体态与比例", legs)
             self.assertIn("【outfit:reference】", legs)
             self.assertEqual(legs.count("【legs:outfit】"), 1)
@@ -7861,7 +7872,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         enhanced = plugin_main.build_prompt_with_reference_instruction("女孩站立", [], enhance=True)
         self.assertIn("构图与画面质量", enhanced)
         self.assertIn("左右手/脚各一", enhanced)
-        legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(object.__new__(plugin_main.SelfieImagePlugin), "", False, force_legwear="白丝")
+        with patch("astrbot_plugin_selfie_image.cos.leg_focus.random.random", return_value=1):
+            legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
+                object.__new__(plugin_main.SelfieImagePlugin), "", False, force_legwear="白丝",
+            )
         self.assertIn("保留自然体态与比例", legs_action)
         self.assertIn("背景只负责交代地点和光线层次并占少量画幅", legs_action)
         self.assertNotIn("同框", legs_action)
@@ -7879,7 +7893,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
             self.assertIn("【看看腿 / 单一室内构图】", prompt)
             self.assertNotIn("允许上身、肩颈和头脸入画", prompt)
-            self.assertTrue("头部与面部保持画外" in prompt or "头部与面部完全不进入画面" in prompt)
+            self.assertEqual(
+                re.search(r"【face_mode:(none|half|full)】", prompt).group(1),
+                re.search(r"【face_mode:(none|half|full)】", legs_action).group(1),
+            )
             self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("微胖软肉", prompt)
             self.assertNotIn("不要大象腿猪腿", prompt)
@@ -8204,7 +8221,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("袜装或鞋履仅按本次明确要求调整", text)
         self.assertEqual(text.count("腿部细节："), 1)
         self.assertNotIn("允许上身、肩颈和头脸入画", text)
-        self.assertTrue("头部与面部保持画外" in text or "头部与面部完全不进入画面" in text)
+        self.assertEqual(
+            re.search(r"【face_mode:(none|half|full)】", text).group(1),
+            re.search(r"【face_mode:(none|half|full)】", action).group(1),
+        )
         for forbidden in ("白色不透连裤袜，完整日常穿搭", "小皮鞋", "日常长裤搭配", "全身穿搭展示"):
             self.assertNotIn(forbidden, text)
 
@@ -8258,7 +8278,8 @@ class LegFocusTests(unittest.TestCase):
                 self.assertIn(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"], action)
                 self.assertIn("【outfit:reference】", action)
                 self.assertNotIn("允许上身、肩颈和头脸入画", action)
-                self.assertTrue("头部与面部保持画外" in action or "头部与面部完全不进入画面" in action)
+                face_mode = re.search(r"【face_mode:(none|half|full)】", action).group(1)
+                self.assertIn(face_mode, LEGFOCUS_VIEW_BY_ID[view_id].get("face_modes", ["none"]))
                 self.assertNotIn("本次随机腿部细节", action)
                 self.assertNotIn("户外小径漫步", action)
 
@@ -11269,8 +11290,8 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(len(second), 2)
         self.assertIn("ABC234", first[0])
         self.assertIn("DEF567", second[0])
-        self.assertEqual(first[1], "prompt for quoted A")
-        self.assertEqual(second[1], "prompt for quoted B")
+        self.assertEqual("prompt for quoted A", first[1])
+        self.assertEqual("prompt for quoted B", second[1])
         self.assertEqual(len(collected_kwargs), 2)
         for kwargs in collected_kwargs:
             self.assertTrue(kwargs["include_image_alternates"])

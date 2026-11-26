@@ -169,6 +169,7 @@ def test_preview_toggle_config_persists_and_reloads(tmp_path, enabled):
 class _Event:
     def __init__(self):
         self.sent = []
+        self.group_id = "100"
 
     def chain_result(self, components):
         return components
@@ -180,13 +181,23 @@ class _Event:
 
 def _delivery_plugin(enabled):
     plugin = ReferenceMediaMixin()
-    plugin.config = SimpleNamespace(image_enable_preview_hidden=enabled)
+    plugin.config = SimpleNamespace(image_enable_preview_hidden=enabled, group_chat_configs={})
     plugin._create_image_component = lambda path: ("original", path)
     plugin._send_failures = {}
     plugin._send_failures_lock = threading.RLock()
     plugin._session_key = lambda event: "group:test"
     plugin._cache_relative_path = lambda path: path
     return plugin
+
+
+@pytest.mark.parametrize(
+    ("global_enabled", "mode", "expected"),
+    [(False, "default", False), (True, "default", True), (False, "on", True), (True, "off", False)],
+)
+def test_group_preview_mode_overrides_or_inherits_global_setting(global_enabled, mode, expected):
+    plugin = _delivery_plugin(global_enabled)
+    plugin.config.group_chat_configs = {"100": {"preview_hidden_mode": mode}}
+    assert plugin._preview_hidden_enabled_for_event(_Event()) is expected
 
 
 def test_disabled_toggle_does_not_encode_images():
@@ -196,6 +207,18 @@ def test_disabled_toggle_does_not_encode_images():
         result = asyncio.run(plugin._send_generated_images(event, ["original.png"]))
     assert int(result) == 1
     assert event.sent == [[("original", "original.png")]]
+
+
+def test_group_preview_off_bypasses_global_hidden_preview(tmp_path):
+    path = tmp_path / "generated.png"
+    Image.new("RGB", (60, 100), "red").save(path)
+    plugin = _delivery_plugin(True)
+    plugin.config.group_chat_configs = {"100": {"preview_hidden_mode": "off"}}
+    event = _Event()
+    with patch("astrbot_plugin_selfie_image.features.reference_media.build_hidden_preview", side_effect=AssertionError):
+        result = asyncio.run(plugin._send_generated_images(event, [str(path)]))
+    assert int(result) == 1
+    assert event.sent == [[("original", str(path))]]
 
 
 @pytest.mark.parametrize("remember_failures", [True, False])

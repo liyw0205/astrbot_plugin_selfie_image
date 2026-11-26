@@ -975,7 +975,7 @@ class FlaskWebServer:
         def record_detail(record_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            return record_result(lambda: record_controller.detail(record_id))
+            return record_result(lambda: record_controller.detail(record_id, request.args))
 
         def record_media_sources(record_id: str) -> Any:
             if not check_auth():

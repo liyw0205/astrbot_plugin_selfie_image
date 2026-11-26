@@ -68,6 +68,10 @@ async function main() {
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'selfie-content-browser-'));
   const failures=[];
   const configWrites=[];
+  const recordCalls=[];
+  let recordRows=[];
+  const recordFields={original_prompt:'Original fixture '.repeat(1200),request_prompt:'Request fixture',final_prompt:'Final fixture',request_prompt_en:'',request_data:{model:modelName},response_data:{result:'ok'}};
+  const recordFixture=id=>({id,image_code:id,time:'2026-11-26 12:00:00',source:'web-test',success:true,model:modelName,request_data:{model:modelName},generated_image_paths:[]});
   const server=http.createServer(async (request,response)=>{
     const url=new URL(request.url,'http://fixture');
     if(url.pathname==='/fixture'||url.pathname==='/host') {
@@ -75,6 +79,24 @@ async function main() {
     }
     if(url.pathname==='/api/tasks/'+task.task_id) {
       response.setHeader('Content-Type','application/json');response.end(JSON.stringify({success:true,data:task}));return;
+    }
+    if(url.pathname==='/api/tasks') {
+      response.setHeader('Content-Type','application/json');response.end(JSON.stringify({success:true,data:{tasks:[],summary:{}}}));return;
+    }
+    if(url.pathname==='/api/records') {
+      recordCalls.push({path:url.pathname,known:url.searchParams.has('known_records')});
+      const known=JSON.parse(url.searchParams.get('known_records')||'{}');
+      const offset=Number(url.searchParams.get('offset')||0),limit=Number(url.searchParams.get('limit')||30);
+      const rows=recordRows.slice(offset,offset+limit);
+      response.setHeader('Content-Type','application/json');
+      response.end(JSON.stringify({success:true,data:rows.filter(row=>known[row.id]!=='v1'),total:recordRows.length,filtered:recordRows.length,offset,limit,
+        page_ids:rows.map(row=>row.id),record_revisions:Object.fromEntries(rows.map(row=>[row.id,'v1']))}));return;
+    }
+    if(url.pathname.startsWith('/api/records/')) {
+      const field=url.searchParams.get('field');
+      recordCalls.push({path:url.pathname,field,view:url.searchParams.get('view')});
+      response.setHeader('Content-Type','application/json');
+      response.end(JSON.stringify({success:true,data:field?{[field]:recordFields[field]}:recordFixture(url.pathname.split('/').at(-1))}));return;
     }
     if(url.pathname==='/api/config'&&request.method==='POST') {
       try {
@@ -241,6 +263,36 @@ async function main() {
       await check(label+' linked records',`[...document.querySelectorAll('.task-record-open')].every(el=>{const r=el.getBoundingClientRect(),body=$('taskModal').querySelector('.modal-body').getBoundingClientRect();return r.left>=body.left&&r.right<=body.right+1&&el.scrollWidth<=el.clientWidth+1;})`);
       await check(label+' attempt cells',`[...document.querySelectorAll('#taskDetailBody table td')].every(el=>el.scrollWidth<=el.clientWidth+1)&&document.querySelector('#taskDetailBody table td:nth-child(2)').getBoundingClientRect().width>=100`);
       await evaluate("document.querySelector('#taskModal button[onclick=\"closeTaskDetail()\"]').click();");await until("!$('taskModal').classList.contains('show')");
+      recordRows=[recordFixture('record-old')];
+      await evaluate("(async()=>{clearTimeout(TASK_LOAD_TIMER);clearRecordPageCache();await loadRecords(false);})()");
+      recordRows.unshift(recordFixture('record-new'));
+      await evaluate("navigateToTab('image');navigateToTab('monitor');");
+      await until("RECORDS[0]?.id==='record-new'");
+      assert(recordCalls.some(item=>item.known),'re-entering monitor should check the cached page incrementally');
+      recordRows.unshift(recordFixture('record-task-result'));
+      await evaluate("loadTasks(false)");
+      await until("RECORDS[0]?.id==='record-task-result'");
+      await check(label+' unchanged background refresh keeps the table',"(async()=>{const head=$('recordTable').firstElementChild;await loadRecords(false,{background:true});return head===$('recordTable').firstElementChild;})()");
+      const callsBeforeDetail=recordCalls.length;
+      await evaluate("openRecordDetail('record-new')");
+      await check(label+' lazy detail has buttons',"$('recordDetailBody').querySelectorAll('.record-field-actions button').length===6&&!$('recordDetailBody').querySelector('pre')");
+      assert(recordCalls.slice(callsBeforeDetail).some(item=>item.view==='summary'));
+      assert(!recordCalls.slice(callsBeforeDetail).some(item=>item.field||item.path.endsWith('/media-sources')));
+      await screenshot(label+'-record-details');
+      await check(label+' record detail fits',modalFits('recordModal'));
+      await evaluate("openRecordField('original_prompt')");
+      await check(label+' lazy prompt loaded',"$('recordFieldModal').classList.contains('show')&&$('recordFieldBody').textContent.startsWith('Original fixture')");
+      await screenshot(label+'-record-field');
+      await check(label+' record field fits',modalFits('recordFieldModal'));
+      const fieldCalls=recordCalls.filter(item=>item.field==='original_prompt').length;
+      await evaluate("(async()=>{closeRecordField();await openRecordField('original_prompt');})()");
+      assert.equal(recordCalls.filter(item=>item.field==='original_prompt').length,fieldCalls,'opening the same field should use cache');
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});
+      await check(label+' Escape closes the field only',"!$('recordFieldModal').classList.contains('show')&&$('recordModal').classList.contains('show')");
+      await evaluate("openRecordField('response_data')");
+      await check(label+' response loads on demand',"$('recordFieldBody').textContent.includes('ok')");
+      await evaluate("closeRecordDetail();clearTimeout(TASK_LOAD_TIMER);");
       if(embedded) {
         await evaluate("document.documentElement.classList.remove('embedded-dashboard-ready');void initializeEmbeddedDashboard();");
         await until("$('embeddedBootRetry') && !$('embeddedBootRetry').hidden");
@@ -248,7 +300,7 @@ async function main() {
         assert.equal(await evaluate("getComputedStyle($('embeddedBootPage')).display !== 'none'"),true,'embedded errors should show connection retry');
       }
       await check(label+' page width','document.documentElement.scrollWidth<=innerWidth+1');
-      console.log(`[content-smoke] ${label} ${width}x${height}: checked filters, thresholds, channels, model editor and task details`);
+      console.log(`[content-smoke] ${label} ${width}x${height}: checked filters, channels, tasks, incremental records and lazy detail dialogs`);
     }
     assert.deepEqual(exceptions,[]);
     assert.deepEqual(failures,[]);

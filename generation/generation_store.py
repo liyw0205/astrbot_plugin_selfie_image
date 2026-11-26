@@ -1011,7 +1011,7 @@ class GenerationStoreMixin(PromptLookupMixin):
             if loaded:
                 record["image_fingerprint"] = image_fingerprint(loaded[0])
         record["prompt_selection"] = prompt_selection_snapshot(" ".join(
-            str(record.get(key) or "") for key in ("original_prompt", "request_prompt", "prompt")
+            str(record.get(key) or "") for key in ("original_prompt", "prompt", "request_prompt", "final_prompt")
         ))
         # A generation task can produce more than one retained record (batch
         # images are split below).  Keep the task link on every resulting row
@@ -1469,11 +1469,60 @@ class GenerationStoreMixin(PromptLookupMixin):
             reference_count,
         )
 
-    def get_record_for_web(self, record_id: str) -> Dict[str, Any]:
+    def get_record_for_web(
+        self, record_id: str, *, view: str = "full", field: str = "",
+    ) -> Dict[str, Any]:
         target_id = str(record_id or "").strip()
         with self._records_lock:
             for record in self._records:
                 if str(record.get("id") or "") == target_id:
+                    if field:
+                        request_data = record.get("request_data") or {}
+                        prompt_fields = {
+                            "original_prompt": record.get("original_prompt") or "",
+                            "request_prompt": record.get("request_prompt") or record.get("prompt") or "",
+                            "final_prompt": record.get("final_prompt") or request_data.get("request_prompt_en") or record.get("request_prompt") or record.get("prompt") or "",
+                            "request_prompt_en": request_data.get("request_prompt_en") or "",
+                        }
+                        return copy.deepcopy({field: prompt_fields.get(field, record.get(field, {}))})
+                    if view == "summary":
+                        deferred = {
+                            "original_prompt", "request_prompt", "prompt", "final_prompt",
+                            "request_data", "response_data", "generated_image_sources",
+                        }
+                        detail = {key: value for key, value in record.items() if key not in deferred}
+                        request_data = record.get("request_data") or {}
+                        detail["request_data"] = {
+                            key: request_data[key] for key in (
+                                "requested_count", "count", "aspect_ratio", "resolution", "timeout_seconds",
+                                "reference_image_count", "raw_reference_image_count", "channel", "model",
+                                "composition", "use_selfie_reference", "persona_reference_count", "reference_selection",
+                                "prompt_en", "image_to_text",
+                            ) if key in request_data
+                        }
+                        for key in ("prompt_en", "image_to_text"):
+                            flags = request_data.get(key)
+                            if isinstance(flags, Mapping):
+                                detail["request_data"][key] = {
+                                    name: flags[name] for name in ("enabled", "applied") if name in flags
+                                }
+                        response = record.get("response_data") or {}
+                        detail["response_data"] = {
+                            key: response[key] for key in (
+                                "attempts", "retry_count", "status", "delivery_success", "delivery_error",
+                                "stage", "blocked_images_retained", "generated_image_paths",
+                            ) if key in response
+                        }
+                        detail["deferred_fields"] = [
+                            "original_prompt", "request_prompt", "final_prompt",
+                            "request_prompt_en", "request_data", "response_data",
+                        ]
+                        # A placeholder keeps the source action available without reading its sidecar.
+                        if record.get("media_sources_file"):
+                            detail["generated_image_sources"] = [{"type": "base64", "deferred": True}]
+                        detail = self._enrich_record_for_web(copy.deepcopy(detail))
+                        detail["task_summary"] = self._record_task_summary(detail)
+                        return detail
                     # Web handlers redact the response according to its use. In
                     # particular, detail responses must remove inline Base64
                     # before JSON serialization, while copy actions need the

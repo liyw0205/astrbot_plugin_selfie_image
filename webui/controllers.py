@@ -681,10 +681,21 @@ class RecordController:
             raise WebContractError(str(exc), 500) from exc
         return RecordControllerResult(redact_sensitive_data(data))
 
-    def detail(self, record_id: Any) -> RecordControllerResult:
+    def detail(self, record_id: Any, params: Any = None) -> RecordControllerResult:
         target = self._record_id(record_id)
+        params = params or {}
+        view = query_value(params, "view")
+        field = query_value(params, "field")
+        if view not in {"", "summary"}:
+            raise WebContractError("未知记录视图")
+        if field and field not in {
+            "original_prompt", "request_prompt", "final_prompt", "request_prompt_en",
+            "request_data", "response_data",
+        }:
+            raise WebContractError("未知记录字段")
         try:
-            data = redact_generation_record_for_detail(self.plugin.get_record_for_web(target))
+            options = {"view": view, "field": field} if view or field else {}
+            data = redact_generation_record_for_detail(self.plugin.get_record_for_web(target, **options))
         except Exception as exc:
             raise WebContractError(str(exc), 404) from exc
         return RecordControllerResult(data)

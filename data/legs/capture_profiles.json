@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "capture_profiles": {
+    "skirt": {
+      "third_directions": [
+        "oblique",
+        "side"
+      ],
+      "third_elevations": [
+        "up"
+      ],
+      "coverage_prompt": "外层裙摆顺着当前姿势垂覆大腿根部，坐姿时裙前片自然铺在大腿上，衣料与近侧腿形成连续遮挡；保持原有裙长和服装结构，不掀起、卷起裙摆或展示内层衣物。"
+    },
+    "shorts": {
+      "third_directions": [
+        "front",
+        "oblique",
+        "side"
+      ],
+      "third_elevations": [
+        "up",
+        "level",
+        "down"
+      ],
+      "coverage_prompt": "短裤两侧裤口随当前姿势自然覆盖，保持独立裤管与原有长度，不翻卷裤口或展示内层衣物。"
+    }
+  }
+}

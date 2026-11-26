@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "proportion_guard": true,
+  "framing": "成年人物的竖屏腿部穿搭近中景，以腿部服装、姿势关键轮廓和实际可见部位为画面主体，保留自然体态与比例。画面上缘服从本次机位支持的面部范围和选定裁切，不在不支持露脸的视角强行扩展，也不强求头到脚完整入镜。所选服装原有的露肩、锁骨和腰腹自然保留，不额外添加衣物或物件遮挡。左右均指人物自身；脚只在姿势和机位允许时入镜，被腿、衣物或支撑面遮住的部位保持自然遮挡，不为展示而扭转补画，服装边缘保持连续自然。",
+  "anatomy_rule": "双腿各自沿同侧髋、膝、踝连续，关节朝向自然，姿势受力稳定。",
+  "hosiery_rule": "袜装按所属服饰与用户选定款式呈现：覆盖边界连续，织物贴合腿部自然起伏。",
+  "camera_framings": {
+    "selfie": "本人看向自己双腿的第一人称主观视角。机位位于本人上身附近的自然视线位置，以普通手机焦段和正常拍摄距离朝腿部取景；不从人物对面拍摄，设备留在画外。画面保留日常手机快照的亲近感和轻微随手构图，但不改变姿势允许看见的髋部、膝部、小腿与支撑关系；近侧大腿和膝盖不贴近镜头、不让单侧肢体占满画面，避免夸张近大远小。脚端依实际视线与遮挡自然入镜，不强求两只脚都出现。身后和被腿遮住的部分保持真实遮挡。",
+    "third": "第三人称画外相机从人物外部拍摄，机位保持近距离，拍摄者和设备不入镜。使用普通焦段和自然透视的竖屏近中景，像在当前室内或室外环境中顺手记录的日常手机照片，而非远距离观察或影棚摆拍；人物占据主要画幅，视觉重点落在腿部穿搭、姿势轮廓与支撑接触。画面上缘严格服从本次 crop mode，下缘优先容纳本姿势的主要腿部轮廓和自然可见脚端，被屈腿或支撑面遮住的部位保持自然遮挡，身体比例和近远层次连贯。",
+    "mirror": "本人对着落地镜自拍，采用普通手机焦段和适中距离的竖屏近中景，像在独处空间里随手记录穿搭；镜面占据主要画幅，镜中同一人的腿部穿搭与姿势是视觉主体，画面上缘严格服从本次 crop mode。一只持机手与唯一一部手机在画面上部自然出现，不挡住主要腿部；保留服装、身体和支撑物的连续关系，不为补全头脚拉远镜头，镜外不重复画出同一人的身体或第二个人。"
+  },
+  "full_framing": "成年人物的第三人称竖屏全身构图，头部到足部完整入镜；姿势确实遮挡的部位保持自然，不强行补画。身体比例自然，服装与动作轮廓清楚。仅在 crop mode 允许完整全身时使用。",
+  "crop_modes": {
+    "leg_full": "腿部穿搭与姿势为画面主体，取景范围服从姿势、支撑关系和已选面部模式。",
+    "shoulder_crop": "画面上缘严格裁在肩线下方，只呈现肩部以下至腿部的自然范围；头部与面部保持画外，头部、面部、下巴及以上区域完全不入镜。",
+    "half_face": "只让自然侧脸或半脸进入画面，脸部裁切与当前姿势连贯。",
+    "full_face": "完整面部清晰进入画面，额头、双眼、鼻部和下巴均自然可见。"
+  },
+  "reference_rules": {
+    "zh": "参考图一用于保持主角身份与自然体态，不锁定原图姿势或拍摄方向。",
+    "en": "Use reference image 1 to preserve the subject's identity and natural body proportions; its original pose and camera direction are not fixed."
+  },
+  "scene_rule": "只使用选定的单一室内或室外场景与对应支撑物，背景只负责交代地点和光线层次并占少量画幅；环境物件贴合场景且只在边缘出现，不遮挡腿部、服装和支撑关系，不把生成结果带成风景照或静物主体。",
+  "appearance_prompts": {
+    "auto": {
+      "zh": "以主形象参考图或角色设定确定视觉媒介，按当前场景统一画风。",
+      "en": "Use the primary identity reference or character settings to determine the visual medium, with a cohesive style in the selected scene."
+    },
+    "real": {
+      "zh": "成片采用统一的写实真人摄影画风。",
+      "en": "Render a cohesive realistic human photograph."
+    },
+    "anime": {
+      "zh": "成片采用统一的 2D 柔光京阿尼风格动漫插画；光线方向与场景一致，用连贯明暗表现衣料褶皱和支撑接触阴影，不混入真人皮肤纹理。",
+      "en": "Render a cohesive 2D anime illustration in a soft Kyoto Animation-like style. Use lighting consistent with the scene and coherent shading for fabric folds and contact shadows, without photorealistic skin texture."
+    }
+  }
+}

@@ -69,7 +69,7 @@ assert.notStrictEqual(patch.proxies, current.proxies);
     assert result.returncode == 0, result.stderr
 
 
-def test_model_cache_refresh_error_does_not_expand_or_lock_channel_modal():
+def test_model_cache_refresh_error_details_expand_upward_without_locking_channel_modal():
     root = Path(__file__).resolve().parents[1]
     channel_source = (root / "pages/dashboard/source/channel_editor.js").read_text(encoding="utf-8")
     bootstrap = (root / "pages/dashboard/source/bootstrap.js").read_text(encoding="utf-8")
@@ -81,7 +81,43 @@ def test_model_cache_refresh_error_does_not_expand_or_lock_channel_modal():
     assert "catch (e) { showModelRefreshError(e); }" in channel_source
     assert 'id="channelModalCloseButton"' in template
     assert "channelModalCloseButton')?.addEventListener('click', closeChannelModal)" in bootstrap
-    assert "#channelModal #modalStatus { max-height: 18vh; overflow: auto;" in styles
+    assert "#channelModal .modal-footer { flex: 0 0 auto; overflow: visible; }" in styles
+    assert "#channelModal #modalStatus details[open] pre" in styles
+    assert "bottom: calc(100% + 8px)" in styles
+    assert "max-height: min(38vh, 360px)" in styles
+
+
+def test_priority_selectors_remain_filtered_after_model_selector_refresh():
+    root = Path(__file__).resolve().parents[1]
+    channel_source = (root / "pages/dashboard/source/channel_editor.js").read_text(encoding="utf-8")
+
+    assert "prunePriorityList('image', labels);" in channel_source
+    assert "prunePriorityList('audit', audits);" in channel_source
+    assert "preserveSelection('priorityPicker'" not in channel_source
+    assert "preserveSelection('auditPriorityPicker'" not in channel_source
+
+
+def test_novelai_parameters_only_show_for_novelai_image_channels():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "pages/dashboard/index.source.html").read_text(encoding="utf-8")
+    channel_source = (root / "pages/dashboard/source/channel_editor.js").read_text(encoding="utf-8")
+
+    assert 'id="modalNaiSettings" style="margin-top:12px;display:none"' in template
+    assert "EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none'" in channel_source
+
+
+def test_group_fixed_model_is_conditional_and_preview_mode_is_tristate():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "pages/dashboard/index.source.html").read_text(encoding="utf-8")
+    channel_source = (root / "pages/dashboard/source/channel_editor.js").read_text(encoding="utf-8")
+
+    assert '<span>预览</span></div>' in template
+    assert "const QQ_GROUP_PREVIEW_MODES = [['default', '默认'" in channel_source
+    assert "['on', '开启'" in channel_source
+    assert "['off', '关闭'" in channel_source
+    assert "const fixedPanel = mode === 'fixed' ?" in SOURCE
+    assert "openGroupConfigModal(${index}, 'fixed_model')" in SOURCE
+    assert "openGroupConfigModal(${index}, 'preview_hidden_mode')" in SOURCE
 
 
 def test_selfie_management_is_split_into_appearance_schedule_and_wardrobe_tabs():

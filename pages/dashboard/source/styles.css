@@ -314,6 +314,13 @@
     .modal-mask { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(27,28,29,.42); padding: 14px; z-index: 50; }
     .modal-mask.show { display: flex; }
     #mediaSourceModal { z-index: 70; }
+    #recordFieldModal { z-index: 60; }
+    #recordFieldModal .between { flex: 0 0 auto; flex-wrap: wrap; }
+    #recordFieldModal h2 { min-width: 0; overflow-wrap: anywhere; margin: 0; }
+    #recordFieldModal .actions { margin: 0; }
+    #recordFieldBody { min-height: 160px; margin-top: 12px; }
+    #recordFieldBody pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .record-field-actions { gap: 8px; }
     #mediaLightboxModal { z-index: 80; background: rgba(8, 12, 16, .88); }
     #confirmModal { z-index: 90; }
     .confirm-dialog { width: min(460px, 100%); }
@@ -331,11 +338,15 @@
     #channelModal .modal { max-height: 96vh; }
     #channelModal .modal > .between { flex: 0 0 auto; }
     #channelModal .modal-body { flex: 1 1 auto; min-height: 0; }
-    #channelModal .modal-footer { flex: 0 0 auto; max-height: 40vh; overflow: auto; }
-    #channelModal #modalStatus { max-height: 18vh; overflow: auto; overscroll-behavior: contain; }
-    #channelModal #modalStatus details { margin-top: 6px; }
+    #channelModal .modal-footer { flex: 0 0 auto; overflow: visible; }
+    #channelModal #modalStatus { position: relative; overflow: visible; }
+    #channelModal #modalStatus details { position: relative; margin-top: 6px; }
     #channelModal #modalStatus summary { cursor: pointer; }
-    #channelModal #modalStatus pre { max-height: 15vh; overflow: auto; margin: 8px 0 0; }
+    #channelModal #modalStatus details[open] pre {
+      position: absolute; z-index: 2; left: 0; right: 0; bottom: calc(100% + 8px);
+      max-height: min(38vh, 360px); overflow: auto; margin: 0; background: #fff;
+      box-shadow: 0 8px 24px rgba(27,28,29,.18);
+    }
     .media-source-modal-dialog { width: min(960px, 100%); max-height: 92vh; background: #111; color: #fff; }
     .media-source-modal-dialog .modal-footer { background: linear-gradient(180deg, rgba(17,17,17,0), #111 24px); }
     .media-source-preview { min-height: 220px; max-height: calc(92vh - 120px); overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 4px; }
@@ -420,6 +431,8 @@
     .group-config-head, .group-config-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(70px, .65fr) minmax(86px, .8fr) minmax(120px, 1.1fr); align-items: center; gap: 10px; }
     .group-config-head { min-height: 36px; padding: 0 10px; background: #f4f6fa; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
     .group-config-row { min-height: 58px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+    .group-config-fixed-panel { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(70px, .25fr) minmax(0, 1fr); align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel-soft); }
+    .group-config-fixed-panel > strong { color: var(--text-secondary); font-size: 12px; }
     .group-config-identity { display: grid; gap: 2px; min-width: 0; }
     .group-config-identity strong, .group-config-identity span, .group-config-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .group-config-identity strong { font-size: 12px; font-weight: 700; }

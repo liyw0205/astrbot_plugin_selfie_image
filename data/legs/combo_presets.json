@@ -4,128 +4,250 @@
     {
       "id": "combo_01",
       "title": "座沿并膝悬腿斜俯",
-      "aliases": ["座沿并膝悬腿", "并膝悬腿斜俯"],
+      "aliases": [
+        "座沿并膝悬腿",
+        "并膝悬腿斜俯"
+      ],
       "pose": "edge_knees_together_dangle",
       "view": "third_seated_oblique_down",
       "crop_mode": "shoulder_crop",
       "face_mode": "none",
       "category": "thigh_high",
       "wear": "黑丝",
-      "accessory_ids": ["garter_over_thighhigh"],
+      "accessory_ids": [
+        "thigh_black_lace_bow_bell"
+      ],
       "support": "raised_edge",
-      "angle": {"yaw": 45, "pitch": 35, "camera_height": "above_shoulder", "horizontal_position": "front_right"},
-      "weight": 1,
-      "risk": "low"
-    },
-    {
-      "id": "combo_02",
-      "title": "椅上平行腿半脸平视",
-      "aliases": ["椅上并膝平视", "平行腿半脸"],
-      "pose": "chair_parallel_legs_slant",
-      "view": "third_oblique_level",
-      "crop_mode": "half_face",
-      "face_mode": "half",
-      "category": "thigh_high",
-      "wear": "黑丝",
-      "accessory_ids": ["sock_top_bow"],
-      "support": "chair_seat",
-      "angle": {"yaw": 45, "pitch": 0, "camera_height": "eye_level", "horizontal_position": "front_right"},
+      "angle": {
+        "yaw": 45,
+        "pitch": 35,
+        "camera_height": "above_shoulder",
+        "horizontal_position": "front_right"
+      },
       "weight": 1,
       "risk": "low"
     },
     {
       "id": "combo_03",
       "title": "站姿重心侧移完整露脸",
-      "aliases": ["站姿完整露脸", "站姿光腿脚链"],
+      "aliases": [
+        "站姿完整露脸",
+        "站姿光腿蝙蝠翼腿环"
+      ],
       "pose": "standing_weight_shift",
       "view": "third_standing_front_low",
       "crop_mode": "full_face",
       "face_mode": "full",
       "category": "bare_legs",
       "wear": "光腿",
-      "accessory_ids": ["bare_anklet"],
+      "accessory_ids": [
+        "thigh_cat_bat_paw"
+      ],
       "support": "standing_edge",
-      "angle": {"yaw": 0, "pitch": -15, "camera_height": "below_waist", "horizontal_position": "front"},
+      "angle": {
+        "yaw": 0,
+        "pitch": -15,
+        "camera_height": "below_waist",
+        "horizontal_position": "front"
+      },
       "weight": 1,
       "risk": "low"
     },
     {
       "id": "combo_04",
       "title": "仰卧双腿自然舒展侧拍",
-      "aliases": ["仰卧平行腿侧拍", "仰卧光腿侧拍"],
+      "aliases": [
+        "仰卧平行腿侧拍",
+        "仰卧光腿侧拍"
+      ],
       "pose": "supine_parallel_extended",
       "view": "third_lying_side_level",
       "crop_mode": "leg_full",
       "face_mode": "none",
       "category": "bare_legs",
       "wear": "光腿",
-      "accessory_ids": ["bare_thigh_chain"],
+      "accessory_ids": [
+        "thigh_leather_double_drape_chain"
+      ],
       "support": "lying_surface",
-      "angle": {"yaw": 90, "pitch": 0, "camera_height": "eye_level", "horizontal_position": "side"},
+      "angle": {
+        "yaw": 90,
+        "pitch": 0,
+        "camera_height": "eye_level",
+        "horizontal_position": "side"
+      },
       "weight": 1,
       "risk": "low"
     },
     {
       "id": "combo_05",
       "title": "坐姿错膝半脸平视",
-      "aliases": ["坐姿双膝错位平视", "错膝半脸"],
+      "aliases": [
+        "坐姿双膝错位平视",
+        "错膝半脸"
+      ],
       "pose": "seated_knees_offset",
       "view": "third_oblique_level",
       "crop_mode": "half_face",
       "face_mode": "half",
       "category": "thigh_high",
       "wear": "黑丝",
-      "accessory_ids": ["sock_top_bow"],
+      "accessory_ids": [
+        "thigh_white_cat_bow_cross"
+      ],
       "support": "chair_seat",
-      "angle": {"yaw": 45, "pitch": 0, "camera_height": "eye_level", "horizontal_position": "front_right"},
+      "angle": {
+        "yaw": 45,
+        "pitch": 0,
+        "camera_height": "eye_level",
+        "horizontal_position": "front_right"
+      },
       "weight": 1,
       "risk": "low"
     },
     {
       "id": "combo_06",
-      "title": "单膝跪姿斜俯",
-      "aliases": ["单膝跪斜俯", "跪姿过膝袜斜俯"],
+      "title": "单膝跪姿踝袜斜俯",
+      "aliases": [
+        "单膝跪斜俯",
+        "跪姿黑色踝袜斜俯"
+      ],
       "pose": "kneeling_single_knee_grounded",
       "view": "third_kneeling_oblique_down",
       "crop_mode": "shoulder_crop",
       "face_mode": "none",
-      "category": "thigh_high",
-      "wear": "黑丝",
-      "accessory_ids": ["garter_over_thighhigh"],
-      "support": "flat_ground",
-      "angle": {"yaw": 45, "pitch": 30, "camera_height": "above_waist", "horizontal_position": "front_right"},
-      "weight": 1,
-      "risk": "low"
-    },
-    {
-      "id": "combo_07",
-      "title": "椅凳支撑低机位",
-      "aliases": ["单脚搭凳低机位", "椅凳轻仰拍"],
-      "pose": "chair_one_foot_on_stool",
-      "view": "third_front_low",
-      "crop_mode": "leg_full",
-      "face_mode": "none",
-      "category": "opaque",
+      "category": "ankle_sock",
       "wear": "黑丝",
       "accessory_ids": [],
-      "support": "chair_footstool",
-      "angle": {"yaw": 0, "pitch": -15, "camera_height": "below_waist", "horizontal_position": "front"},
+      "support": "flat_ground",
+      "angle": {
+        "yaw": 45,
+        "pitch": 30,
+        "camera_height": "above_waist",
+        "horizontal_position": "front_right"
+      },
       "weight": 1,
       "risk": "low"
     },
     {
       "id": "combo_08",
       "title": "座沿侧坐并膝斜俯",
-      "aliases": ["座沿侧坐斜俯", "并膝侧坐高机位"],
+      "aliases": [
+        "座沿侧坐斜俯",
+        "并膝侧坐高机位"
+      ],
       "pose": "sofa_side_sit_knees_together",
       "view": "third_seated_oblique_down",
       "crop_mode": "shoulder_crop",
       "face_mode": "none",
       "category": "thigh_high",
       "wear": "黑丝",
-      "accessory_ids": ["sock_top_bow"],
+      "accessory_ids": [
+        "thigh_red_ribbon_lace_bell"
+      ],
       "support": "seat_edge",
-      "angle": {"yaw": 45, "pitch": 35, "camera_height": "above_shoulder", "horizontal_position": "front_right"},
+      "angle": {
+        "yaw": 45,
+        "pitch": 35,
+        "camera_height": "above_shoulder",
+        "horizontal_position": "front_right"
+      },
+      "weight": 1,
+      "risk": "low"
+    },
+    {
+      "id": "combo_09",
+      "title": "第一人称坐姿并膝斜俯",
+      "aliases": [
+        "第一人称坐姿并膝俯拍",
+        "自拍并膝俯拍"
+      ],
+      "pose": "chair_self_parallel_knees_offset",
+      "view": "self_left_down",
+      "crop_mode": "leg_full",
+      "face_mode": "none",
+      "category": "bare_legs",
+      "wear": "光腿",
+      "accessory_ids": [],
+      "support": "chair_seat",
+      "angle": {
+        "yaw": -45,
+        "pitch": 35,
+        "camera_height": "upper_body",
+        "horizontal_position": "left"
+      },
+      "weight": 1,
+      "risk": "low"
+    },
+    {
+      "id": "combo_10",
+      "title": "第一人称跪坐自然俯拍",
+      "aliases": [
+        "第一人称跪坐姿俯拍",
+        "自拍跪坐俯拍"
+      ],
+      "pose": "kneeling_sit_back",
+      "view": "self_forward_down",
+      "crop_mode": "shoulder_crop",
+      "face_mode": "none",
+      "category": "bare_legs",
+      "wear": "光腿",
+      "accessory_ids": [],
+      "support": "flat_ground",
+      "angle": {
+        "yaw": 0,
+        "pitch": 35,
+        "camera_height": "upper_body",
+        "horizontal_position": "front"
+      },
+      "weight": 1,
+      "risk": "low"
+    },
+    {
+      "id": "combo_11",
+      "title": "第一人称仰躺腿线",
+      "aliases": [
+        "第一人称仰躺腿线",
+        "自拍仰躺伸腿"
+      ],
+      "pose": "supine_parallel_extended",
+      "view": "self_right_down",
+      "crop_mode": "leg_full",
+      "face_mode": "none",
+      "category": "opaque",
+      "wear": "黑丝",
+      "accessory_ids": [],
+      "support": "lying_surface",
+      "angle": {
+        "yaw": 45,
+        "pitch": 35,
+        "camera_height": "upper_body",
+        "horizontal_position": "right"
+      },
+      "weight": 1,
+      "risk": "low"
+    },
+    {
+      "id": "combo_12",
+      "title": "第一人称落地镜自拍",
+      "aliases": [
+        "第一人称落地镜自拍",
+        "自拍落地镜"
+      ],
+      "pose": "mirror_side_sit_shins_overlap",
+      "view": "self_mirror_left_gentle_down",
+      "crop_mode": "leg_full",
+      "face_mode": "none",
+      "category": "bare_legs",
+      "wear": "光腿",
+      "accessory_ids": [],
+      "support": "wide_surface",
+      "angle": {
+        "yaw": -45,
+        "pitch": 15,
+        "camera_height": "above_shoulder",
+        "horizontal_position": "left"
+      },
       "weight": 1,
       "risk": "low"
     }

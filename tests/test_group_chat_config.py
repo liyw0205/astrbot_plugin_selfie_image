@@ -21,6 +21,7 @@ def test_group_chat_config_normalizes_supported_values():
         "group_chat_configs": {
             "123": {
                 "chat_type": "white", "model_priority_mode": "fixed", "fixed_model": "paint/m1",
+                "preview_hidden_mode": "off",
                 "model_priority": ["paint/m2", "paint/m1", "paint/m2", ""],
             },
             "not-a-group": {"chat_type": "black"},
@@ -30,8 +31,9 @@ def test_group_chat_config_normalizes_supported_values():
     assert config.group_chat_configs == {
         "123": {
             "chat_type": "white", "model_priority_mode": "fixed", "fixed_model": "paint/m1",
+            "preview_hidden_mode": "off",
         },
-        "456": {"chat_type": "none", "model_priority_mode": "default", "fixed_model": ""},
+        "456": {"chat_type": "none", "model_priority_mode": "default", "fixed_model": "", "preview_hidden_mode": "default"},
     }
 
 
@@ -186,10 +188,12 @@ def test_flask_group_api_reads_and_saves_group_config():
         "group_id": "12",
         "config": {
             "chat_type": "black", "model_priority_mode": "fixed", "fixed_model": "paint/m1",
+            "preview_hidden_mode": "on",
         },
     }]})
     assert response.status_code == 200
     assert response.get_json()["data"]["group_chat_configs"]["12"]["chat_type"] == "black"
+    assert response.get_json()["data"]["group_chat_configs"]["12"]["preview_hidden_mode"] == "on"
     assert "model_priority" not in plugin.saved["groups"][0]["config"]
 
 

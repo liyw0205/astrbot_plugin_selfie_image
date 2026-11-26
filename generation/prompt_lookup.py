@@ -68,7 +68,7 @@ def fingerprint_distance(left: Mapping[str, Any], right: Mapping[str, Any]) -> f
 
 def prompt_selection_snapshot(text: str) -> dict[str, str]:
     return dict(re.findall(
-        r"【(cos(?:_[a-z_]+)?|legs(?:_[a-z_]+)?|pose|scene|cam|frame|outfit|wear|angle|support|shot|combo|crop_mode|leg_accessory):([a-zA-Z0-9_.,=|+\-\u4e00-\u9fff]+)】",
+        r"【(cos(?:_[a-z_]+)?|legs?(?:_[a-z_]+)?|pose|scene|cam|frame|outfit|wear|angle|support|shot|combo|crop_mode|face_mode):([a-zA-Z0-9_.,=|+\-\u4e00-\u9fff]+)】",
         str(text or ""),
     ))
 
@@ -94,6 +94,23 @@ def record_final_prompt(record: Mapping[str, Any]) -> str:
         or record.get("prompt")
         or ""
     )
+
+
+def record_prompt_details(record: Mapping[str, Any]) -> tuple[str, str, dict[str, str]]:
+    request = record.get("request_data") or {}
+    if not isinstance(request, Mapping):
+        request = {}
+    original = str(record.get("original_prompt") or request.get("original_prompt") or record_final_prompt(record))
+    final = str(
+        record.get("final_prompt") or request.get("final_prompt")
+        or request.get("request_prompt_en") or request.get("request_prompt")
+        or record.get("request_prompt") or record.get("prompt") or ""
+    )
+    saved = record.get("prompt_selection")
+    selection = dict(saved) if isinstance(saved, Mapping) else {}
+    selection.update(prompt_selection_snapshot(original))
+    selection.update(prompt_selection_snapshot(final))
+    return original, final, selection
 
 
 class PromptLookupMixin:

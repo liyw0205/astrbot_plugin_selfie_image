@@ -33,6 +33,9 @@ class NaiCommandMixin:
         return str(value or "")
 
     async def _handle_nai_command(self, event, fallback: str, *, v5_only: bool = False):
+        if not self._is_whitelisted(event):
+            yield event.plain_result("仅白名单用户可以使用 /nai 和 /nai5。")
+            return
         self._claim_media_command_event(event)
         command = "nai5" if v5_only else "nai"
         message = extract_command_message(event, (command, command.upper()), fallback, include_quote_text=True)

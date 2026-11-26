@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import random
+import logging
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -11,6 +12,8 @@ from ..core.providers import ImageReference
 from ..core.utils import event_user_id
 from ..cos.cos_looks import keep_cos_outfit_requested
 from ..cos.leg_focus import (
+    LegFocusDataError,
+    LEGFOCUS_POSE_BY_ID,
     has_leg_focus_contract,
     parse_requested_leg_camera,
     parse_requested_leg_crop_mode,
@@ -24,9 +27,10 @@ from ..prompts.prompt_templates import has_viewpoint_change_request
 LEGWEAR_RANDOM_CATEGORIES = (
     "sheer", "opaque", "fishnet", "knee_high", "ankle_sock", "thigh_high",
 )
+logger = logging.getLogger(__name__)
 
 
-def _plan_legwear_categories(total: int) -> List[str]:
+def _plan_legwear_categories(total: int, categories=LEGWEAR_RANDOM_CATEGORIES) -> List[str]:
     """Keep hosiery at or below half of a batch and interleave bare-leg shots."""
     count = max(0, int(total))
     if count < 2:
@@ -35,8 +39,10 @@ def _plan_legwear_categories(total: int) -> List[str]:
     bare_count = count - hosiery_count
     hosiery = []
     for _ in range(hosiery_count):
-        choices = [category for category in LEGWEAR_RANDOM_CATEGORIES
+        choices = [category for category in categories
                    if not hosiery or category != hosiery[-1]]
+        if not choices:
+            choices = list(categories)
         hosiery.append(random.choice(choices))
     planned = []
     for category in hosiery:
@@ -68,6 +74,7 @@ class SelfieBatchWorkflow:
         reference_selection: Optional[Mapping[str, Any]] = None,
         model_request: str = "",
         original_prompt: str = "",
+        suppress_cos_pose: bool = False,
     ) -> None:
         self.plugin = plugin
         self.task_id = task_id
@@ -86,6 +93,7 @@ class SelfieBatchWorkflow:
         self.reference_selection = reference_selection
         self.model_request = model_request
         self.original_prompt = original_prompt or action
+        self.suppress_cos_pose = bool(suppress_cos_pose)
 
     async def run(self) -> Dict[str, Any]:
         self._prepare_rebuild()
@@ -132,6 +140,7 @@ class SelfieBatchWorkflow:
         self.current_legwear_category = ""
         self.force_leg_pose = ""
         self.force_leg_camera = ""
+        self.leg_camera_plan: List[str] = []
         self.force_leg_crop_mode = ""
         self.keep_cos_outfit = False
         if not self.rebuild_each:
@@ -153,8 +162,17 @@ class SelfieBatchWorkflow:
             self.force_leg_pose = parse_requested_leg_pose(self.extra_keep)
             self.force_leg_camera = parse_requested_leg_camera(self.extra_keep)
             self.force_leg_crop_mode = parse_requested_leg_crop_mode(self.extra_keep)
+            if source == "command-look-legs" and not self.extra_keep and not self.force_leg_camera and self.total > 1:
+                selfie_count = min(self.total, max(1, (self.total + 3) // 4))
+                self.leg_camera_plan = ["selfie"] * selfie_count + ["third"] * (self.total - selfie_count)
+                random.shuffle(self.leg_camera_plan)
             if not self.force_legwear and self.total > 1:
-                self.legwear_categories = _plan_legwear_categories(self.total)
+                requested_kneeling = bool(
+                    (self.force_leg_pose and LEGFOCUS_POSE_BY_ID[self.force_leg_pose]["posture"] == "kneeling")
+                    or re.search(r"跪姿|跪坐|跪着|跪立", self.extra_keep)
+                )
+                categories = ("ankle_sock",) if requested_kneeling else LEGWEAR_RANDOM_CATEGORIES
+                self.legwear_categories = _plan_legwear_categories(self.total, categories)
         pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
         if pose:
             self.last_pose = str(pose.group(1) or "")
@@ -186,7 +204,7 @@ class SelfieBatchWorkflow:
                     if self.rebuild_special_preset_variants and index < len(self.rebuild_special_preset_variants)
                     else self.extra_keep
                 )
-                round_action = self._rebuild_action(variant_extra)
+                round_action = self._rebuild_action(variant_extra, index)
             leg_combo = re.search(r"【combo:(combo_[0-9]{2})】", round_action)
             if leg_combo:
                 self.used_leg_combos.add(leg_combo.group(1))
@@ -197,10 +215,23 @@ class SelfieBatchWorkflow:
             leg_detail = re.search(r"【pose_detail:([a-z_]+)】", round_action)
             if leg_pose and leg_detail:
                 self.used_leg_details.add((leg_pose.group(1), leg_detail.group(1)))
+            if self.source == "command-look-legs":
+                camera = re.search(r"【cam:(selfie|third)】", round_action)
+                pose = re.search(r"【pose:([a-z_]+)】", round_action)
+                view = re.search(r"【leg_view:([a-z_]+)】", round_action)
+                combo = re.search(r"【combo:(combo_[0-9]{2})】", round_action)
+                logger.info(
+                    "[SelfieImage] leg shot plan %s/%s cam=%s pose=%s view=%s combo=%s",
+                    index + 1, self.total,
+                    camera.group(1) if camera else "unknown",
+                    pose.group(1) if pose else "unknown",
+                    view.group(1) if view else "unknown",
+                    combo.group(1) if combo else "none",
+                )
             actions.append(round_action)
         return actions
 
-    def _rebuild_action(self, variant_extra: str) -> str:
+    def _rebuild_action(self, variant_extra: str, index: int) -> str:
         plugin, action, source = self.plugin, self.action, self.source
         if source == "command-group-selfie" or (
             plugin._looks_like_group_selfie_intent(action) and not plugin._is_cos_action(action)
@@ -215,20 +246,35 @@ class SelfieBatchWorkflow:
             prefer_combo = source == "command-look-legs" and not variant_extra.strip() and (
                 len(self.used_leg_combos) < (self.total * 3 + 9) // 10
             )
-            round_action = plugin._build_leg_focus_action(
-                variant_extra,
-                bool(self.extra_refs),
+            planned_camera = self.leg_camera_plan[index] if index < len(self.leg_camera_plan) else ""
+            leg_action_options = dict(
                 avoid_pose=self.last_pose,
                 force_legwear=self.force_legwear,
                 force_legwear_category="" if prefer_combo else self.current_legwear_category,
                 force_pose=self.force_leg_pose,
-                force_camera=self.force_leg_camera,
+                force_camera=self.force_leg_camera or planned_camera,
                 force_crop_mode=self.force_leg_crop_mode,
                 avoid_combinations=self.used_leg_combinations,
                 avoid_pose_details=self.used_leg_details,
                 avoid_combos=self.used_leg_combos,
                 prefer_combo=prefer_combo,
             )
+            try:
+                round_action = plugin._build_leg_focus_action(
+                    variant_extra, bool(self.extra_refs), **leg_action_options,
+                )
+            except LegFocusDataError:
+                if not leg_action_options["force_legwear_category"] or self.force_legwear:
+                    raise
+                # Random batch hosiery must not make an otherwise valid pose fail.
+                logger.debug(
+                    "leg batch category %s is incompatible; retrying bare legs",
+                    leg_action_options["force_legwear_category"],
+                )
+                leg_action_options["force_legwear_category"] = "bare_legs"
+                round_action = plugin._build_leg_focus_action(
+                    variant_extra, bool(self.extra_refs), **leg_action_options,
+                )
             pose = re.search(r"【pose:([a-z_]+)】", round_action)
             if pose:
                 self.last_pose = str(pose.group(1) or self.last_pose)
@@ -246,7 +292,7 @@ class SelfieBatchWorkflow:
                 avoid_cameras=self.used_cos_cameras,
                 match_query=self.rebuild_match_query or self.extra_keep,
                 force_id=self.last_cos if self.keep_cos_outfit else "",
-                force_multi_view_collage="【cos_view:multi_view_collage】" in str(action or ""),
+                suppress_cos_pose=self.suppress_cos_pose,
             )
             self._remember_cos_action(round_action)
         elif source == "command-look-you" or "看看你模式" in str(action or ""):
@@ -305,11 +351,16 @@ class SelfieBatchWorkflow:
             "requested_model": str(self.model_request or "").strip(),
         }
         route_context_builder = getattr(plugin, "_model_request_record_context", None)
+        is_llm_source = str(self.source or "").startswith("llm-")
+        llm_target_resolver = getattr(plugin, "_resolve_llm_generation_targets", None)
+        filtered_llm_targets = is_llm_source and callable(llm_target_resolver) and hasattr(plugin, "config")
         target_pool = (
             plugin._resolve_generation_targets(self.event)
-            if str(self.model_request or "").strip()
+            if str(self.model_request or "").strip() or filtered_llm_targets
             else []
         )
+        if filtered_llm_targets:
+            target_pool = llm_target_resolver(self.event, target_pool)
         routed_targets, _, _ = plugin._resolve_model_request_targets(
             target_pool, self.model_request
         )
@@ -329,11 +380,11 @@ class SelfieBatchWorkflow:
             self.aspect,
             self.resolution,
             refs,
-            targets=routed_targets if str(self.model_request or "").strip() else None,
+            targets=routed_targets if str(self.model_request or "").strip() or filtered_llm_targets else None,
             source=self.source,
             audit_user_id=event_user_id(self.event),
             event=self.event,
-            original_prompt=self.original_prompt,
+            original_prompt=action if self.rebuild_each else self.original_prompt,
             prompt_en_meta=prompt_en_meta,
             record_context={
                 "task_id": self.task_id,

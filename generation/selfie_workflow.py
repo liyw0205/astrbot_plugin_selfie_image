@@ -19,6 +19,7 @@ from ..features.reference_collector import (
     select_group_references,
     select_wardrobe_selfie_references,
 )
+from ..studio.studio import prompt_preset_group
 
 
 class SelfieWorkflowService:
@@ -167,6 +168,7 @@ class SelfieWorkflowService:
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
+        suppress_cos_pose: bool = False,
         filter_at_avatars: bool = True,
     ) -> AsyncGenerator[Any, None]:
         plugin = self.plugin
@@ -245,6 +247,7 @@ class SelfieWorkflowService:
                 rebuild_extra_request=rebuild_extra_request,
                 rebuild_match_query=rebuild_match_query,
                 rebuild_special_preset_variants=rebuild_special_preset_variants,
+                suppress_cos_pose=suppress_cos_pose,
                 cos_selection=selection,
                 reference_selection=selection.summary() if selection else None,
             )
@@ -374,7 +377,13 @@ class SelfieWorkflowService:
                 plugin._expand_cos_user_text_with_preset(raw_extra)
             )
         has_refs = bool(self.extract_image_sources(event))
-        fallback = plugin._build_cos_look_action(expanded_extra, has_refs, match_query=raw_extra)
+        suppress_cos_pose = (
+            preset_name == "动作预设" or prompt_preset_group(preset_name) == "action"
+        )
+        fallback = plugin._build_cos_look_action(
+            expanded_extra, has_refs, match_query=raw_extra,
+            suppress_cos_pose=suppress_cos_pose,
+        )
         async for item in plugin._handle_selfie_command(
             event=event,
             command_name="看看COS",
@@ -393,6 +402,7 @@ class SelfieWorkflowService:
             rebuild_extra_request=expanded_extra,
             rebuild_match_query=raw_extra,
             rebuild_special_preset_variants=special_preset_variants,
+            suppress_cos_pose=suppress_cos_pose,
         ):
             yield item
 

@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "random_leg_details": [
+    {
+      "id": "black_tights",
+      "title": "黑色薄透袜装",
+      "wear": "黑丝",
+      "category": "sheer",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的黑色薄透袜装类别，具体长度、密度和纹理按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "white_tights",
+      "title": "白色薄透袜装",
+      "wear": "白丝",
+      "category": "sheer",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的白色薄透袜装类别，具体长度、密度和纹理按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "black_opaque",
+      "title": "黑色不透袜装",
+      "wear": "黑丝",
+      "category": "opaque",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的黑色不透袜装类别，具体长度和纹理按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "white_opaque",
+      "title": "白色不透袜装",
+      "wear": "白丝",
+      "category": "opaque",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的白色不透袜装类别，具体长度和纹理按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "black_fishnet",
+      "title": "黑色网袜",
+      "wear": "黑丝",
+      "category": "fishnet",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的黑色细网袜类别，网孔大小和覆盖范围按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "white_fishnet",
+      "title": "白色网袜",
+      "wear": "白丝",
+      "category": "fishnet",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的白色细网袜类别，网孔大小和覆盖范围按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "black_knee_high",
+      "title": "黑色膝下袜",
+      "wear": "黑丝",
+      "category": "knee_high",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的黑色膝下袜类别，袜口位置和长度按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "white_knee_high",
+      "title": "白色膝下袜",
+      "wear": "白丝",
+      "category": "knee_high",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的白色膝下袜类别，袜口位置和长度按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "black_ankle_sock",
+      "title": "黑色踝袜",
+      "wear": "黑丝",
+      "category": "ankle_sock",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的黑色踝袜类别，袜口停留在脚踝附近。",
+      "weight": 1
+    },
+    {
+      "id": "white_ankle_sock",
+      "title": "白色踝袜",
+      "wear": "白丝",
+      "category": "ankle_sock",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的白色踝袜类别，袜口停留在脚踝附近。",
+      "weight": 1
+    },
+    {
+      "id": "black_thigh_high",
+      "title": "黑色过膝袜",
+      "wear": "黑丝",
+      "category": "thigh_high",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的黑色过膝袜类别，袜口位置按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "white_thigh_high",
+      "title": "白色过膝袜",
+      "wear": "白丝",
+      "category": "thigh_high",
+      "risk": "normal",
+      "category_weight": 1,
+      "prompt": "腿部采用本次锁定的白色过膝袜类别，袜口位置按对应袜装款式执行。",
+      "weight": 1
+    },
+    {
+      "id": "bare_legs",
+      "title": "自然光腿",
+      "wear": "光腿",
+      "category": "bare_legs",
+      "risk": "normal",
+      "category_weight": 6,
+      "prompt": "人物腿部呈现自然裸露皮肤，肤色与本人一致，保留皮肤纹理与自然明暗；简洁鞋履按当前服饰与姿势自然保留，脚部不是画面主体。",
+      "weight": 2
+    },
+    {
+      "id": "barefoot",
+      "title": "室内赤足",
+      "wear": "赤足",
+      "category": "bare_legs",
+      "risk": "high",
+      "category_weight": 6,
+      "explicit_only": true,
+      "prompt": "腿部保持自然肤色，双脚自然赤足，不添加袜装或鞋履；脚趾数量正确、自然并拢或轻微分开，不夸张伸展、不贴近镜头、不把脚趾作为主体，脚掌、脚跟、踝部与小腿比例连续。",
+      "weight": 1
+    }
+  ]
+}

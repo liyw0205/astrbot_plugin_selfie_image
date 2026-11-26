@@ -639,6 +639,7 @@
       }
       ch = normalizeChannel(ch);
       $('manualFillNai').style.display = EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none';
+      $('modalNaiSettings').style.display = EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none';
       const enabled = ch.enabled_models || [];
       const search = $('cacheSearch').value.trim().toLowerCase();
       const cacheItems = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
@@ -934,8 +935,6 @@
       };
       prunePriorityList('image', labels);
       prunePriorityList('audit', audits);
-      preserveSelection('priorityPicker', labels, labels[0] || '');
-      preserveSelection('auditPriorityPicker', audits, audits[0] || '');
       const auditLabels = [''].concat(audits);
       preserveSelection('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       preserveSelection('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
@@ -1075,3 +1074,4 @@
     let QQ_GROUP_MODAL = null;
     const QQ_GROUP_CHAT_TYPES = [['none', '无', '不额外限制群聊'], ['black', '黑', '禁止此群使用生图'], ['white', '白', '允许此群使用生图']];
     const QQ_GROUP_MODEL_MODES = [['default', '默认', '跟随全局默认调用模式'], ['sequence', '顺序', '按全局模型优先级顺序尝试'], ['random', '随机', '按全局模型优先级随机选择'], ['fixed', '固定', '固定使用指定模型']];
+    const QQ_GROUP_PREVIEW_MODES = [['default', '默认', '跟随全局“启用预览隐藏”设置'], ['on', '开启', '此群开启预览隐藏，覆盖全局设置'], ['off', '关闭', '此群关闭预览隐藏，覆盖全局设置']];

@@ -50,14 +50,32 @@ APPROVED_RUNTIME_ADDITIONS = frozenset({
     "features/identity_pool.py",
     "data/persona/builtin_personas.json",
     "data/legs/combo_presets.json",
+    "data/legs/capture_profiles.json",
+    "data/legs/capture_styles.json",
+    "data/legs/hosiery_styles.json",
+    "data/legs/leg_accessories.json",
+    "data/legs/poses.json",
+    "data/legs/prompt_rules.json",
+    "data/legs/random_leg_details.json",
+    "data/legs/scene_states.json",
+    "data/legs/scenes.json",
+    "data/legs/preserve_prompts.json",
+    "data/legs/pool_reference_prompts.json",
+    "data/legs/wear_prompts.json",
+    "data/legs/wear_labels.json",
 })
 REQUIRED_FILES = frozenset({
     "__init__.py", "main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt",
     "README.md", "CHANGELOG.md", "logo.png",
     "webui/index_fallback.py", "core/constants.py", "data/cos/looks/index.json",
     "data/common/selfie_snapshots.json", "data/group/compositions.json",
-    "data/legs/compositions.json", "data/legs/outfits.json", "data/legs/views.json",
-    "data/legs/combo_presets.json",
+    "data/legs/prompt_rules.json", "data/legs/poses.json", "data/legs/scenes.json",
+    "data/legs/scene_states.json", "data/legs/capture_styles.json", "data/legs/views.json",
+    "data/legs/outfits.json", "data/legs/capture_profiles.json",
+    "data/legs/preserve_prompts.json", "data/legs/pool_reference_prompts.json",
+    "data/legs/wear_prompts.json", "data/legs/wear_labels.json",
+    "data/legs/hosiery_styles.json", "data/legs/leg_accessories.json",
+    "data/legs/random_leg_details.json", "data/legs/combo_presets.json",
     "data/nai/artist_presets.json", "data/nai/reference.json", "data/schedule/prompt_pools.json",
     "data/studio/builtin_prompts.json",
     "features/identity_pool.py", "data/persona/builtin_personas.json",
@@ -107,7 +125,7 @@ def source_file(root: Path, name: str) -> Path:
 def release_files(root: Path = ROOT, *, tracked: Iterable[str] | None = None) -> list[str]:
     candidates = set(git_files(root) if tracked is None else tracked)
     candidates.update(name for name in APPROVED_RUNTIME_ADDITIONS if (root / name).is_file())
-    selected = sorted(name for name in candidates if runtime_path(name))
+    selected = sorted(name for name in candidates if runtime_path(name) and (root / name).is_file())
     missing = REQUIRED_FILES.difference(selected)
     if missing:
         raise ReleaseCheckError(f"required release files are missing: {', '.join(sorted(missing))}")
@@ -179,6 +197,14 @@ def _rows(value: Any, label: str, fields: tuple[str, ...] = ("id", "title", "pro
             raise ReleaseCheckError(f"{row_label}: duplicate {fields[0]} {identity}")
         seen.add(identity)
     return rows
+
+
+def _fields(data: dict[str, Any], name: str, fields: set[str]) -> None:
+    expected = fields | {"version"}
+    if set(data) != expected:
+        missing = sorted(expected.difference(data))
+        extra = sorted(set(data).difference(expected))
+        raise ReleaseCheckError(f"{name}: category fields mismatch (missing={missing}, extra={extra})")
 
 
 def _version(data: dict[str, Any], key: str, name: str) -> None:
@@ -258,19 +284,71 @@ def validate_json_contract(name: str, data: Any) -> None:
                 if "global" in row and not isinstance(row["global"], bool):
                     raise ReleaseCheckError(f"{name}.{row['id']}.global: expected bool")
     elif name == "data/legs/views.json":
+        _fields(data, name, {"views"})
         _rows(data.get("views"), f"{name}.views", ("id", "title", "prompt", "camera", "direction", "elevation"))
-    elif name == "data/legs/compositions.json":
-        for field in ("framing", "anatomy_rule", "full_framing", "scene_rule"):
+    elif name == "data/legs/prompt_rules.json":
+        _fields(data, name, {
+            "proportion_guard", "framing", "anatomy_rule", "hosiery_rule", "camera_framings",
+            "full_framing", "crop_modes", "reference_rules", "scene_rule", "appearance_prompts",
+        })
+        for field in ("framing", "anatomy_rule", "hosiery_rule", "full_framing", "scene_rule"):
             _text(data.get(field), f"{name}.{field}")
-        for field in ("camera_framings", "reference_rules", "appearance_prompts"):
+        for field in ("camera_framings", "crop_modes", "reference_rules", "appearance_prompts"):
             _object(data.get(field), f"{name}.{field}")
-        for field in ("poses", "scenes"):
-            _rows(data.get(field), f"{name}.{field}")
+        if type(data.get("proportion_guard")) is not bool:
+            raise ReleaseCheckError(f"{name}.proportion_guard: expected bool")
+    elif name == "data/legs/poses.json":
+        _fields(data, name, {"poses"})
+        _rows(data.get("poses"), f"{name}.poses")
+    elif name == "data/legs/scenes.json":
+        _fields(data, name, {"scenes"})
+        _rows(data.get("scenes"), f"{name}.scenes")
+    elif name == "data/legs/scene_states.json":
+        _fields(data, name, {"scene_state_probability", "scene_states"})
+        if type(data.get("scene_state_probability")) not in (int, float) or not 0 <= data["scene_state_probability"] <= 1:
+            raise ReleaseCheckError(f"{name}.scene_state_probability: expected number from 0 to 1")
+        _rows(data.get("scene_states"), f"{name}.scene_states")
+    elif name == "data/legs/capture_styles.json":
+        _fields(data, name, {"capture_styles"})
+        _rows(data.get("capture_styles"), f"{name}.capture_styles")
     elif name == "data/legs/outfits.json":
-        for field in ("preserve_prompts", "pool_reference_prompts", "wear_prompts", "wear_labels", "capture_profiles"):
-            _object(data.get(field), f"{name}.{field}")
-        for field in ("random_leg_details", "outfits", "hosiery_styles"):
-            _rows(data.get(field), f"{name}.{field}")
+        _fields(data, name, {"outfits"})
+        _rows(data.get("outfits"), f"{name}.outfits")
+    elif name == "data/legs/capture_profiles.json":
+        _fields(data, name, {"capture_profiles"})
+        profiles = _object(data.get("capture_profiles"), f"{name}.capture_profiles")
+        for profile_id, profile in profiles.items():
+            _object(profile, f"{name}.capture_profiles.{profile_id}")
+            _text(profile.get("coverage_prompt"), f"{name}.capture_profiles.{profile_id}.coverage_prompt")
+    elif name == "data/legs/preserve_prompts.json":
+        _fields(data, name, {"preserve_prompts"})
+        for key, value in _object(data.get("preserve_prompts"), f"{name}.preserve_prompts").items():
+            _text(value, f"{name}.preserve_prompts.{key}")
+    elif name == "data/legs/pool_reference_prompts.json":
+        _fields(data, name, {"pool_reference_prompts"})
+        values = _object(data.get("pool_reference_prompts"), f"{name}.pool_reference_prompts")
+        for locale in ("zh", "en"):
+            _text(values.get(locale), f"{name}.pool_reference_prompts.{locale}")
+    elif name == "data/legs/wear_prompts.json":
+        _fields(data, name, {"wear_prompts"})
+        for key, value in _object(data.get("wear_prompts"), f"{name}.wear_prompts").items():
+            _text(value, f"{name}.wear_prompts.{key}")
+    elif name == "data/legs/wear_labels.json":
+        _fields(data, name, {"wear_labels"})
+        for key, value in _object(data.get("wear_labels"), f"{name}.wear_labels").items():
+            _text(value, f"{name}.wear_labels.{key}")
+    elif name == "data/legs/hosiery_styles.json":
+        _fields(data, name, {"hosiery_styles"})
+        _rows(data.get("hosiery_styles"), f"{name}.hosiery_styles")
+    elif name == "data/legs/leg_accessories.json":
+        _fields(data, name, {"leg_accessories"})
+        _rows(data.get("leg_accessories"), f"{name}.leg_accessories")
+    elif name == "data/legs/random_leg_details.json":
+        _fields(data, name, {"random_leg_details"})
+        _rows(data.get("random_leg_details"), f"{name}.random_leg_details")
+    elif name == "data/legs/combo_presets.json":
+        _fields(data, name, {"combos"})
+        _rows(data.get("combos"), f"{name}.combos", ("id", "title"))
     elif name == "data/nai/artist_presets.json":
         for field in ("default_artist", "quality_prompt", "translation_template"):
             _text(data.get(field), f"{name}.{field}")
@@ -318,8 +396,9 @@ def _invalid_constant(value: str) -> None:
 
 def validate_json_files(root: Path = ROOT, *, tracked: Iterable[str] | None = None) -> int:
     names = set(git_files(root) if tracked is None else tracked)
+    names.update(name for name in APPROVED_RUNTIME_ADDITIONS if (root / name).is_file())
     payloads: dict[str, Any] = {}
-    for name in sorted(item for item in names if item.endswith(".json")):
+    for name in sorted(item for item in names if item.endswith(".json") and (root / item).is_file()):
         try:
             data = json.loads((root / name).read_text(encoding="utf-8"), object_pairs_hook=_unique_keys, parse_constant=_invalid_constant)
             validate_json_contract(name, data)

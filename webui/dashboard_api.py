@@ -881,7 +881,8 @@ class SelfieImageDashboardAPI:
         )
 
     async def page_record_detail(self, record_id: str) -> Any:
-        return await self._threaded_result(lambda: self._record_controller.detail(record_id))
+        params = dict(request.query)
+        return await self._threaded_result(lambda: self._record_controller.detail(record_id, params))
 
     async def page_record_media_sources(self, record_id: str) -> Any:
         return await self._threaded_result(lambda: self._record_controller.media_sources(record_id))

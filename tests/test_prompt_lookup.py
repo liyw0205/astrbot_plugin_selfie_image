@@ -291,7 +291,7 @@ def test_onebot_get_msg_recovers_label_and_links_reply_id(plugin):
 
     results = asyncio.run(run())
     assert len(results) == 2
-    assert results[1] == "【pose:seated】【cam:third】 input"
+    assert results[1] == "final actual prompt"
     assert "引用消息" in results[0]
     assert plugin._records[0]["delivery_messages"][0]["message_id"] == "42"
 
@@ -330,7 +330,7 @@ def test_invalid_and_flat_fingerprints_cannot_auto_match(plugin):
 
 
 def test_view_by_code_sends_metadata_then_exact_final_prompt_without_llm(plugin):
-    row = commit(plugin)
+    row = commit(plugin, used_model="噜皮生图/gpt-image-2.5-flare")
     plugin._event_reference_images.side_effect = AssertionError("code lookup must not download images")
 
     async def run():
@@ -339,9 +339,30 @@ def test_view_by_code_sends_metadata_then_exact_final_prompt_without_llm(plugin)
     results = asyncio.run(run())
     assert len(results) == 2
     assert row["image_code"] in results[0]
-    assert "【pose:seated】【cam:third】 input" in results[1]
+    assert "模型：gpt-image-2.5-flare" in results[0]
+    assert "噜皮生图" not in results[0]
+    assert results[1] == "final actual prompt"
+    assert plugin._records[0]["used_model"] == "噜皮生图/gpt-image-2.5-flare"
     assert plugin._records[0]["prompt_selection"] == {"pose": "seated", "cam": "third"}
     plugin._reverse_image_prompt_with_llm.assert_not_awaited()
+
+
+@pytest.mark.parametrize("used_model,resolved_model,expected", [
+    ("channel/vendor/model", "other-model", "vendor/model"),
+    ("gpt-image-2.5-flare", "", "gpt-image-2.5-flare"),
+    ("", "vendor/model", "vendor/model"),
+    ("", "", ""),
+])
+def test_view_prompt_model_display_preserves_model_paths_and_fallback(plugin, used_model, resolved_model, expected):
+    row = commit(plugin, used_model=used_model, resolved_model=resolved_model)
+
+    async def run():
+        return [value async for value in plugin.cmd_view_prompt(Event(), row["image_code"])]
+
+    metadata, prompt = asyncio.run(run())
+    model_lines = [line for line in metadata.splitlines() if line.startswith("模型：")]
+    assert model_lines == ([f"模型：{expected}"] if expected else [])
+    assert prompt == "final actual prompt"
 
 
 def test_view_prompt_preserves_original_clothing_terms_and_route_metadata(plugin):
@@ -362,14 +383,33 @@ def test_view_prompt_preserves_original_clothing_terms_and_route_metadata(plugin
 
     results = asyncio.run(run())
     assert len(results) == 2
-    assert original in results[1]
-    assert "吊袜带" in results[1] and "高跟" in results[1]
+    assert results[1] == "actual provider prompt"
     saved = plugin._prompt_record_by_code(Event(), row["image_code"])
     assert saved["original_prompt"] == original
     assert saved["requested_model"] == "nai"
     assert saved["resolved_model"] == "nai-diffusion-4-5-full"
     assert saved["model_match_mode"] == "nai_alias"
     assert saved["final_prompt"] == "actual provider prompt"
+
+
+def test_legacy_leg_prompt_lookup_shows_only_basic_metadata_and_actual_sent_text(plugin):
+    from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
+
+    original = build_leg_focus_action("combo_06")
+    row = commit(plugin, original_prompt=original, final_prompt="actual sent prompt", used_model="test/model")
+    plugin._prompt_record_patch(row["id"], {"prompt_selection": {"pose": "obsolete"}})
+
+    async def run():
+        return [value async for value in plugin.cmd_view_prompt(Event(), row["image_code"])]
+
+    metadata, prompts = asyncio.run(run())
+    assert metadata.splitlines() == [
+        f"生图编号：{row['image_code']}", f"时间：{row['time']}",
+        "匹配方式：编号查询", "模型：model",
+    ]
+    assert prompts == "actual sent prompt"
+    assert row["original_prompt"] == original
+    plugin._reverse_image_prompt_with_llm.assert_not_awaited()
 
 
 def test_unknown_image_does_not_silently_reverse_or_use_recent(plugin):

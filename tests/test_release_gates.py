@@ -122,6 +122,29 @@ def test_json_contracts_reject_valid_json_with_missing_or_wrong_fields(name, pay
         checks.validate_json_contract(name, payload)
 
 
+@pytest.mark.parametrize("name,payload", [
+    ("data/legs/poses.json", {"version": 1, "poses": [], "scenes": []}),
+    ("data/legs/scenes.json", {"version": 1, "scenes": [], "poses": []}),
+    ("data/legs/outfits.json", {"version": 1, "outfits": [], "hosiery_styles": []}),
+    ("data/legs/prompt_rules.json", {"version": 1, "framing": "x", "scenes": []}),
+])
+def test_leg_json_contract_rejects_mixed_categories(name, payload):
+    with pytest.raises(checks.ReleaseCheckError, match="category fields mismatch"):
+        checks.validate_json_contract(name, payload)
+
+
+def test_release_manifest_adopts_split_leg_files_and_omits_deleted_legacy_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(checks, "REQUIRED_FILES", frozenset({"main.py", "data/legs/prompt_rules.json"}))
+    write(tmp_path, "main.py", "value = 1\n")
+    write(tmp_path, "data/legs/prompt_rules.json", '{"version":1}\n')
+
+    selected = checks.release_files(
+        tmp_path, tracked={"main.py", "data/legs/compositions.json"},
+    )
+    assert "data/legs/prompt_rules.json" in selected
+    assert "data/legs/compositions.json" not in selected
+
+
 def test_builtin_persona_catalog_accepts_list_and_validates_persona_fields():
     checks.validate_json_contract(
         "data/persona/builtin_personas.json",

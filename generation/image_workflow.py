@@ -260,6 +260,11 @@ async def run_image_generation_workflow(
         or "【legs:outfit】" in original_prompt
         or "下半身穿搭" in original_prompt
     )
+    if is_leg_focus_request:
+        from ..cos.leg_focus import clean_leg_focus_prompt
+
+        request_prompt = clean_leg_focus_prompt(request_prompt, original_prompt)
+        plain_request_prompt = request_prompt
     audit_prompt_text = request_prompt if is_leg_focus_request else (original_prompt or request_prompt)
     source_meta = self._source_context(event, source, audit_user_id)
     trace_id = str(record_context.get("trace_id") or "").strip() if isinstance(record_context, Mapping) else ""
@@ -711,6 +716,11 @@ async def run_image_generation_workflow(
             "response_data": response_data,
         }
 
+    if is_leg_focus_request:
+        request_prompt = clean_leg_focus_prompt(request_prompt, original_prompt)
+        request_data["request_prompt"] = request_prompt
+        if request_data.get("request_prompt_en"):
+            request_data["request_prompt_en"] = request_prompt
     request = ImageGenerateRequest(
         prompt=request_prompt,
         aspect_ratio=aspect_ratio,
@@ -759,6 +769,8 @@ async def run_image_generation_workflow(
         ) else plain_request_prompt
         if target.label in model_prompt_overrides:
             target_prompt = model_prompt_overrides[target.label]
+        if is_leg_focus_request:
+            target_prompt = clean_leg_focus_prompt(target_prompt, original_prompt)
         return ImageGenerateRequest(
             prompt=target_prompt,
             aspect_ratio=aspect_ratio,

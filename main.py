@@ -122,10 +122,12 @@ from .cos.leg_focus import (
     has_leg_focus_contract,
 )
 from .features.model_selection import (
+    NAI_LLM_REQUEST_DISALLOWED,
     NAI_MODEL_UNAVAILABLE,
     available_model_labels,
     find_model_target,
     is_nai_model_request,
+    is_nai_target,
     match_model_label,
     prioritize_model_target,
     route_model_request,
@@ -789,6 +791,7 @@ class SelfieImagePlugin(
                 "chat_type": "white" if group_id in legacy_whitelist else "none",
                 "model_priority_mode": "default",
                 "fixed_model": "",
+                "preview_hidden_mode": "default",
             }))
         payload["models"] = [target.label for target in self.config.get_enabled_image_targets()]
         payload["bot_ids"] = self._bot_account_ids()
@@ -810,6 +813,7 @@ class SelfieImagePlugin(
                 "chat_type": str(config.get("chat_type") or "none"),
                 "model_priority_mode": str(config.get("model_priority_mode") or "default"),
                 "fixed_model": str(config.get("fixed_model") or "").strip(),
+                "preview_hidden_mode": str(config.get("preview_hidden_mode") or "default"),
             }
         patch: Dict[str, Any] = {}
         if configs:
@@ -1435,7 +1439,7 @@ class SelfieImagePlugin(
         )
 
     def _tool_soft_fail(self, error: str, fallback: str = "") -> str:
-        if error == NAI_MODEL_UNAVAILABLE:
+        if error in {NAI_MODEL_UNAVAILABLE, NAI_LLM_REQUEST_DISALLOWED}:
             return f"[TOOL_FAILED] {error}\n请直接告知用户这条提示，不要改用其他模型重试。"
         return tool_soft_fail(error, fallback, self._friendly_user_error_message)
 
@@ -1642,6 +1646,7 @@ class SelfieImagePlugin(
         match_query: str = "",
         force_id: str = "",
         force_multi_view_collage: bool = False,
+        suppress_cos_pose: bool = False,
     ) -> str:
         appearance_type = _appearance_type_for_request(getattr(self, "persona", None), extra_request)
         chosen_force = force_id
@@ -1678,6 +1683,7 @@ class SelfieImagePlugin(
                 match_query="",
                 force_id="",
                 force_multi_view_collage=force_multi_view_collage,
+                suppress_cos_pose=suppress_cos_pose,
                 picker=lambda **_: dict(custom_item),
             )
         return build_cos_look_action(
@@ -1697,6 +1703,7 @@ class SelfieImagePlugin(
             match_query=match_query,
             force_id=chosen_force,
             force_multi_view_collage=force_multi_view_collage,
+            suppress_cos_pose=suppress_cos_pose,
             picker=pick_cos_look_set,
         )
 
@@ -1751,8 +1758,8 @@ class SelfieImagePlugin(
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             return self._tool_soft_fail(error)
-        if self._nai_model_unavailable(event, model_request):
-            return self._tool_soft_fail(NAI_MODEL_UNAVAILABLE)
+        if is_nai_model_request(model_request):
+            return self._tool_soft_fail(NAI_LLM_REQUEST_DISALLOWED)
 
         original_prompt = str(original_prompt or action or "")
         action = str(action or "").strip() or "看着镜头自然自拍"
@@ -2648,6 +2655,14 @@ class SelfieImagePlugin(
         )
         return prioritize_model_target(all_targets, self._get_session_model_override(event))
 
+    def _resolve_llm_generation_targets(
+        self,
+        event: Optional[AstrMessageEvent] = None,
+        targets: Optional[List[ImageModelTarget]] = None,
+    ) -> List[ImageModelTarget]:
+        pool = targets if targets is not None else self._resolve_generation_targets(event)
+        return [target for target in pool if not is_nai_target(target)]
+
     def _resolve_model_request_targets(
         self,
         targets: List[ImageModelTarget],
@@ -3304,9 +3319,10 @@ class SelfieImagePlugin(
         reference_selection: Optional[Mapping[str, Any]] = None,
         model_request: str = "",
         original_prompt: str = "",
+        suppress_cos_pose: bool = False,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
-        return await self._run_selfie_batches_unlocked(
+        arguments = (
             task_id,
             event,
             action,
@@ -3324,6 +3340,11 @@ class SelfieImagePlugin(
             model_request,
             original_prompt or action,
         )
+        if suppress_cos_pose:
+            return await self._run_selfie_batches_unlocked(
+                *arguments, suppress_cos_pose=True,
+            )
+        return await self._run_selfie_batches_unlocked(*arguments)
 
     async def _run_selfie_batches_unlocked(
         self,
@@ -3343,6 +3364,7 @@ class SelfieImagePlugin(
         reference_selection: Optional[Mapping[str, Any]] = None,
         model_request: str = "",
         original_prompt: str = "",
+        suppress_cos_pose: bool = False,
     ) -> Dict[str, Any]:
         return await SelfieBatchWorkflow(
             self,
@@ -3362,6 +3384,7 @@ class SelfieImagePlugin(
             reference_selection,
             model_request,
             original_prompt,
+            suppress_cos_pose,
         ).run()
 
     def _validate_web_test_selection(self, payload: Dict[str, Any]) -> None:
@@ -3527,14 +3550,20 @@ class SelfieImagePlugin(
             refs,
             language="en" if self.config.image_enable_image_prompt_en else "zh",
         )
-        target_pool = self._resolve_generation_targets(event) if str(model_request or "").strip() else []
+        is_llm_source = str(source or "").startswith("llm-")
+        target_pool = (
+            self._resolve_generation_targets(event)
+            if str(model_request or "").strip() or is_llm_source else []
+        )
+        if is_llm_source:
+            target_pool = self._resolve_llm_generation_targets(event, target_pool)
         routed_targets, _, _ = self._resolve_model_request_targets(target_pool, model_request)
         return await self._run_image_generation(
             final_prompt,
             aspect,
             resolution,
             refs,
-            targets=routed_targets if str(model_request or "").strip() else None,
+            targets=routed_targets if str(model_request or "").strip() or is_llm_source else None,
             source=source,
             audit_user_id=event_user_id(event),
             event=event,
@@ -3568,14 +3597,20 @@ class SelfieImagePlugin(
             )
             if prompt_en_meta.get("applied") and translated:
                 user_prompt = translated
-        target_pool = self._resolve_generation_targets(event) if str(model_request or "").strip() else []
+        is_llm_source = str(source or "").startswith("llm-")
+        target_pool = (
+            self._resolve_generation_targets(event)
+            if str(model_request or "").strip() or is_llm_source else []
+        )
+        if is_llm_source:
+            target_pool = self._resolve_llm_generation_targets(event, target_pool)
         routed_targets, _, _ = self._resolve_model_request_targets(target_pool, model_request)
         return await self._run_image_generation(
             user_prompt,
             aspect,
             resolution,
             refs,
-            targets=routed_targets if str(model_request or "").strip() else None,
+            targets=routed_targets if str(model_request or "").strip() or is_llm_source else None,
             source=source,
             audit_user_id=event_user_id(event),
             event=event,
@@ -3607,6 +3642,7 @@ class SelfieImagePlugin(
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
+        suppress_cos_pose: bool = False,
         filter_at_avatars: bool = True,
     ) -> AsyncGenerator[Any, None]:
         async for item in self._get_selfie_workflow_service().handle_command(
@@ -3629,6 +3665,7 @@ class SelfieImagePlugin(
             rebuild_extra_request=rebuild_extra_request,
             rebuild_match_query=rebuild_match_query,
             rebuild_special_preset_variants=rebuild_special_preset_variants,
+            suppress_cos_pose=suppress_cos_pose,
         ):
             yield item
 
@@ -3794,8 +3831,8 @@ class SelfieImagePlugin(
 
     @filter.command("查看提示词")
     async def cmd_view_prompt(self, event: AstrMessageEvent, code: str = "") -> AsyncGenerator[Any, None]:
-        """按编号、最近或引用一张图片查询原始提示词、实际发送提示词与模型。"""
-        from .generation.prompt_lookup import CODE_PATTERN, record_final_prompt
+        """按编号、最近或引用一张图片查询最终实际发送的提示词与模型。"""
+        from .generation.prompt_lookup import CODE_PATTERN, record_prompt_details
 
         denied = self._permission_denied_message(event)
         if denied:
@@ -3853,13 +3890,18 @@ class SelfieImagePlugin(
         if record is None:
             yield event.plain_result("未找到可访问的生图记录。可用 /查看提示词 六位编号 或 /查看提示词 最近；需要反推图片时使用 /查看生图提示词。")
             return
-        original_prompt = record_final_prompt(record)
+        _, final_prompt, _ = record_prompt_details(record)
         label = f"生图编号：{record.get('image_code', '')}\n时间：{record.get('time', '')}\n匹配方式：{method}"
-        if not original_prompt:
-            yield event.plain_result(label + "\n历史记录没有保存提示词。")
+        model_name = command_model_name(str(record.get("used_model") or "")) or str(
+            record.get("resolved_model") or ""
+        ).strip()
+        if model_name:
+            label += f"\n模型：{model_name}"
+        if not final_prompt:
+            yield event.plain_result(label + "\n历史记录没有保存最终提示词。")
             return
         yield event.plain_result(label)
-        yield event.plain_result(original_prompt)
+        yield event.plain_result(final_prompt)
 
     async def _prompt_lookup_references(self, event: AstrMessageEvent, context_hint: str) -> List[ImageReference]:
         quoted_sources = await self._quoted_original_image_sources(event)
@@ -4900,7 +4942,7 @@ class SelfieImagePlugin(
         使用生图模型生成普通图片，支持文生图和参考图图生图。
         自拍、看看COS、看看腿、看看你、AI 自己、合影、合照、同框、与用户一起拍照等请求使用 generate_selfie。
         prompt 保持简洁，保留主体、场景、动作/风格、构图和参考图关系即可。
-        用户点名要用某个模型时（例如“用gpt画一只猫”“用即梦生成”），把提到的模型关键词填入 model；用户说“用 NAI / 用 NovelAI”时，model 必须传 "nai" 或具体型号；没有点名就留空，自动按启用顺序路由。
+        用户点名要用某个非 NAI 模型时，把提到的模型关键词填入 model；没有点名就留空，自动按启用顺序路由。LLM 工具不允许指定或调用 NAI。
         闲聊中顺势画图时，ack_message 用当前人格自然短句接话，简体中文 10-40 字。
         Args:
             prompt(string): 简洁生图提示词，描述主体、场景、动作/风格、构图和参考图使用方式。
@@ -4908,7 +4950,7 @@ class SelfieImagePlugin(
             aspect_ratio(string): 宽高比，例如 1:1、3:4、9:16、16:9；留空使用默认值。
             resolution(string): 分辨率，例如 1K、2K、4K；留空使用默认值。
             size(string): 兼容参数，可传 1024x1024、2048x2048 或 4096x4096。
-            model(string): 可选。用户点名使用的模型关键词，如 "gpt-image-2"、"gpt"、"即梦"；说“用 NAI / 用 NovelAI”时传 "nai" 或具体型号。留空表示不指定，自动使用启用的模型顺序。NAI 请求无可用匹配时明确失败，不切换到其他模型。
+            model(string): 可选。用户点名使用的非 NAI 模型关键词，如 "gpt-image-2"、"gpt"、"即梦"。留空表示不指定，自动使用启用的模型顺序；LLM 工具不允许指定或调用 NAI。
             ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复。
         """
         if not self.config.image_enable_llm_tool:
@@ -4953,8 +4995,8 @@ class SelfieImagePlugin(
         if error:
             return self._tool_soft_fail(error)
         original_prompt = str(original_prompt or prompt or "")
-        if self._nai_model_unavailable(event, model):
-            return self._tool_soft_fail(NAI_MODEL_UNAVAILABLE)
+        if is_nai_model_request(model):
+            return self._tool_soft_fail(NAI_LLM_REQUEST_DISALLOWED)
         prompt, aspect, resol, _, _ = self._resolve_image_preset(prompt, aspect_ratio, resolution or size)
         if not prompt:
             return self._tool_soft_fail("缺少生图提示词", "你想让我往什么感觉走？")
@@ -5045,7 +5087,7 @@ class SelfieImagePlugin(
         如果附带图片里的人用手机、手、道具、口罩、面具或其他东西挡脸，默认不要把挡脸物迁移到 AI 身上，除非用户明确要求遮脸。
         action 保持简洁，整理出动作/场景/情绪/服装/镜头语言；合影时写清同框关系和参考图对象。
         对“看看COS / 看看腿 / 看看你 / 自拍”等模式请求，在 action 中保留对应模式词，不要改写成丢失模式的纯服装描述。
-        用户点名要用某个模型时，把提到的模型关键词填入 model；用户说“用 NAI / 用 NovelAI”时，model 必须传 "nai" 或具体型号；没有点名就留空，自动按启用顺序路由。
+        用户点名要用某个非 NAI 模型时，把提到的模型关键词填入 model；没有点名就留空，自动按启用顺序路由。LLM 工具不允许指定或调用 NAI。
         ack_message 使用简体中文，以当前人格自然回应，10-40 字。
         Args:
             action(string): 简洁自拍/合影要求，包含动作、表情、服装、环境、镜头或同框关系。
@@ -5053,7 +5095,7 @@ class SelfieImagePlugin(
             aspect_ratio(string): 宽高比，例如 1:1、3:4、9:16、16:9；留空使用默认值。
             resolution(string): 分辨率，例如 1K、2K、4K；留空使用默认值。
             size(string): 兼容参数，可传 1024x1024、2048x2048 或 4096x4096。
-            model(string): 可选。用户点名使用的模型关键词，如 "gpt-image-2"、"gpt"；说“用 NAI / 用 NovelAI”时传 "nai" 或具体型号。留空表示不指定，自动使用启用的模型顺序。NAI 请求无可用匹配时明确失败，不切换到其他模型。
+            model(string): 可选。用户点名使用的非 NAI 模型关键词，如 "gpt-image-2"、"gpt"。留空表示不指定，自动使用启用的模型顺序；LLM 工具不允许指定或调用 NAI。
             ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复。
         """
         if not self.config.image_enable_llm_tool:
@@ -5072,8 +5114,8 @@ class SelfieImagePlugin(
         )
         requested_count = self._normalize_count(count)
         original_prompt = str(action or "看着镜头自然自拍")
-        if self._nai_model_unavailable(event, model):
-            return self._tool_soft_fail(NAI_MODEL_UNAVAILABLE)
+        if is_nai_model_request(model):
+            return self._tool_soft_fail(NAI_LLM_REQUEST_DISALLOWED)
         action, aspect, resol, _, _ = self._resolve_image_preset(original_prompt, aspect_ratio, resolution or size)
         return await self._run_llm_selfie_flow(
             event, action, requested_count, aspect, resol, ack_message,

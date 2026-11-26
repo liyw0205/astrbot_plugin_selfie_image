@@ -1,5 +1,5 @@
     function groupConfigValue(index, field) {
-      return String(QQ_GROUP_ROWS[index]?.config?.[field] || (field === 'chat_type' ? 'none' : field === 'model_priority_mode' ? 'default' : ''));
+      return String(QQ_GROUP_ROWS[index]?.config?.[field] || (field === 'chat_type' ? 'none' : field === 'fixed_model' ? '' : 'default'));
     }
     function globalUsableGateActive() {
       return !!$('groupUsableEnabled')?.checked && textList('groupUsableUsers').length > 0;
@@ -37,7 +37,7 @@
       target.textContent = groups.length ? groups.join(' | ') : '暂无名单条目';
     }
     function groupConfigLabel(field, value) {
-      const choices = field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : QQ_GROUP_MODEL_MODES;
+      const choices = field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : field === 'preview_hidden_mode' ? QQ_GROUP_PREVIEW_MODES : QQ_GROUP_MODEL_MODES;
       return choices.find(item => item[0] === value)?.[1] || '未设置';
     }
     function closeGroupConfigModal() {
@@ -50,7 +50,7 @@
       if (!row) return;
       QQ_GROUP_MODAL = {index, field};
       const modal = $('groupConfigModal');
-      const title = field === 'chat_type' ? '群聊类型' : field === 'model_priority_mode' ? '模型模式' : '固定模型';
+      const title = field === 'chat_type' ? '群聊类型' : field === 'model_priority_mode' ? '模型模式' : field === 'preview_hidden_mode' ? '预览隐藏' : '固定模型';
       $('groupConfigModalTitle').textContent = title;
       $('groupConfigModalHint').textContent = `${row.group_id}${row.group_name ? ` · ${row.group_name}` : ''}`;
       $('groupConfigSearchWrap').style.display = field === 'fixed_model' ? '' : 'none';
@@ -70,7 +70,7 @@
         body.innerHTML = models.length ? `<div class="group-config-model-list">${models.map(model => `<button class="group-config-option" type="button" aria-pressed="${model === current}" onclick="selectGroupConfigValue('${escapeJs(model)}')"><strong>${escapeHtml(model)}</strong><span>${model === current ? '当前使用' : '点击设为固定模型'}</span></button>`).join('')}</div>` : '<div class="group-config-empty">暂无匹配的已启用模型。</div>';
         return;
       }
-      const choices = state.field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : QQ_GROUP_MODEL_MODES;
+      const choices = state.field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : state.field === 'preview_hidden_mode' ? QQ_GROUP_PREVIEW_MODES : QQ_GROUP_MODEL_MODES;
       body.innerHTML = `<div class="group-config-options">${choices.map(([value, label, hint]) => `<button class="group-config-option" type="button" aria-pressed="${value === current}" onclick="selectGroupConfigValue('${value}')"><strong>${label}</strong><span>${hint}</span></button>`).join('')}</div>`;
     }
     function selectGroupConfigValue(value) {
@@ -92,13 +92,14 @@
       body.innerHTML = QQ_GROUP_ROWS.map((row, index) => {
         const config = row.config || {};
         const mode = config.model_priority_mode || 'default';
-        const fixed = mode === 'fixed' ? (config.fixed_model || '未选择') : '不适用';
+        const previewMode = config.preview_hidden_mode || 'default';
+        const fixedPanel = mode === 'fixed' ? `<div class="group-config-fixed-panel"><strong>固定模型</strong><button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'fixed_model')"><span>${escapeHtml(config.fixed_model || '请选择模型')}</span></button></div>` : '';
         return `<div class="group-config-row" data-group-index="${index}" role="row">
           <div class="group-config-identity"><strong>${escapeHtml(row.group_id)}</strong><span title="${escapeHtml(row.group_name || '')}">${escapeHtml(row.group_name || '未命名群')}</span></div>
           <button class="group-config-trigger${globalUsableGateActive() ? ' policy-overridden' : ''}" data-config-field="chat_type" type="button" ${globalUsableGateActive() ? 'disabled title="由全局可用名单覆盖"' : `onclick="openGroupConfigModal(${index}, 'chat_type')"`}><span>${escapeHtml(groupConfigLabel('chat_type', config.chat_type || 'none'))}</span></button>
           <button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'model_priority_mode')"><span>${escapeHtml(groupConfigLabel('model_priority_mode', mode))}</span></button>
-          <button class="group-config-trigger" type="button" ${mode === 'fixed' ? `onclick="openGroupConfigModal(${index}, 'fixed_model')"` : 'disabled'}><span>${escapeHtml(fixed)}</span></button>
-        </div>`;
+          <button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'preview_hidden_mode')"><span>${escapeHtml(groupConfigLabel('preview_hidden_mode', previewMode))}</span></button>
+        </div>${fixedPanel}`;
       }).join('');
     }
     async function loadQQGroups(force = false) {
@@ -116,6 +117,7 @@
           chat_type: row.config?.chat_type || 'none',
           model_priority_mode: row.config?.model_priority_mode || 'default',
           fixed_model: row.config?.fixed_model || '',
+          preview_hidden_mode: row.config?.preview_hidden_mode || 'default',
         }}));
         $('saveGroupsBtn').disabled = false;
         const resultText = data.available ? `已读取 ${QQ_GROUP_ROWS.length} 个群` : (data.message || 'QQ 平台不可用');

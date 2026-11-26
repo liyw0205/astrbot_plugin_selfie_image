@@ -3190,6 +3190,39 @@ def test_shared_record_route_contract_matches_both_live_registries(tmp_path):
     assert actual_dashboard == expected_dashboard
 
 
+def test_record_incremental_queries_work_through_both_adapters(http):
+    from urllib.parse import urlencode
+
+    initial = http.call('/api/records?limit=30')
+    assert_success(initial)
+    known = initial.envelope['record_revisions']
+    delta = http.call('/api/records?' + urlencode({'known_records': json.dumps(known)}))
+    assert assert_success(delta) == []
+    assert delta.envelope['page_ids'] == ['record-1']
+    assert delta.envelope['incremental'] is True
+    assert_failure(http.call('/api/records?known_records=[]'), 400)
+
+
+def test_record_lazy_queries_reach_store_and_validate_fields(http, monkeypatch):
+    calls = []
+
+    def get_record(record_id, **options):
+        calls.append((record_id, options))
+        field = options.get('field')
+        return {field: {'api_key': 'secret-field'}} if field else {'id': record_id}
+
+    monkeypatch.setattr(http.plugin, 'get_record_for_web', get_record)
+    assert assert_success(http.call('/api/records/record-1?view=summary')) == {'id': 'record-1'}
+    data = assert_success(http.call('/api/records/record-1?field=request_data'))
+    assert data == {'request_data': {'api_key': '[REDACTED]'}}
+    assert calls == [
+        ('record-1', {'view': 'summary', 'field': ''}),
+        ('record-1', {'view': '', 'field': 'request_data'}),
+    ]
+    assert_failure(http.call('/api/records/record-1?field=media_sources_file'), 400)
+    assert_failure(http.call('/api/records/record-1?view=unknown'), 400)
+
+
 def test_record_controller_operations_preserve_both_adapter_contracts(http):
     metrics = assert_success(http.call("/api/metrics?window=24h"))
     assert metrics["window_seconds"] == 86_400
