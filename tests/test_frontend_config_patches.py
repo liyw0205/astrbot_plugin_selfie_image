@@ -18,7 +18,7 @@ def test_dashboard_tracks_server_config_baseline_for_domain_patches():
     assert "patchDomains: ['proxies']" in SOURCE
     channel_source = (ROOT / "pages" / "dashboard" / "source" / "channel_editor.js").read_text(encoding="utf-8")
     assert "patchDomains:" in channel_source
-    assert "EDITING_CHANNEL_KIND === 'audit' ? 'audit_channels' : 'image_channels'" in channel_source
+    assert "kind === 'audit' ? 'audit_channels' : 'image_channels'" in channel_source
     assert "patch: monitoringPatch" in (ROOT / "pages" / "dashboard" / "source" / "monitoring.js").read_text(encoding="utf-8")
     assert SOURCE.count("rememberConfigServerSnapshot(res.data)") >= 3
     assert "const requestPayload = {...payload};" in SOURCE
@@ -173,15 +173,14 @@ def test_prompt_preset_and_nai_transfer_use_json_files_like_cos_pool():
     assert "presetTransferModal" not in template + bootstrap + catalog_source
 
 
-def test_monitor_task_and_asset_filters_share_responsive_horizontal_layout():
+def test_filter_and_generation_forms_pair_selects_and_keep_inputs_full_width():
     root = Path(__file__).resolve().parents[1]
     template = (root / "pages/dashboard/index.source.html").read_text(encoding="utf-8")
     styles = (root / "pages/dashboard/source/styles.css").read_text(encoding="utf-8")
 
-    assert template.count('class="dashboard-filter-grid"') == 3
-    assert ".dashboard-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));" in styles
-    assert ".dashboard-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
-    assert "@media (max-width: 360px)" in styles
+    assert template.count('class="dashboard-filter-grid"') == 5
+    assert ".dashboard-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
+    assert ".dashboard-filter-grid > .filter-full { grid-column: 1 / -1; }" in styles
     assert 'id="metricAlertSettingsModal" class="modal-mask"' in template
     assert 'id="openMetricAlertSettings"' in template
     assert 'id="saveMetricAlertSettings"' in template

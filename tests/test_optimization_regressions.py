@@ -239,7 +239,10 @@ def test_masked_config_export_can_be_previewed_and_imported_without_losing_secre
                 "enabled": True,
             }
         ],
-        "proxies": [{"id": "proxy-1", "url": "http://proxy.test:8080", "password": "proxy-secret"}],
+        "proxies": [{
+            "id": "proxy-1", "host": "proxy.test", "port": 8080,
+            "username": "proxy-user", "password": "proxy-secret",
+        }],
         "compatibility_field": {"keep": True},
     }
     exported = plugin.export_config_for_web()

@@ -1,5 +1,61 @@
     const SPECIAL_PRESET_GROUP_LABELS = {action:'动作预设', upper:'上身预设', lower:'下身预设'};
     const SPECIAL_PRESET_GROUP_ORDER = {action:0, upper:1, lower:2};
+    let CATALOG_PICKER = null;
+    const CATALOG_REQUEST_TIMEOUT_MS = 15000;
+    async function catalogApi(path) {
+      const controller = new AbortController();
+      let timer;
+      try {
+        return await Promise.race([
+          api(path, {signal: controller.signal}),
+          new Promise((_, reject) => { timer = setTimeout(() => {
+            reject(new Error('列表读取超时，请重试'));
+            controller.abort();
+          }, CATALOG_REQUEST_TIMEOUT_MS); }),
+        ]);
+      } finally { clearTimeout(timer); }
+    }
+    function closeCatalogPicker() {
+      const picker = CATALOG_PICKER;
+      CATALOG_PICKER = null;
+      $('catalogPickerModal')?.classList.remove('show');
+      if (picker) {
+        clearTimeout(PICKER_SEARCH_TIMERS.get(picker.panelId));
+        const button = $(picker.buttonId);
+        button?.setAttribute('aria-expanded', 'false');
+        button?.focus({preventScroll:true});
+      }
+    }
+    function openCatalogPicker(kind, targetInputId, buttonId) {
+      const panelId = kind === 'cos' ? 'catalogCosPanel' : 'catalogPresetPanel';
+      if (CATALOG_PICKER?.panelId === panelId && CATALOG_PICKER.targetInputId === targetInputId) return;
+      closeCatalogPicker();
+      CATALOG_PICKER = {kind, panelId, targetInputId, buttonId,
+        nodeId: targetInputId === 'studioNodePrompt' ? STUDIO.selectedNodeId : '',
+        sessionId: targetInputId === 'studioNodePrompt' ? STUDIO.current?.id : ''};
+      $('catalogPickerTitle').textContent = kind === 'cos' ? '选择 COS' : '选择提示词预设';
+      $('catalogPickerModal').classList.add('show');
+      $(buttonId)?.setAttribute('aria-expanded', 'true');
+      $('catalogPickerClose')?.focus();
+      renderPresetPanel('catalogPresetPanel', targetInputId, kind !== 'cos');
+      renderCosPanel('catalogCosPanel', targetInputId, kind === 'cos');
+      const state = catalogPickerState(panelId);
+      void loadCatalogPickerPage(panelId, kind, state.page);
+    }
+    function applyCatalogPickerItem(panelId, targetInputId, item) {
+      if (CATALOG_PICKER?.panelId === panelId && CATALOG_PICKER.nodeId
+          && (CATALOG_PICKER.nodeId !== STUDIO.selectedNodeId || CATALOG_PICKER.sessionId !== STUDIO.current?.id)) {
+        closeCatalogPicker();
+        showToast('当前画面已变化，请重新选择预设', 'info');
+        return;
+      }
+      const input = $(targetInputId);
+      if (!input || !item) return;
+      input.value = item.mode === 'special'
+        ? `${item.prompt || ''} 【cos:${item.id || ''}】【cos_mode:special】` : (item.prompt || '');
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+      if (CATALOG_PICKER?.panelId === panelId) closeCatalogPicker();
+    }
     function promptPresetGroup(item) {
       return String(item?.preset_group || item?.special_group || '').trim();
     }
@@ -83,10 +139,6 @@
         clearEntry(PICKER_CACHE.tags);
         clearDashboardPersistNamespace('asset-tags');
       }
-      if (!normalized || normalized === 'image') {
-        ASSET_STUDIO_PRESETS = [];
-        ASSET_STUDIO_PRESET_LOAD_SEQ += 1;
-      }
       for (const key of [...PICKER_PAGE_CACHE.keys()]) {
         if (!normalized || key.startsWith(`${normalized}:`)) {
           PICKER_PAGE_CACHE.delete(key);
@@ -169,7 +221,7 @@
       if (kind === 'image') params.set('kind', 'image');
       const endpoint = kind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets?';
       const request = (async () => {
-        const res = await api(endpoint + params.toString());
+        const res = await catalogApi(endpoint + params.toString());
         const payload = res.data || {};
         if (payload.load_status && payload.load_status.ok === false) throw new Error(payload.load_status.error || '预设加载失败');
         let items = Array.isArray(payload.items) ? payload.items : [];
@@ -192,14 +244,14 @@
         if (kind === 'image') items = mergePromptPresets(items);
         const data = {items, total, offset, limit: PICKER_PAGE_SIZE, revision: Number(payload.revision || 0)};
         if (kind === 'cos') updateCosPoolRevision(data);
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && (requestGenerations.get(key) || 0) === requestGeneration) {
           PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('picker-page', key, data);
           while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
         }
         return data;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && (requestGenerations.get(key) || 0) === requestGeneration) {
           PICKER_PAGE_CACHE.delete(key);
           removeDashboardPersistCache('picker-page', key);
         }
@@ -255,7 +307,7 @@
       if (normalizedKind !== 'cos') params.set('kind', normalizedKind);
       const endpoint = normalizedKind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets/manage?';
       const request = (async () => {
-        const res = await api(endpoint + params.toString());
+        const res = await catalogApi(endpoint + params.toString());
         const raw = res.data;
         const rawIsArray = Array.isArray(raw);
         const data = rawIsArray ? {items: raw, total: raw.length} : (raw || {});
@@ -292,14 +344,14 @@
           value.series_options = Array.isArray(data.series_options) ? data.series_options : [];
           updateCosPoolRevision(value);
         }
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && (requestGenerations.get(key) || 0) === requestGeneration) {
           MANAGED_PAGE_CACHE.set(key, {data: value, loadedAt: Date.now(), request: null});
           writeDashboardPersistCache('managed-page', key, value);
           while (MANAGED_PAGE_CACHE.size > 80) MANAGED_PAGE_CACHE.delete(MANAGED_PAGE_CACHE.keys().next().value);
         }
         return value;
       })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && requestGenerations.get(key) === requestGeneration) {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && (requestGenerations.get(key) || 0) === requestGeneration) {
           MANAGED_PAGE_CACHE.delete(key);
           removeDashboardPersistCache('managed-page', key);
         }
@@ -331,13 +383,16 @@
     }
     async function loadCatalogPickerPage(panelId, kind, page = 1, force = false) {
       const state = catalogPickerState(panelId);
+      const requestKey = `${kind}:${state.query}:${Math.max(1, Number(page) || 1)}`;
+      if (!force && state.requestKey === requestKey && state.request) return state.request;
       state.kind = kind;
       state.page = Math.max(1, Number(page) || 1);
       state.error = '';
       const seq = ++state.seq;
       PICKER_LOADING.add(panelId);
-      if (!state.loaded) renderCatalogPicker(panelId);
-      try {
+      state.requestKey = requestKey;
+      const request = (async () => { try {
+        if (!state.loaded) renderCatalogPicker(panelId);
         const data = await fetchCatalogPage(kind, state.query, state.page, force);
         if (seq !== state.seq) return;
         state.items = data.items;
@@ -351,11 +406,21 @@
       } finally {
         if (seq === state.seq) {
           PICKER_LOADING.delete(panelId);
+          state.request = null;
           renderCatalogPicker(panelId);
         }
-      }
+      } })();
+      state.request = request;
+      return request;
     }
     function renderCatalogPicker(panelId) {
+      if (panelId === 'catalogPresetPanel' || panelId === 'catalogCosPanel') {
+        const open = CATALOG_PICKER?.panelId === panelId;
+        const target = open ? CATALOG_PICKER.targetInputId : '';
+        if (panelId === 'catalogCosPanel') renderCosPanel(panelId, target, open);
+        else renderPresetPanel(panelId, target, open);
+        return;
+      }
       const kind = panelId.toLowerCase().includes('cos') ? 'cos' : 'image';
       if (kind === 'cos') {
         const panel = $(panelId);
@@ -364,7 +429,6 @@
           studioCosPanel: ['studioPrompt', 'studioCosBtn', !!STUDIO.cosOpen],
           studioNodeCosPanel: ['studioNodePrompt', 'studioNodeCosBtn', !!STUDIO.nodeCosOpen],
           testCosPanel: ['testPrompt', 'testCosBtn', !!window.__TEST_COS_OPEN],
-          creativeCanvasCosPanel: ['creativeCanvasPrompt', 'creativeCanvasCosBtn', !!CREATIVE_CANVAS.cosOpen],
         }[panelId] || ['', '', true];
         renderCosPanel(panelId, mapping[0], mapping[2], mapping[1]);
         return;
@@ -373,7 +437,6 @@
         studioPresetPanel: ['studioPrompt', 'studioPresetBtn', !!STUDIO.presetOpen],
         studioNodePresetPanel: ['studioNodePrompt', 'studioNodePresetBtn', !!STUDIO.nodePresetOpen],
         testPresetPanel: ['testPrompt', 'testPresetBtn', !!window.__TEST_PRESET_OPEN],
-        creativeCanvasPresetPanel: ['creativeCanvasPrompt', 'creativeCanvasPresetBtn', !!CREATIVE_CANVAS.presetOpen],
       }[panelId] || ['', '', true];
       renderPresetPanel(panelId, mapping[0], mapping[2], mapping[1]);
     }
@@ -428,13 +491,7 @@
       panel.querySelectorAll('[data-preset-idx]').forEach(btn => btn.onclick = () => {
         const item = rows[Number(btn.getAttribute('data-preset-idx'))];
         if (!item) return;
-        const input = $(targetInputId);
-        if (input) {
-          input.value = item.mode === 'special'
-            ? `${item.prompt || ''} 【cos:${item.id || ''}】【cos_mode:special】`
-            : (item.prompt || '');
-          input.dispatchEvent(new Event('input', {bubbles:true}));
-        }
+        applyCatalogPickerItem(panelId, targetInputId, item);
         panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
         btn.classList.add('active');
       });
@@ -827,13 +884,7 @@
         btn.onclick = () => {
           const item = rows[Number(btn.getAttribute('data-cos-idx'))];
           if (!item) return;
-          const input = $(targetInputId);
-          if (input) {
-            input.value = item.mode === 'special'
-              ? `${item.prompt || ''} 【cos:${item.id || ''}】【cos_mode:special】`
-              : (item.prompt || '');
-            input.dispatchEvent(new Event('input', {bubbles:true}));
-          }
+          applyCatalogPickerItem(panelId, targetInputId, item);
           panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
           btn.classList.add('active');
         };
@@ -875,7 +926,7 @@
         ['studioCosPanel', !!STUDIO.cosOpen],
         ['studioNodeCosPanel', !!STUDIO.nodeCosOpen],
         ['testCosPanel', !!window.__TEST_COS_OPEN],
-        ['creativeCanvasCosPanel', !!CREATIVE_CANVAS.cosOpen],
+        ['catalogCosPanel', CATALOG_PICKER?.kind === 'cos'],
       ];
       for (const [panelId, isOpen] of openPanels) {
         if (!isOpen) continue;
@@ -894,14 +945,13 @@
         ['studioPresetPanel', !!STUDIO.presetOpen],
         ['studioNodePresetPanel', !!STUDIO.nodePresetOpen],
         ['testPresetPanel', !!window.__TEST_PRESET_OPEN],
-        ['creativeCanvasPresetPanel', !!CREATIVE_CANVAS.presetOpen],
+        ['catalogPresetPanel', CATALOG_PICKER?.kind === 'image'],
       ];
       for (const [panelId, isOpen] of openPanels) {
         if (!isOpen) continue;
         const state = catalogPickerState(panelId);
         jobs.push(loadCatalogPickerPage(panelId, 'image', state.page, force));
       }
-      if ($('assetStudioPreset')) jobs.push(loadAssetStudioPresets(ASSET_STUDIO_PRESET_PAGE));
       await Promise.all(jobs);
     }
     function openCosPoolModal() {
@@ -979,31 +1029,9 @@
       }
       renderCosPanel('studioCosPanel', 'studioPrompt', STUDIO.cosOpen, 'studioCosBtn');
     }
-    async function toggleTestPresets() {
-      window.__TEST_PRESET_OPEN = !window.__TEST_PRESET_OPEN;
-      window.__TEST_COS_OPEN = false;
-      renderCosPanel('testCosPanel', 'testPrompt', false, 'testCosBtn');
-      if (window.__TEST_PRESET_OPEN) {
-        const state = catalogPickerState('testPresetPanel');
-        await loadCatalogPickerPage('testPresetPanel', 'image', state.page);
-        STUDIO.presetOpen = false;
-        STUDIO.cosOpen = false;
-        renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
-        renderCosPanel('studioCosPanel', 'studioPrompt', false, 'studioCosBtn');
-      }
-      renderPresetPanel('testPresetPanel', 'testPrompt', !!window.__TEST_PRESET_OPEN, 'testPresetBtn');
+    function toggleTestPresets() {
+      openCatalogPicker('image', 'testPrompt', 'testPresetBtn');
     }
-    async function toggleTestCos() {
-      window.__TEST_COS_OPEN = !window.__TEST_COS_OPEN;
-      window.__TEST_PRESET_OPEN = false;
-      renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
-      if (window.__TEST_COS_OPEN) {
-        const state = catalogPickerState('testCosPanel');
-        await loadCatalogPickerPage('testCosPanel', 'cos', state.page);
-        STUDIO.presetOpen = false;
-        STUDIO.cosOpen = false;
-        renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
-        renderCosPanel('studioCosPanel', 'studioPrompt', false, 'studioCosBtn');
-      }
-      renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
+    function toggleTestCos() {
+      openCatalogPicker('cos', 'testPrompt', 'testCosBtn');
     }

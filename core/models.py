@@ -74,7 +74,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "show_generation_info": False,
         "show_model_info": False,
         "enable_preview_hidden": False,
-        "rate_limit_seconds": 0,
+        "rate_limit_seconds": 60,
         "enable_daily_limit": False,
         "daily_limit_count": 10,
         # A batch may contain up to 100 shots; max_concurrent_tasks still limits
@@ -540,7 +540,7 @@ class AICatConfig:
             image_show_generation_info=to_bool(image.get("show_generation_info"), False),
             image_show_model_info=to_bool(image.get("show_model_info"), False),
             image_enable_preview_hidden=to_bool(image.get("enable_preview_hidden"), False),
-            image_rate_limit_seconds=to_int(image.get("rate_limit_seconds"), 0, minimum=0, maximum=3600),
+            image_rate_limit_seconds=to_int(image.get("rate_limit_seconds"), 60, minimum=0, maximum=3600),
             image_enable_daily_limit=to_bool(image.get("enable_daily_limit"), False),
             image_daily_limit_count=to_int(image.get("daily_limit_count"), 10, minimum=1, maximum=1000),
             image_max_batch_count=to_int(image.get("max_batch_count"), 10, minimum=1, maximum=100),

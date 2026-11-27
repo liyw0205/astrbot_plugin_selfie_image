@@ -44,6 +44,9 @@ class StudioMixin:
         parent_node_id: str,
         *,
         persona_ref: Optional[Dict[str, Any]],
+        node_id: str = "",
+        extra_refs: Optional[List[Dict[str, Any]]] = None,
+        raw_canvas: bool = False,
     ) -> tuple[List[tuple[bytes, str]], List[str]]:
         """Resolve the image input for one node generation.
 
@@ -66,12 +69,30 @@ class StudioMixin:
             if not loaded or not loaded[0]:
                 raise RuntimeError("上一节点图片已失效，请先重画上一节点")
             data, mime = loaded
-            return [(data, mime or "image/png")], []
-        return resolve_slot_refs_for_run(
-            session,
-            persona_ref=persona_ref,
-            load_path_bytes=self._load_cache_image_bytes,
-        )
+            refs, used_slots = [(data, mime or "image/png")], []
+        else:
+            canvas = session.get("canvas") or {}
+            node = next((row for row in canvas.get("nodes") or [] if str(row.get("id") or "") == node_id), {})
+            main_path = str((node.get("result") or {}).get("media_path") or "") if raw_canvas else ""
+            if main_path:
+                loaded = self._load_cache_image_bytes(main_path)
+                if not loaded or not loaded[0]:
+                    raise RuntimeError("画面参考图已失效，请重新选择图片")
+                refs, used_slots = [(loaded[0], loaded[1] or "image/png")], []
+            else:
+                refs, used_slots = resolve_slot_refs_for_run(
+                    session, persona_ref=persona_ref, load_path_bytes=self._load_cache_image_bytes,
+                )
+        for item in extra_refs or []:
+            path = str(item.get("image_path") or "").strip()
+            if not path:
+                continue
+            loaded = self._load_cache_image_bytes(path)
+            if not loaded or not loaded[0]:
+                raise RuntimeError("额外参考图已失效，请重新上传或从图库选择")
+            refs.append((loaded[0], loaded[1] or "image/png"))
+            used_slots.append(str(item.get("id") or "extra"))
+        return refs, used_slots
 
     async def _ensure_studio_failure_record(
         self,
@@ -387,12 +408,46 @@ class StudioMixin:
     def studio_canvas_update(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("canvas 必须是 JSON 对象")
+        payload = deepcopy(payload)
+        for node in payload.get("nodes") or []:
+            if isinstance(node, dict) and "extra_refs" in node:
+                current = next((row for row in self.studio.canvas_graph(session_id).get("nodes", []) if row.get("id") == node.get("id")), None)
+                if not current:
+                    raise ValueError("节点不存在")
+                if current.get("status") in {"queued", "running"}:
+                    raise ValueError("生成中的画面不能替换参考图")
+                node["extra_refs"] = self._studio_extra_refs(node["extra_refs"])
+            if isinstance(node, dict) and any(key in node for key in ("image_path", "image", "data_url")):
+                current = next((row for row in self.studio.canvas_graph(session_id).get("nodes", []) if row.get("id") == node.get("id")), None)
+                if not current:
+                    raise ValueError("节点不存在")
+                if current.get("status") in {"queued", "running"}:
+                    raise ValueError("生成中的画面不能替换图片")
+                node.update(self._studio_image_fields(node))
+                node.pop("image", None)
+                node.pop("data_url", None)
         return self.studio.update_canvas(session_id, payload)
 
     def studio_canvas_node_create(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("节点参数必须是 JSON 对象")
+        payload = deepcopy(payload)
+        if "extra_refs" in payload:
+            payload["extra_refs"] = self._studio_extra_refs(payload["extra_refs"])
         return self.studio.add_canvas_node(session_id, payload)
+
+    def _studio_extra_refs(self, rows: Any) -> List[Dict[str, Any]]:
+        if not isinstance(rows, list) or len(rows) > 12:
+            raise ValueError("额外参考图必须是列表，最多 12 张")
+        result = []
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ValueError("额外参考图参数无效")
+            item = {"id": str(row.get("id") or f"extra-{index + 1}")[:80]}
+            if any(row.get(key) for key in ("image_path", "path", "image", "data_url")):
+                item.update(self._studio_image_fields(row))
+            result.append(item)
+        return result
 
     def studio_canvas_node_delete(self, session_id: str, node_id: str) -> Dict[str, Any]:
         return self.studio.delete_canvas_node(session_id, node_id)
@@ -487,6 +542,9 @@ class StudioMixin:
         canvas_store = store or self.studio
         if payload.get("clear"):
             return canvas_store.clear_slot(session_id, slot_id)
+        return canvas_store.set_slot_image(session_id, slot_id, **self._studio_image_fields(payload))
+
+    def _studio_image_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         # from existing cache path
         from_path = str(payload.get("image_path") or payload.get("path") or "").strip()
         if from_path:
@@ -509,15 +567,13 @@ class StudioMixin:
                 max_frames=max_frames,
             ):
                 raise ValueError("参考图尺寸、像素或动画帧数超过限制")
-            return canvas_store.set_slot_image(
-                session_id,
-                slot_id,
-                image_path=from_path,
-                source=str(payload.get("source") or "record"),
-                mime=str(info.get("mime_type") or ""),
-                label=str(payload.get("label") or ""),
-                source_record_id=str(payload.get("source_record_id") or "").strip(),
-            )
+            return {
+                "image_path": from_path,
+                "source": str(payload.get("source") or "record"),
+                "mime": str(info.get("mime_type") or ""),
+                "label": str(payload.get("label") or ""),
+                "source_record_id": str(payload.get("source_record_id") or "").strip(),
+            }
         raw = payload.get("image") or payload.get("data_url") or ""
         max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
         data, mime = data_url_to_bytes(
@@ -533,15 +589,13 @@ class StudioMixin:
             raise ValueError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
         mime = normalize_image_mime(mime or detect_mime_by_bytes(data))
         rel = self._save_cache_image(data, "studio", mime)
-        return canvas_store.set_slot_image(
-            session_id,
-            slot_id,
-            image_path=rel,
-            source=str(payload.get("source") or "upload"),
-            mime=mime,
-            label=str(payload.get("label") or ""),
-            source_record_id=str(payload.get("source_record_id") or "").strip(),
-        )
+        return {
+            "image_path": rel,
+            "source": str(payload.get("source") or "upload"),
+            "mime": mime,
+            "label": str(payload.get("label") or ""),
+            "source_record_id": str(payload.get("source_record_id") or "").strip(),
+        }
 
     def studio_add_slot(self, session_id: str, payload: Optional[Dict[str, Any]] = None, store=None) -> Dict[str, Any]:
         payload = payload if isinstance(payload, dict) else {}
@@ -832,7 +886,8 @@ class StudioMixin:
         config_node = nodes_by_id.get(target_node_id or parent_node_id or str(canvas_snapshot.get("root_node_id") or "")) or {}
         node_params = payload.get("node_params") if isinstance(payload.get("node_params"), dict) else config_node.get("params")
         node_params = dict(node_params) if isinstance(node_params, dict) else {}
-        template_id = normalize_template_id(
+        raw_canvas = payload.get("raw_canvas") is True and canvas_namespace == "studio"
+        template_id = "blank" if raw_canvas else normalize_template_id(
             str(payload.get("template_id") or config_node.get("template_id") or session.get("template") or "")
         )
         template_meta = next(
@@ -842,6 +897,10 @@ class StudioMixin:
         effective_session = deepcopy(session)
         effective_graph = dict(effective_session.get("graph") or {})
         effective_graph.update(node_params)
+        if raw_canvas:
+            effective_graph["use_persona_identity"] = False
+            if not str(effective_graph.get("prompt") or "").strip():
+                raise ValueError("请填写画面描述")
         effective_graph["mode"] = str(template_meta.get("mode") or effective_graph.get("mode") or "group")
         effective_graph["aspect_ratio"] = str(node_params.get("aspect_ratio") or effective_graph.get("aspect_ratio") or "自动")
         effective_graph["resolution"] = str(node_params.get("resolution") or effective_graph.get("resolution") or "1K")
@@ -856,7 +915,7 @@ class StudioMixin:
             raise RuntimeError("AstrBot 事件循环未就绪，无法启动画布生成")
 
         graph = effective_session.get("graph") or {}
-        action = build_studio_action(effective_session)
+        action = str(graph.get("prompt") or "").strip() if raw_canvas else build_studio_action(effective_session)
         aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
         resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
         try:
@@ -869,6 +928,9 @@ class StudioMixin:
             effective_session,
             parent_node_id,
             persona_ref=persona_ref,
+            node_id=str(config_node.get("id") or ""),
+            extra_refs=config_node.get("extra_refs") or [],
+            raw_canvas=raw_canvas,
         )
         if mode in {"group", "selfie", "i2i"} and not raw_refs:
             raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
@@ -881,6 +943,9 @@ class StudioMixin:
         ][:24]
 
         summary = {
+            "raw_canvas": raw_canvas,
+            "reference_config_node_id": str(config_node.get("id") or ""),
+            "extra_refs": deepcopy(config_node.get("extra_refs") or []),
             "session_id": session_id,
             "studio_session_title": str(session.get("title") or "画布").strip() or "画布",
             "mode": mode,
@@ -979,6 +1044,7 @@ class StudioMixin:
             session = canvas_store.get(session_id)
             last_run = session.get("last_run") if isinstance(session.get("last_run"), dict) else {}
             summary = last_run.get("summary") if isinstance(last_run.get("summary"), dict) else {}
+            raw_canvas = summary.get("raw_canvas") is True and canvas_namespace == "studio"
             target_node_id = str(summary.get("target_node_id") or "").strip()
             canvas = session.get("canvas") if isinstance(session.get("canvas"), dict) else {}
             target_node = next(
@@ -997,6 +1063,8 @@ class StudioMixin:
             session = deepcopy(session)
             graph_override = dict(session.get("graph") or {})
             graph_override.update(node_params)
+            if raw_canvas:
+                graph_override["use_persona_identity"] = False
             graph_override["mode"] = str(template_meta.get("mode") or graph_override.get("mode") or "group")
             session["template"] = template_id
             session["graph"] = graph_override
@@ -1023,13 +1091,16 @@ class StudioMixin:
                 session,
                 parent_node_id,
                 persona_ref=persona_ref,
+                node_id=str(summary.get("reference_config_node_id") or target_node_id),
+                extra_refs=summary.get("extra_refs") or [],
+                raw_canvas=raw_canvas,
             )
             refs = [ImageReference(data=data, mime_type=mime) for data, mime in raw_refs]
             has_external_reference = bool(parent_node_id) or any(
                 str(slot.get("id") or "") in used_slots and slot.get("image_path")
                 for slot in (session.get("slots") or []) if isinstance(slot, dict)
             )
-            action = build_studio_action(
+            action = str(graph.get("prompt") or "").strip() if raw_canvas else build_studio_action(
                 session, appearance_type=getattr(self.persona, "get_appearance_type", lambda: "auto")(),
                 has_external_reference=has_external_reference,
             )

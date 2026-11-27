@@ -111,6 +111,21 @@
         // Ignore a late refresh or a response superseded by a local save.
         if (loadSeq !== QQ_GROUP_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
         const data = res.data || {};
+        if (data.permission && typeof data.permission === 'object') {
+          const previous = CONFIG.permission || {};
+          const list = value => (Array.isArray(value) ? value : String(value || '').split(/[\n,|]+/)).map(String).map(value => value.trim()).filter(Boolean);
+          // Apply local additions/removals to the latest shared command lists.
+          for (const [id, key] of [['groupUsableUsers', 'usable_users'], ['groupBlockedUsers', 'blocked_users'], ['groupWhitelistUsers', 'whitelist_users']]) {
+            const before = list(previous[key]), draft = textList(id);
+            const removed = new Set(before.filter(value => !draft.includes(value)));
+            const merged = uniq([...list(data.permission[key]).filter(value => !removed.has(value)), ...draft.filter(value => !before.includes(value))]);
+            if (JSON.stringify(draft) !== JSON.stringify(merged)) setTextList(id, merged);
+          }
+          if ($('groupUsableEnabled').checked === !!previous.usable_users_enabled) $('groupUsableEnabled').checked = !!data.permission.usable_users_enabled;
+          CONFIG.permission = {...previous, ...data.permission};
+          rememberConfigServerSnapshot({...CONFIG_SERVER_SNAPSHOT, permission: CONFIG.permission});
+          if (Number(data.revision) > 0) CONFIG_REVISION = Number(data.revision);
+        }
         QQ_GROUP_MODELS = Array.isArray(data.models) ? uniq(data.models) : [];
         QQ_BOT_IDS = Array.isArray(data.bot_ids) ? uniq(data.bot_ids.map(String)) : [];
         QQ_GROUP_ROWS = (Array.isArray(data.groups) ? data.groups : []).map(row => ({...row, config: {
@@ -123,8 +138,7 @@
         const resultText = data.available ? `已读取 ${QQ_GROUP_ROWS.length} 个群` : (data.message || 'QQ 平台不可用');
         setStatus('groupsStatus', force ? '' : resultText);
         if (force) showToast(resultText, data.available ? 'ok' : 'info');
-        renderGroupAccessSummary();
-        renderQQGroups();
+        updateGlobalUsableGateUi();
       } catch (error) {
         if (loadSeq !== QQ_GROUP_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
         const message = error.message || '读取群列表失败';
@@ -483,8 +497,10 @@
       const enabled = $('proxyEnabled').checked;
       if (!host) throw new Error('请填写 IP / 主机');
       if (!port || port < 1 || port > 65535) throw new Error('端口无效');
-      if (Boolean(username) !== Boolean(password) && isNew) throw new Error('账号和密码需同时填写，或都留空');
-      if (Boolean(username) && !password && isNew) throw new Error('填写了账号时需要密码');
+      const keepPassword = !isNew && Boolean(username) && Boolean(prev.username) && Boolean(prev.has_auth || prev.password) && !$('proxyPass').value;
+      if (username && !password && !keepPassword) throw new Error('填写了账号时需要密码');
+      if (!username && $('proxyPass').value) throw new Error('填写了密码时需要账号');
+      if (!username) password = '';
       const id = prev.id || ('px_' + Math.random().toString(16).slice(2, 10));
       const row = {
         id,
@@ -493,12 +509,12 @@
         host,
         port,
         username,
-        password: password || (prev.password && prev.password !== '******' ? prev.password : ''),
+        password,
         enabled,
         has_auth: Boolean(username),
       };
       // On edit with masked password and empty input: keep has_auth and omit password change by reusing sentinel
-      if (!isNew && prev.has_auth && !$('proxyPass').value) {
+      if (keepPassword) {
         row.password = prev.password || '******';
         row.has_auth = true;
         row._keep_password = true;
@@ -506,10 +522,12 @@
       return row;
     }
     async function saveProxyModal() {
+      let previous = null;
       try {
         ensureConfig();
         CONFIG.proxies = Array.isArray(CONFIG.proxies) ? CONFIG.proxies : [];
         const row = collectProxyModal();
+        previous = CONFIG.proxies.slice();
         if (row._keep_password) {
           // The server restores the password by the existing proxy ID.
           delete row._keep_password;
@@ -530,6 +548,7 @@
         renderProxyList();
         fillChannelProxyOptions($('modalProxyId') && $('modalProxyId').value);
       } catch (e) {
+        if (previous) CONFIG.proxies = previous;
         $('proxyModalStatus').textContent = e.message || String(e);
       }
     }
@@ -550,8 +569,35 @@
       if (code && !text.includes(code)) text = text ? `${text} (${code})` : code;
       return text;
     }
+    let PROXY_INFO_SEQ = 0;
+    function closeProxyInfo() { PROXY_INFO_SEQ += 1; $('proxyInfoModal').classList.remove('show'); }
+    function openProxyInfo(title, html) {
+      const seq = ++PROXY_INFO_SEQ;
+      $('proxyInfoTitle').textContent = title;
+      $('proxyInfoBody').innerHTML = html;
+      $('proxyInfoModal').classList.add('show');
+      return seq;
+    }
+    function proxyUsage(proxyId) {
+      const rows = [];
+      for (const [kind, channels] of [['生图', CONFIG.image_channels], ['辅助', CONFIG.audit_channels]]) {
+        for (const channel of channels || []) {
+          if (!channel) continue;
+          const usesChannel = channel.proxy_id === proxyId;
+          if (usesChannel) rows.push({kind:kind + '渠道', channel:channel.name || channel.id || '未命名', model:''});
+          for (const model of uniq(channel.enabled_models || [])) {
+            if (!usesChannel && channel.model_download_proxy_ids?.[model] === proxyId) rows.push({kind:kind + '模型', channel:channel.name || channel.id || '未命名', model});
+          }
+        }
+      }
+      return rows;
+    }
+    function showProxyUsage(proxyId) {
+      const rows = proxyUsage(proxyId);
+      openProxyInfo('代理使用情况', rows.length ? rows.map(row => `<div class="proxy-usage-row"><span class="pill gray">${escapeHtml(row.kind)}</span><strong>${escapeHtml(row.channel)}</strong>${row.model ? `<span>${escapeHtml(row.model)}</span>` : ''}</div>`).join('') : '<div class="status">暂无渠道或已启用模型使用此代理</div>');
+    }
     function renderProxyConnectSummary(index, d) {
-      const box = $(`proxyResult-${index}`);
+      const box = $('proxyInfoBody');
       if (!box) return;
       const ok = !!d.success;
       const code = d.http_status != null ? d.http_status : '';
@@ -573,7 +619,7 @@
       `;
     }
     function renderProxyQualitySummary(index, d) {
-      const box = $(`proxyResult-${index}`);
+      const box = $('proxyInfoBody');
       if (!box) return;
       const rows = Array.isArray(d.results) ? d.results : [];
       const ip = d.ip_address || '';
@@ -610,13 +656,6 @@
         box.innerHTML = '<div class="card soft muted">还没有代理。点右上角「添加代理」。</div>';
         return;
       }
-      // Preserve previous probe results across re-render.
-      const prev = {};
-      box.querySelectorAll('[data-proxy-index]').forEach(card => {
-        const i = card.getAttribute('data-proxy-index');
-        const result = card.querySelector('.proxy-result');
-        if (result && !result.classList.contains('empty')) prev[i] = result.innerHTML;
-      });
       box.innerHTML = rows.map((p, i) => {
         const proto = String(p.protocol || 'http').toUpperCase();
         const auth = p.has_auth || p.username;
@@ -630,6 +669,7 @@
                 <span class="proxy-chip proto">${escapeHtml(proto)}</span>
                 <span class="proxy-chip ${en ? 'on' : 'off'}">${en ? '已启用' : '已停用'}</span>
                 ${auth ? '<span class="proxy-chip auth">认证</span>' : '<span class="proxy-chip">无认证</span>'}
+                <button class="proxy-usage-button" type="button" data-act="usage" title="查看使用此代理的渠道和模型" aria-label="查看使用此代理的渠道和模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="6" rx="1"></rect><path d="M12 9v5M5 18v-4h14v4"></path><path d="M2 18h6v4H2zM16 18h6v4h-6z"></path></svg><span>${proxyUsage(p.id).length}</span></button>
               </div>
             </div>
           </div>
@@ -641,7 +681,6 @@
             <button class="secondary mini" type="button" data-act="quality">质量</button>
             <button class="danger mini" type="button" data-act="del" style="grid-column:1/-1">${PENDING_DELETE.key === `proxy:${i}` ? '确认删除' : '删除'}</button>
           </div>
-          <div class="proxy-result ${prev[i] ? '' : 'empty'}" id="proxyResult-${i}">${prev[i] || ''}</div>
         </div>`;
       }).join('');
       box.querySelectorAll('.proxy-card').forEach(card => {
@@ -662,6 +701,7 @@
           });
         };
         card.querySelector('[data-act="edit"]').onclick = () => openProxyModal(idx);
+        card.querySelector('[data-act="usage"]').onclick = () => showProxyUsage(CONFIG.proxies[idx].id);
         card.querySelector('[data-act="del"]').onclick = async () => {
           const key = `proxy:${idx}`;
           if (PENDING_DELETE.key !== key) {
@@ -685,6 +725,9 @@
             for (const list of [CONFIG.image_channels, CONFIG.audit_channels]) {
               for (const ch of list || []) {
                 if (ch && ch.proxy_id === rid) ch.proxy_id = '';
+                if (ch?.model_download_proxy_ids) for (const [model, id] of Object.entries(ch.model_download_proxy_ids)) {
+                  if (id === rid) delete ch.model_download_proxy_ids[model];
+                }
               }
             }
           }
@@ -703,7 +746,8 @@
     async function testProxyRow(index, kind = 'connect') {
       const row = (CONFIG.proxies || [])[index];
       if (!row) return;
-      const box = $(`proxyResult-${index}`);
+      const seq = openProxyInfo(`${row.name || row.id} · ${kind === 'connect' ? '连通检测' : '质量检测'}`, '<div class="status" role="status">正在检测…</div>');
+      const box = $('proxyInfoBody');
       const body = row.id ? { id: row.id } : {
         protocol: row.protocol, host: row.host, port: row.port,
         username: row.username, password: row.password === '******' ? '' : row.password,
@@ -716,10 +760,12 @@
         }
         try {
           const res = await api('/api/proxies/test', { method: 'POST', body: JSON.stringify(body) });
+          if (seq !== PROXY_INFO_SEQ) return;
           const d = res.data || {};
           renderProxyConnectSummary(index, d);
           showToast(d.success ? '连通正常' : (d.message || '连通失败'), d.success ? 'ok' : 'bad');
         } catch (e) {
+          if (seq !== PROXY_INFO_SEQ) return;
           if (box) {
             box.classList.remove('empty');
             box.innerHTML = `<div class="meta">${escapeHtml(e.message || '测试失败')}</div>`;
@@ -734,10 +780,12 @@
       }
       try {
         const res = await api('/api/proxies/quality-check', { method: 'POST', body: JSON.stringify(body) });
+        if (seq !== PROXY_INFO_SEQ) return;
         const d = res.data || {};
         renderProxyQualitySummary(index, d);
         showToast(d.message || '质量测试完成', d.success ? 'ok' : 'bad');
       } catch (e) {
+        if (seq !== PROXY_INFO_SEQ) return;
         if (box) {
           box.classList.remove('empty');
           box.innerHTML = `<div class="meta">${escapeHtml(e.message || '质量测试失败')}</div>`;

@@ -218,6 +218,24 @@ def test_existing_proxy_password_survives_domain_patch_when_omitted():
     assert restored["proxies"][0]["password"] == "secret-one"
 
 
+def test_proxy_auth_can_be_added_removed_and_restored_without_losing_identity(tmp_path):
+    plugin = config_plugin(tmp_path)
+    row = {"id": "stable", "host": "proxy.example.test", "port": 8080, "username": "", "password": ""}
+    plugin.update_config_from_web({"proxies": [row]})
+    plugin.update_config_from_web({"proxies": [{**row, "username": "user", "password": "secret"}]})
+    public = plugin.get_config_for_web()["proxies"][0]
+    plugin.update_config_from_web({"proxies": [{**public, "name": "renamed"}]})
+    assert plugin.config.proxies[0]["password"] == "secret"
+    plugin.update_config_from_web({"proxies": [{**public, "username": ""}]})
+    assert len(plugin.config.proxies) == 1
+    assert plugin.config.proxies[0]["id"] == "stable"
+    assert plugin.config.proxies[0]["username"] == ""
+    assert plugin.config.proxies[0]["password"] == ""
+    with pytest.raises(ValueError, match="代理配置无效"):
+        plugin.update_config_from_web({"proxies": [{**row, "username": "user"}]})
+    assert len(plugin.config.proxies) == 1
+
+
 def config_plugin(tmp_path):
     plugin = ConfigurationMixin()
     plugin._config_lock = threading.RLock()
@@ -811,6 +829,20 @@ const persistConfig = async () => {
 """ + "\nfunction newProxyDraft() {" + modal + """
 openProxyModal(0);
 $('proxyName').value = 'renamed';
-saveProxyModal().then(() => assert.equal(persisted, true)).catch(error => { throw error; });
+saveProxyModal().then(() => {
+  assert.equal(persisted, true);
+  openProxyModal(0);
+  $('proxyUser').value = '';
+  const noAuth = collectProxyModal();
+  assert.equal(noAuth.id, 'stable-proxy');
+  assert.equal(noAuth.password, '');
+  assert.equal(noAuth.has_auth, false);
+  CONFIG.proxies[0] = noAuth;
+  openProxyModal(0);
+  $('proxyUser').value = 'added-user';
+  assert.throws(collectProxyModal, /密码/);
+  $('proxyPass').value = 'added-password';
+  assert.equal(collectProxyModal().password, 'added-password');
+}).catch(error => { throw error; });
 """
     subprocess.run([node, "-e", script], check=True, text=True, capture_output=True)

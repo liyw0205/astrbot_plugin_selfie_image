@@ -968,6 +968,8 @@ class GenerationStoreMixin(PromptLookupMixin):
     def _commit_generation_records(self, record: Dict[str, Any]) -> None:
         # One generated image per monitor row. Batch/concurrency must not pile shots together.
         pieces = split_generation_record_images(record)
+        for piece in pieces:
+            self._prepare_record_image_fingerprint(piece)
         with ExitStack() as locks:
             for lock in (
                 getattr(self, "_records_lock", None),
@@ -981,6 +983,7 @@ class GenerationStoreMixin(PromptLookupMixin):
             self._link_committed_generation_record_to_task(piece)
 
     def _commit_generation_record(self, record: Dict[str, Any]) -> None:
+        self._prepare_record_image_fingerprint(record)
         with ExitStack() as locks:
             for lock in (
                 getattr(self, "_records_lock", None),
@@ -1002,14 +1005,17 @@ class GenerationStoreMixin(PromptLookupMixin):
         if task_id and record_id:
             self._link_generation_record_to_task(task_id, record_id)
 
-    def _commit_generation_record_unlocked(self, record: Dict[str, Any]) -> None:
-        self._require_record_store_writable()
-        stale_cache_paths: List[str] = []
+    def _prepare_record_image_fingerprint(self, record: Dict[str, Any]) -> None:
+        # Decoding large images must not hold locks shared with task snapshots.
         paths = record.get("generated_image_paths") or []
         if paths:
             loaded = self._load_cache_image_bytes(paths[0])
             if loaded:
                 record["image_fingerprint"] = image_fingerprint(loaded[0])
+
+    def _commit_generation_record_unlocked(self, record: Dict[str, Any]) -> None:
+        self._require_record_store_writable()
+        stale_cache_paths: List[str] = []
         record["prompt_selection"] = prompt_selection_snapshot(" ".join(
             str(record.get(key) or "") for key in ("original_prompt", "prompt", "request_prompt", "final_prompt")
         ))

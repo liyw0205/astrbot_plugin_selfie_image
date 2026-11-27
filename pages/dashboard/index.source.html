@@ -43,7 +43,7 @@
     </div>
   </div>
 
-  <header class="app-shell">
+  <header id="dashboardSidebar" class="app-shell">
     <div class="header-brand">
       <img class="header-logo" src="logo.png" alt="" onerror="this.style.display='none'">
       <div>
@@ -53,14 +53,13 @@
       </div>
     </div>
     <nav id="pageNav" class="page-nav" aria-label="功能分区">
-      <button data-tab="base" class="active" type="button">工作台</button>
+      <button data-tab="base" class="active" type="button" aria-current="page">工作台</button>
       <button data-tab="channels" type="button">模型渠道</button>
       <button data-tab="groups" type="button">群聊配置</button>
       <button data-tab="proxies" type="button">代理设置</button>
       <button data-tab="monitor" type="button">生成记录</button>
       <button data-tab="assets" type="button">资产库</button>
       <button data-tab="studio" type="button">无限画布</button>
-      <button data-tab="creativeCanvas" type="button">创作画布</button>
       <button data-tab="presets" type="button">预设管理</button>
       <button data-tab="test" type="button">快速试画</button>
       <button data-tab="image" type="button">出图设置</button>
@@ -75,8 +74,11 @@
     </div>
   </header>
   <div id="sidebarBackdrop" class="sidebar-backdrop" aria-hidden="true"></div>
+  <button id="sidebarLogoMenu" class="sidebar-logo-menu secondary" type="button" aria-label="打开侧边栏" title="打开侧边栏" aria-controls="dashboardSidebar" aria-expanded="false" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+  </button>
   <main class="app-shell">
-    <button id="bentoMobileMenu" class="bento-mobile-menu" type="button" style="display:none;margin:0 0 16px;background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:var(--shadow-soft)">☰　Selfie Image</button>
+    <button id="bentoMobileMenu" class="bento-mobile-menu" type="button" aria-controls="dashboardSidebar" aria-expanded="false" style="display:none;margin:0 0 16px;background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:var(--shadow-soft)">☰　Selfie Image</button>
 
     <section id="base" class="active floating-action-section">
       <div class="floating-actions" aria-label="工作台操作">
@@ -90,7 +92,7 @@
           <button type="button" data-nav-target="test">开始一次创作　→</button>
         </div>
         <div class="bento-quick">
-          <button class="bento-tile" type="button" data-nav-target="test"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>快速试画</b><span>快速验证一个想法</span></button>
+          <button class="bento-tile" type="button" data-nav-target="groups"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"></path><circle cx="9" cy="7" r="4"></circle></svg></div><b>群聊配置</b><span>管理群聊与用户访问</span></button>
           <button class="bento-tile" type="button" data-nav-target="studio"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>无限画布</b><span>打开画布，继续创作</span></button>
           <button class="bento-tile" type="button" data-nav-target="presets"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"></path><path d="M8 8h8M8 12h8M8 16h5"></path></svg></div><b>预设管理</b><span>整理提示词和 COS 池</span></button>
           <button class="bento-tile" type="button" data-nav-target="selfie"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg></div><b>形象参考</b><span>管理固定形象</span></button>
@@ -125,7 +127,6 @@
           <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
         </div>
       </div>
-      <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停会马上保存，删除、复制和优先级也会自动保存。启用但没选模型时会自动关掉该渠道。</p>
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
         <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
         <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">辅助渠道</button>
@@ -137,7 +138,7 @@
         <p class="muted">候选范围：有优先级时只用优先级模型，未设置时使用全部启用模型。顺序会依次重试，随机只选一个，固定只用候选模型 1。</p>
         <div class="grid">
           <div><label>模型调用模式</label><select id="imageModelCallMode" onchange="onImageModelCallModeChange()"><option value="sequence">顺序</option><option value="random">随机</option><option value="fixed">固定</option></select></div>
-          <div><label>选择生图模型</label><select id="priorityPicker"></select></div>
+          <div class="priority-model-picker"><div><label>渠道选择</label><select id="priorityChannel"></select></div><div><label>模型选择</label><select id="priorityPicker"></select></div></div>
           <div><label>操作</label><div class="actions" style="margin-top:0"><button id="addPriorityBtn" class="secondary" type="button" onclick="addPriority('image')">加入</button><button id="clearPriorityBtn" class="secondary" type="button" onclick="clearPriority('image')">清空</button></div></div>
         </div>
         <textarea id="priorityList" style="display:none"></textarea>
@@ -147,7 +148,7 @@
         <h3>辅助模型优先级</h3>
         <p class="muted">只控制辅助渠道；文字审核、成品审核、图转文和翻译按此顺序寻找可用模型。</p>
         <div class="grid">
-          <div><label>选择辅助模型</label><select id="auditPriorityPicker"></select></div>
+          <div class="priority-model-picker"><div><label>渠道选择</label><select id="auditPriorityChannel"></select></div><div><label>模型选择</label><select id="auditPriorityPicker"></select></div></div>
           <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority('audit')">加入</button><button class="secondary" type="button" onclick="clearPriority('audit')">清空</button></div></div>
         </div>
         <textarea id="auditPriorityList" style="display:none"></textarea>
@@ -157,12 +158,10 @@
     </section>
 
     <section id="groups" class="floating-action-section">
-      <div class="between">
-        <h2>群聊配置</h2>
-        <div class="actions" style="margin-top:0">
-          <button id="refreshGroupsBtn" class="secondary" type="button">刷新群列表</button>
-          <button id="saveGroupsBtn" class="ok" type="button" disabled>保存群配置</button>
-        </div>
+      <h2>群聊配置</h2>
+      <div class="floating-actions" aria-label="群聊配置操作">
+        <button id="refreshGroupsBtn" class="secondary" type="button" data-tooltip="刷新群聊和名单" aria-label="刷新群聊和名单" title="刷新群聊和名单"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
+        <button id="saveGroupsBtn" class="ok" type="button" data-tooltip="保存群配置" aria-label="保存群配置" title="保存群配置" disabled><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"></path><path d="M8 3v6h8V3"></path><path d="M8 21v-7h8v7"></path></svg></span></button>
       </div>
       <div id="groupsStatus" class="status">尚未读取群列表</div>
       <div class="group-access-panel">
@@ -217,10 +216,10 @@
         <div><label for="monitorModel">模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
         <div><label for="monitorSuccess">状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
         <div><label for="monitorMetricsWindow">指标窗口</label><select id="monitorMetricsWindow"><option value="all">全部保留记录</option><option value="1h">最近 1 小时</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></div>
-        <div><label for="monitorAsset">资产标记</label><select id="monitorAsset"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
-        <div><label for="monitorSource">来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="来源关键词"><datalist id="monitorSourceList"></datalist></div>
-        <div><label for="monitorTag">标签</label><input id="monitorTag" placeholder="输入标签"></div>
-        <div><label for="monitorKeyword">关键词</label><input id="monitorKeyword" placeholder="编号或提示词"></div>
+        <div class="filter-full"><label for="monitorAsset">资产标记</label><select id="monitorAsset"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
+        <div class="filter-full"><label for="monitorSource">来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="来源关键词"><datalist id="monitorSourceList"></datalist></div>
+        <div class="filter-full"><label for="monitorTag">标签</label><input id="monitorTag" placeholder="输入标签"></div>
+        <div class="filter-full"><label for="monitorKeyword">关键词</label><input id="monitorKeyword" placeholder="编号或提示词"></div>
       </div>
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
       <div class="metrics-launcher-header">
@@ -265,16 +264,20 @@
           </div>
         </div>
       </div>
-      <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
+      <div class="task-queue-launcher"><button id="openTaskQueueBtn" class="secondary" type="button" onclick="openTaskQueue()" aria-haspopup="dialog" aria-controls="taskQueueModal">任务队列</button><span id="taskQueueCount" class="pill gray" aria-label="当前活动任务数量" aria-live="polite">0</span></div>
+      <div id="taskQueueModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="taskQueueTitle">
+        <div class="modal task-queue-dialog">
+          <div class="between"><h2 id="taskQueueTitle">任务队列</h2><div class="actions" style="margin-top:0"><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button><button id="closeTaskQueueBtn" class="secondary" type="button" onclick="closeTaskQueue()">关闭</button></div></div>
+          <div class="modal-body">
       <div class="dashboard-filter-grid" style="margin-top:8px">
         <div><label for="taskQueueScope">显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
         <div><label for="taskQueueMedia">媒体类型</label><select id="taskQueueMedia" onchange="taskQueueViewChanged()"><option value="">全部</option><option value="image">图片</option></select></div>
-        <div><label for="taskQueueStatus">任务状态</label><select id="taskQueueStatus" onchange="taskQueueFilterChanged()"><option value="">全部</option><option value="queued">排队</option><option value="running">进行中</option><option value="succeeded">完成</option><option value="partial_success">部分完成</option><option value="failed">失败</option><option value="delivery_failed">发送失败</option><option value="cancelled">已取消</option><option value="expired">已过期</option></select></div>
-        <div><label for="taskQueueSource">来源筛选</label><input id="taskQueueSource" placeholder="来源关键词" oninput="taskQueueFilterChanged()"></div>
-        <div><label for="taskQueueModel">模型筛选</label><input id="taskQueueModel" placeholder="输入模型名" oninput="taskQueueFilterChanged()"></div>
-        <div><label for="taskQueueKeyword">关键词</label><input id="taskQueueKeyword" placeholder="提示词或错误" oninput="taskQueueFilterChanged()"></div>
-        <div><label for="taskQueueStartDate">开始日期</label><input id="taskQueueStartDate" type="date" onchange="taskQueueFilterChanged()"></div>
-        <div><label for="taskQueueEndDate">结束日期</label><input id="taskQueueEndDate" type="date" onchange="taskQueueFilterChanged()"></div>
+        <div class="filter-full"><label for="taskQueueStatus">任务状态</label><select id="taskQueueStatus" onchange="taskQueueFilterChanged()"><option value="">全部</option><option value="queued">排队</option><option value="running">进行中</option><option value="succeeded">完成</option><option value="partial_success">部分完成</option><option value="failed">失败</option><option value="delivery_failed">发送失败</option><option value="cancelled">已取消</option><option value="expired">已过期</option></select></div>
+        <div class="filter-full"><label for="taskQueueSource">来源筛选</label><input id="taskQueueSource" placeholder="来源关键词" oninput="taskQueueFilterChanged()"></div>
+        <div class="filter-full"><label for="taskQueueModel">模型筛选</label><input id="taskQueueModel" placeholder="输入模型名" oninput="taskQueueFilterChanged()"></div>
+        <div class="filter-full"><label for="taskQueueKeyword">关键词</label><input id="taskQueueKeyword" placeholder="提示词或错误" oninput="taskQueueFilterChanged()"></div>
+        <div class="filter-full"><label for="taskQueueStartDate">开始日期</label><input id="taskQueueStartDate" type="date" onchange="taskQueueFilterChanged()"></div>
+        <div class="filter-full"><label for="taskQueueEndDate">结束日期</label><input id="taskQueueEndDate" type="date" onchange="taskQueueFilterChanged()"></div>
       </div>
       <div class="between" style="margin-top:10px;gap:8px">
         <span id="taskSelectionStatus" class="muted">未选择任务</span>
@@ -290,6 +293,9 @@
       <div id="taskQueueSummary" class="status"></div>
       <div style="overflow:auto;margin-top:8px"><table class="table" id="taskQueueTable"></table></div>
       <div id="taskQueuePager" class="actions" style="margin-top:8px;justify-content:flex-end"></div>
+          </div>
+        </div>
+      </div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
       <div class="between" style="margin-top:8px;gap:8px">
         <span id="recordSelectionStatus" class="muted">未选择记录</span>
@@ -311,30 +317,17 @@
           <h2>资产库</h2>
           <p class="muted">集中浏览已生成的图片，支持组合筛选与批量整理。</p>
         </div>
-        <div class="actions" style="margin-top:0">
-          <div class="asset-preset-picker">
-            <input id="assetStudioPresetSearch" class="mini" type="search" placeholder="搜索预设" aria-label="搜索加入画布预设">
-            <select id="assetStudioPreset" class="mini" title="加入画布时附加的预设"><option value="">不套预设</option></select>
-            <button id="assetStudioPresetPrev" class="secondary mini" type="button" title="上一页" aria-label="预设上一页" disabled>‹</button>
-            <button id="assetStudioPresetNext" class="secondary mini" type="button" title="下一页" aria-label="预设下一页" disabled>›</button>
-          </div>
-          <button class="secondary mini" type="button" onclick="addSelectedAssetToStudio()">加入画布</button>
-          <button class="secondary" type="button" onclick="exportAssets()">导出元数据</button>
-          <button class="secondary" type="button" onclick="document.getElementById('assetImportFile').click()">导入元数据</button>
-          <input id="assetImportFile" type="file" accept="application/json,.json" style="display:none">
-        </div>
       </div>
       <div class="dashboard-filter-grid">
-        <div><label for="assetKeyword">关键词</label><input id="assetKeyword" placeholder="编号、提示词等"></div>
-        <div><label for="assetSource">来源</label><input id="assetSource" placeholder="来源关键词"></div>
+        <div class="filter-full"><label for="assetKeyword">关键词</label><input id="assetKeyword" placeholder="编号、提示词等"></div>
+        <div class="filter-full"><label for="assetSource">来源</label><input id="assetSource" placeholder="来源关键词"></div>
         <div><label for="assetModel">模型筛选</label><select id="assetModel"><option value="">全部</option></select></div>
-        <div><label for="assetMedia">媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image" selected>图片</option></select></div>
         <div><label for="assetSuccess">状态</label><select id="assetSuccess"><option value="">全部</option><option value="true" selected>成功</option><option value="false">失败</option></select></div>
         <div><label for="assetMark">资产标记</label><select id="assetMark"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
-        <div><label for="assetTag">标签</label><input id="assetTag" list="assetTagList" placeholder="精确匹配标签"><datalist id="assetTagList"></datalist></div>
         <div><label for="assetSort">排序</label><select id="assetSort"><option value="recent">最新生成</option><option value="oldest">最早生成</option><option value="priority">置顶/收藏优先</option></select></div>
-        <div><label for="assetStartTime">开始日期</label><input id="assetStartTime" type="date"></div>
-        <div><label for="assetEndTime">结束日期</label><input id="assetEndTime" type="date"></div>
+        <div class="filter-full"><label for="assetTag">标签</label><input id="assetTag" list="assetTagList" placeholder="精确匹配标签"><datalist id="assetTagList"></datalist></div>
+        <div class="filter-full"><label for="assetStartTime">开始日期</label><input id="assetStartTime" type="date"></div>
+        <div class="filter-full"><label for="assetEndTime">结束日期</label><input id="assetEndTime" type="date"></div>
       </div>
       <div id="assetStats" class="stat-grid" style="margin-top:12px"></div>
       <div class="asset-collection-panel">
@@ -438,57 +431,6 @@
       <input id="studioTitle" type="hidden"><input id="studioPrompt" type="hidden"><input id="studioMode" type="hidden"><input id="studioAspect" type="hidden"><input id="studioResolution" type="hidden"><input id="studioCount" type="hidden"><input id="studioUsePersona" type="checkbox" hidden>
     </section>
 
-    <section id="creativeCanvas" class="floating-action-section creative-canvas-workspace">
-      <div class="studio-topbar">
-        <div>
-          <h2>创作画布</h2>
-          <div id="creativeCanvasStatus" class="studio-status-line">选择画布后开始创作</div>
-        </div>
-        <div class="studio-session-picker">
-          <label for="creativeCanvasSessionSelect">画布</label>
-          <select id="creativeCanvasSessionSelect" aria-label="选择创作画布"></select>
-          <button class="secondary mini" id="creativeCanvasReloadBtn" type="button" aria-label="刷新创作画布" title="刷新创作画布">刷新</button>
-          <button class="danger mini" id="creativeCanvasDeleteBtn" type="button" disabled>删除画布</button>
-        </div>
-      </div>
-      <div id="creativeCanvasEmptyState" class="studio-empty">
-        <strong>还没有创作画布</strong>
-        <div class="muted" style="margin-top:6px">点击右下角 + 选择模板，开始创作。</div>
-      </div>
-      <div id="creativeCanvasEditor" class="creative-canvas-editor" hidden>
-        <div class="grid">
-          <div><label>标题</label><input id="creativeCanvasTitle" placeholder="画布标题"></div>
-          <div><label>模式</label><select id="creativeCanvasMode"><option value="group">合影</option><option value="selfie">自拍</option><option value="i2i">图生图</option><option value="t2i">文生图</option></select></div>
-          <div><label>画面比例</label><select id="creativeCanvasAspect"></select></div>
-          <div><label>清晰度</label><select id="creativeCanvasResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-          <div><label>张数</label><input id="creativeCanvasCount" type="number" min="1" max="4" value="1"></div>
-        </div>
-        <label class="checkline"><input id="creativeCanvasUsePersona" type="checkbox" checked> 缺形象槽时使用当前形象</label>
-        <label>画面描述</label>
-        <textarea id="creativeCanvasPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
-        <div class="actions" style="margin-top:8px"><button class="secondary" id="creativeCanvasPresetBtn" type="button">预设</button><button class="secondary" id="creativeCanvasCosBtn" type="button">COS池</button></div>
-        <div class="preset-panel" id="creativeCanvasPresetPanel"></div>
-        <div class="preset-panel" id="creativeCanvasCosPanel"></div>
-        <div class="between" style="margin-top:8px">
-          <h3>参考图</h3>
-          <div class="actions"><button class="secondary" id="creativeCanvasAddSlotBtn" type="button">添加参考图</button></div>
-        </div>
-        <div class="studio-slots" id="creativeCanvasSlots"></div>
-        <div class="actions">
-          <button class="ok" id="creativeCanvasSaveBtn" type="button">保存</button>
-          <button class="ok" id="creativeCanvasRunBtn" type="button">生成图片</button>
-          <button class="secondary" id="creativeCanvasRerunBtn" type="button">再次生成</button>
-          <button class="danger" id="creativeCanvasCancelBtn" type="button" style="display:none">取消生成</button>
-        </div>
-        <h3>生成结果</h3>
-        <div class="studio-results" id="creativeCanvasResults"></div>
-        <input id="creativeCanvasFilePick" type="file" accept="image/*" style="display:none">
-      </div>
-      <div class="floating-actions" aria-label="创作操作">
-        <button class="ok" id="creativeCanvasCreateBtn" type="button" data-tooltip="选择模板开始创作" aria-label="选择模板开始创作" title="选择模板开始创作"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
-      </div>
-    </section>
-
     <section id="presets" class="floating-action-section">
       <div class="between">
         <div>
@@ -557,12 +499,12 @@
 
     <section id="test">
       <div class="between"><h2>试画</h2></div>
-      <div class="grid">
+      <div class="dashboard-filter-grid">
         <div><label>用哪个渠道</label><select id="testChannel"></select></div>
         <div><label>模型</label><select id="testModel"></select></div>
         <div><label>画面比例</label><select id="testAspect"></select></div>
         <div id="testResolutionWrap"><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-        <div id="testCountWrap"><label>生成数量</label><input id="testCount" type="number" min="1" max="100" value="1" title="单次试画最多生成几张"></div>
+        <div id="testCountWrap" class="filter-full"><label>生成数量</label><input id="testCount" type="number" min="1" max="100" value="1" title="单次试画最多生成几张"></div>
       </div>
       <div class="between">
         <label id="testPromptLabel">想画什么</label>
@@ -572,35 +514,8 @@
         <button class="secondary" id="testPresetBtn" type="button">预设</button>
         <button class="secondary" id="testCosBtn" type="button">COS池</button>
       </div>
-      <div class="preset-panel" id="testPresetPanel"></div>
-      <div class="preset-panel" id="testCosPanel"></div>
-      <div class="detail-title"><h3>模板变量</h3><span class="muted">可直接写 {角色}、{场景} 等占位符</span></div>
-      <div class="grid4 creative-template-grid">
-        <div><label>角色</label><input id="testTemplateRole" placeholder="例如：宁红夜"></div>
-        <div><label>服饰</label><input id="testTemplateOutfit" placeholder="例如：红色旗袍"></div>
-        <div><label>场景</label><input id="testTemplateScene" placeholder="例如：庭院廊下"></div>
-        <div><label>姿势</label><input id="testTemplatePose" placeholder="例如：侧身回看"></div>
-        <div><label>镜头</label><input id="testTemplateShot" placeholder="例如：竖屏半身"></div>
-        <div><label>视角</label><input id="testTemplateView" placeholder="例如：他拍视角"></div>
-        <div><label>光线</label><input id="testTemplateLighting" placeholder="例如：窗光"></div>
-        <div class="actions" style="align-items:end;margin-top:0"><button class="secondary mini" id="testTemplatePreviewBtn" type="button">预览模板</button><button class="secondary mini" id="testTemplateRandomBtn" type="button">随机模板</button></div>
-      </div>
-      <div class="grid" style="margin-top:4px">
-        <label class="checkline"><input id="testTemplateRandomize" type="checkbox"> 未填写变量时随机补全</label>
-        <label class="checkline"><input id="testVariationEnabled" type="checkbox"> 批次变化（轮换姿势/场景/镜头）</label>
-      </div>
-      <div id="testVariationFieldsWrap" class="grid4" style="display:none;margin-top:4px">
-        <label class="checkline"><input type="checkbox" value="pose" data-test-vary checked> 姿势</label>
-        <label class="checkline"><input type="checkbox" value="scene" data-test-vary checked> 场景</label>
-        <label class="checkline"><input type="checkbox" value="shot" data-test-vary checked> 镜头</label>
-        <label class="checkline"><input type="checkbox" value="view" data-test-vary> 视角</label>
-      </div>
-      <div id="testTemplatePreview" class="status" style="display:none;margin-top:8px"></div>
-      <div class="grid">
-        <label class="checkline" id="promptEnhanceWrap"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
-        <label class="checkline" id="useSelfieWrap"><input id="useSelfie" type="checkbox"> 带上当前形象参考<span id="useSelfieHint"></span></label>
-        <div><label id="testRefsLabel">额外参考图</label><input id="testRefs" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml" multiple></div>
-      </div>
+      <label class="checkline" id="useSelfieWrap"><input id="useSelfie" type="checkbox"> 带上当前形象参考<span id="useSelfieHint"></span></label>
+      <div id="testExtraReferences"></div>
       <div class="actions">
         <button class="ok" id="testImageBtn">开始试画</button>
         <button class="danger" id="testCancelBtn" type="button" style="display:none">取消任务</button>
@@ -611,33 +526,30 @@
         <button class="danger" onclick="clearTestData()">清空</button>
       </div>
       <div id="testStatus" class="status"></div>
-      <div id="testRequestPanel" class="test-panel"><h3>请求数据</h3><pre id="testRequestData"></pre></div>
-      <div id="testResponsePanel" class="test-panel"><h3>响应数据</h3><pre id="testResponseData"></pre></div>
-      <div id="testResultPanel" class="test-panel active"><h3>生成结果</h3><div id="testImages" class="images"></div></div>
     </section>
 
     <section id="image">
       <h2>出图习惯</h2>
-      <div class="grid4">
+      <div class="dashboard-filter-grid">
         <div><label>默认比例</label><select id="defaultAspect"></select></div>
         <div><label>默认清晰度</label><select id="defaultResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="5" title="同一时间最多几张图一起请求上游；批量 /看看COS 会按这个数并发"></div>
-        <div><label title="全部模型依次请求到结束的最长等待">整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
-        <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
-        <div><label>图片最大单边（像素）</label><input id="maxImageDimension" type="number" min="256" max="65536"></div>
-        <div><label>图片总像素上限</label><input id="maxImagePixels" type="number" min="1048576" max="536870912"></div>
-        <div><label>动画最大帧数</label><input id="maxAnimationFrames" type="number" min="1" max="64"></div>
-        <div><label>单条指令最多请求几张</label><input id="maxBatchCount" type="number" min="1" max="100" title="限制单条指令最多请求几张；不同指令之间不共用这个上限"></div>
-        <div><label>连画失败时</label>
+        <div class="filter-full"><label>连画失败时</label>
           <select id="batchOnFailure">
             <option value="skip">跳过失败张，继续后面</option>
             <option value="stop">一张失败就整批停</option>
             <option value="skip_max">最多跳过 N 张后停止</option>
           </select>
         </div>
-        <div><label>最多跳过张数</label><input id="batchSkipMax" type="number" min="0" max="8" title="仅「最多跳过 N 张」时生效"></div>
-        <div><label>每人冷却（秒）</label><input id="rateLimitSeconds" type="number" min="0"></div>
-        <div><label>每日基础次数</label><input id="dailyLimitCount" type="number" min="1"></div>
+        <div class="filter-full"><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="5" title="同一时间最多几张图一起请求上游；批量 /看看COS 会按这个数并发"></div>
+        <div class="filter-full"><label title="全部模型依次请求到结束的最长等待">整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
+        <div class="filter-full"><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
+        <div class="filter-full"><label>图片最大单边（像素）</label><input id="maxImageDimension" type="number" min="256" max="65536"></div>
+        <div class="filter-full"><label>图片总像素上限</label><input id="maxImagePixels" type="number" min="1048576" max="536870912"></div>
+        <div class="filter-full"><label>动画最大帧数</label><input id="maxAnimationFrames" type="number" min="1" max="64"></div>
+        <div class="filter-full"><label>单条指令最多请求几张</label><input id="maxBatchCount" type="number" min="1" max="100" title="限制单条指令最多请求几张；不同指令之间不共用这个上限"></div>
+        <div class="filter-full"><label>最多跳过张数</label><input id="batchSkipMax" type="number" min="0" max="8" title="仅「最多跳过 N 张」时生效"></div>
+        <div class="filter-full"><label>每人冷却（秒）</label><input id="rateLimitSeconds" type="number" min="0"></div>
+        <div class="filter-full"><label>每日基础次数</label><input id="dailyLimitCount" type="number" min="1"></div>
       </div>
       <div class="grid">
         <label class="checkline"><input id="enableLLMTool" type="checkbox"> 对话里也能叫我出图/自拍</label>
@@ -663,7 +575,8 @@
         <div class="grid">
           <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
         </div>
-        <label class="checkline"><input id="selfiePersonaEnabled" type="checkbox" disabled aria-busy="true"> 使用形象人设池</label>
+        <input id="selfiePersonaEnabled" type="checkbox" disabled aria-busy="true" hidden>
+        <div class="identity-mode-switch" role="group" aria-label="形象模式"><button type="button" data-identity-mode="persona" aria-pressed="false" disabled>人设</button><button type="button" data-identity-mode="image" aria-pressed="false" disabled>形象</button></div>
         <div class="muted" id="selfieIdentityModeHint">正在读取形象模式…</div>
         <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 形象图池为空时用 logo</label>
         <div class="grid">
@@ -808,7 +721,7 @@
       </div>
       <div class="modal-body">
       <div class="grid">
-        <div><label>渠道名</label><input id="modalChannelName"></div>
+        <div><label>渠道名</label><input id="modalChannelName"><label class="checkline channel-enabled"><input id="modalEnabled" type="checkbox"> 启用渠道</label></div>
         <div style="display:none" id="modalProviderWrap"><label>类型</label><select id="modalProvider"></select></div>
         <div class="baseurl-row">
           <div><label>Base URL</label><input id="modalBaseUrl" placeholder="https://..."></div>
@@ -824,29 +737,18 @@
           <div><label for="modalNaiStrength">图生图参考强度（0 到 1）</label><input id="modalNaiStrength" type="number" min="0" max="1" step="0.01" placeholder="0.55"></div>
         </div>
       </details>
-      <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
-      <label class="checkline"><input id="modalEnabled" type="checkbox"> 启用渠道</label>
+      <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别。</p>
 
-      <div class="grid" style="margin-top: 12px;">
-        <div class="model-panel">
-          <div class="between">
-            <h3>缓存模型</h3>
-            <span id="cacheCount" class="pill gray">0</span>
-          </div>
-          <label>搜索缓存</label><input id="cacheSearch" placeholder="输入模型名筛选">
-          <div id="cacheModels" class="model-list"></div>
-        </div>
-        <div class="model-panel">
+      <div class="channel-models">
           <div class="between">
             <h3>已启用模型顺序</h3>
-            <span id="enabledCount" class="pill green">0</span>
+            <div class="actions"><span id="enabledCount" class="pill green">0</span><button class="secondary mini" id="openCacheModels" type="button">缓存模型 <span id="cacheCount">0</span></button></div>
           </div>
           <div class="grid">
             <div><label>手动添加模型</label><input id="manualModel" placeholder="model-id"></div>
             <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" id="manualAdd">添加</button><button class="secondary" type="button" id="manualFillNai" style="display:none">填充</button></div></div>
           </div>
           <div id="enabledModels" class="model-list"></div>
-        </div>
       </div>
 
       </div>
@@ -861,7 +763,49 @@
     </div>
   </div>
 
+  <div id="cacheModelsModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="cacheModelsTitle">
+    <div class="modal">
+      <div class="between">
+        <h2 id="cacheModelsTitle">缓存模型</h2>
+        <button class="secondary" type="button" onclick="closeCacheModels()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <label for="cacheSearch">搜索模型</label><input id="cacheSearch" type="search" placeholder="输入模型名筛选">
+        <div id="cacheModels" class="model-list"></div>
+      </div>
+    </div>
+  </div>
 
+  <div id="modelSettingsModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="modelSettingsTitle">
+    <div class="modal">
+      <div class="between">
+        <h2 id="modelSettingsTitle">编辑模型</h2>
+        <button class="secondary" type="button" onclick="closeModelSettings()">完成</button>
+      </div>
+      <div class="modal-body">
+        <p id="modelSettingsName" class="mono"></p>
+        <div id="modelSettingsBody"></div>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="testDataModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="testDataTitle">
+    <div class="modal"><div class="between"><h2 id="testDataTitle">试画结果</h2><button class="secondary" type="button" onclick="closeTestPanel()">关闭</button></div><div class="modal-body">
+      <div id="testRequestPanel" class="test-panel"><pre id="testRequestData"></pre></div>
+      <div id="testResponsePanel" class="test-panel"><pre id="testResponseData"></pre></div>
+      <div id="testResultPanel" class="test-panel"><div id="testImages" class="images"></div></div>
+    </div></div>
+  </div>
+  <div id="referenceGalleryModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="referenceGalleryTitle">
+    <div class="modal"><div class="between"><h2 id="referenceGalleryTitle">选择参考图</h2><button class="secondary" type="button" onclick="closeReferenceGallery()">关闭</button></div><div id="referenceGalleryBody" class="modal-body"></div></div>
+  </div>
+  <div id="catalogPickerModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="catalogPickerTitle">
+    <div class="modal"><div class="between"><h2 id="catalogPickerTitle">选择提示词预设</h2><button id="catalogPickerClose" class="secondary" type="button" onclick="closeCatalogPicker()">关闭</button></div><div class="modal-body"><div id="catalogPresetPanel" class="preset-panel catalog-picker-panel"></div><div id="catalogCosPanel" class="preset-panel catalog-picker-panel"></div></div></div>
+  </div>
+  <div id="proxyInfoModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="proxyInfoTitle">
+    <div class="modal"><div class="between"><h2 id="proxyInfoTitle">代理详情</h2><button class="secondary" type="button" onclick="closeProxyInfo()">关闭</button></div><div id="proxyInfoBody" class="modal-body"></div></div>
+  </div>
   <div id="proxyModal" class="modal-mask">
     <div class="modal">
       <div class="between">
@@ -1031,9 +975,6 @@
         <button class="secondary" type="button" onclick="closeStudioCreateModal()">关闭</button>
       </div>
       <div class="modal-body">
-        <p class="muted">按模板新建画布后，就可以继续调整画面描述、参考图和生成参数。</p>
-        <label>模板</label>
-        <select id="studioTemplateSelect"></select>
         <label style="margin-top:12px">标题（可选）</label>
         <input id="studioCreateTitle" placeholder="例如：周末合影">
         <div id="studioCreateStatus" class="status" style="margin-top:10px"></div>
@@ -1058,27 +999,6 @@
         <div id="studioConnectList" class="studio-connect-list"></div>
         <div id="studioConnectStatus" class="status" style="margin-top:10px"></div>
       </div>
-    </div>
-  </div>
-
-  <div id="creativeCanvasCreateModal" class="modal-mask">
-    <div class="modal studio-create-dialog">
-      <div class="between">
-        <h2>开始创作</h2>
-        <button class="secondary" type="button" onclick="closeCreativeCanvasCreateModal()">关闭</button>
-      </div>
-      <div class="modal-body">
-        <p class="muted">选择一个模板开始创作。</p>
-        <label>模板</label>
-        <select id="creativeCanvasTemplateSelect"></select>
-        <label style="margin-top:12px">标题（可选）</label>
-        <input id="creativeCanvasCreateTitle" placeholder="例如：周末合影">
-        <div id="creativeCanvasCreateStatus" class="status" style="margin-top:10px"></div>
-      </div>
-      <div class="modal-footer"><div class="actions" style="margin-top:0;justify-content:flex-end">
-        <button class="secondary" type="button" onclick="closeCreativeCanvasCreateModal()">取消</button>
-        <button class="ok" id="creativeCanvasCreateConfirmBtn" type="button">创建画布</button>
-      </div></div>
     </div>
   </div>
 
@@ -1160,13 +1080,13 @@
 <!-- dashboard-source: records_assets.js -->
 <!-- dashboard-source: protected_media.js -->
 <!-- dashboard-source: record_details.js -->
+<!-- dashboard-source: reference_images.js -->
 <!-- dashboard-source: image_test.js -->
 <!-- dashboard-source: selfie_auth.js -->
 <!-- dashboard-source: backup_manager.js -->
 <!-- dashboard-source: prompt_catalogs.js -->
 <!-- dashboard-source: studio_sessions.js -->
 <!-- dashboard-source: studio_graph.js -->
-<!-- dashboard-source: creative_canvas.js -->
 <!-- dashboard-source: bootstrap.js -->
   </script>
   <script>

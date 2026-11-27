@@ -178,6 +178,7 @@
     }
 
     async function loadRecords(showRefreshToast = false, {background = false} = {}) {
+      if (!$('recordTable').innerHTML.trim()) $('recordTable').innerHTML = '<tbody><tr data-initial-loading><td colspan="4" role="status">正在加载记录…</td></tr></tbody>';
       await ensureDashboardPersistentCachesHydrated();
       if (showRefreshToast) clearGalleryPickerCache();
       const requestSeq = ++RECORD_LOAD_SEQ;
@@ -220,6 +221,7 @@
       } catch (e) {
         if (isAbortError(e)) return;
         if (requestSeq === RECORD_LOAD_SEQ && !cached) $('monitorStats').textContent = e.message;
+        if (requestSeq === RECORD_LOAD_SEQ && $('recordTable').querySelector('[data-initial-loading]')) $('recordTable').innerHTML = '<tbody><tr><td colspan="4">记录加载失败，请刷新重试</td></tr></tbody>';
       } finally {
         if (requestSeq === RECORD_LOAD_SEQ) {
           RECORD_LOADING = false;
@@ -371,6 +373,42 @@
       if (!model) return '<span class="model-attempt-empty">空</span>';
       return `<span class="model-attempt-badge model-attempt-ok">${escapeHtml(model)}</span>`;
     }
+    function recordListTime(record) {
+      // Preserve the server's calendar date and clock time across browser time zones.
+      const match = String(record.time || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+      if (!match) return {date: '', dateLabel: '日期未记录', clock: '时间未记录'};
+      const [, year, month, day, hour, minute, second = '00'] = match;
+      return {
+        date: `${year}-${month}-${day}`,
+        dateLabel: `${year}年${Number(month)}月${Number(day)}日`,
+        clock: hour == null ? '时间未记录' : `${hour}时${minute}分${second}秒`,
+      };
+    }
+    function recordSourceBadge(record) {
+      const source = String(record.source || '').trim().toLowerCase();
+      let group = String(record.group_id || '').trim(), user = String(record.user_id || '').trim();
+      const label = displaySourceLabel(record);
+      if (!group && !user) {
+        const legacy = label.match(/^(\d+)(?:\/(\d+))?$/);
+        if (legacy) {
+          group = legacy[2] ? legacy[1] : '';
+          user = legacy[2] || legacy[1];
+        }
+      }
+      let tone = 'other', lines = [label], title = label;
+      if (source !== 'studio-run' && source !== 'web-test') {
+        if (group) {
+          tone = 'group';
+          lines = [group, user].filter(Boolean);
+          title = `群聊：${group}${user ? `，QQ：${user}` : ''}`;
+        } else if (user) {
+          tone = 'private';
+          lines = [user];
+          title = `个人：${user}`;
+        }
+      }
+      return `<span class="record-source-badge record-source-${tone}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${lines.map(line => `<span>${escapeHtml(line)}</span>`).join('')}</span>`;
+    }
     function recordRetryModelChain(record) {
       const attempts = record.attempts || record.response_data?.attempts || [];
       const rows = Array.isArray(attempts) ? attempts.slice() : [];
@@ -470,12 +508,15 @@
         ['平均耗时', averageLabel],
         ['页码', `${MONITOR_PAGE}/${totalPages}`],
       ].map(([k,v]) => `<div class="stat-card"><div class="k">${k}</div><div class="v">${escapeHtml(String(v))}</div></div>`).join('');
-      $('recordTable').innerHTML = '<thead><tr><th></th><th>编号</th><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
+      let previousDate = null;
+      $('recordTable').innerHTML = '<thead><tr><th></th><th>编号</th><th>来源</th><th>模型</th></tr></thead><tbody>' +
         (pageRows.length ? pageRows.map(r => {
           const id = String(r.id || '');
-          const lifecycle = recordLifecycleStatus(r);
-          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td class="mono">${escapeHtml(r.image_code || '')}</td><td>${escapeHtml(r.time||'')}</td><td>图片</td><td>${escapeHtml(displaySourceLabel(r))}</td><td>${escapeHtml(lifecycle.label)}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
-        }).join('') : '<tr><td colspan="8" class="muted">没有匹配的监控记录</td></tr>') +
+          const time = recordListTime(r);
+          const dateRow = time.date !== previousDate ? `<tr class="record-date-row"><th colspan="4" scope="rowgroup">${escapeHtml(time.dateLabel)}</th></tr>` : '';
+          previousDate = time.date;
+          return dateRow + `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td><span class="mono">${escapeHtml(r.image_code || '')}</span><div class="muted record-elapsed">${escapeHtml(formatRecordElapsed(r))}</div><div class="muted record-clock">${escapeHtml(time.clock)}</div></td><td>${recordSourceBadge(r)}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
+        }).join('') : '<tr><td colspan="4" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
       $('recordTable').querySelectorAll('input[data-record-select]').forEach(input => input.onchange = event => {
         event.stopPropagation();
@@ -555,7 +596,7 @@
       const params = new URLSearchParams();
       const fields = [
         ['q', 'assetKeyword'], ['source', 'assetSource'], ['model', 'assetModel'],
-        ['media_type', 'assetMedia'], ['success', 'assetSuccess'], ['tag', 'assetTag'],
+        ['success', 'assetSuccess'], ['tag', 'assetTag'],
         ['sort', 'assetSort'], ['start_time', 'assetStartTime'], ['end_time', 'assetEndTime']
       ];
       fields.forEach(([name, id]) => {
@@ -564,6 +605,7 @@
       });
       const mark = String($('assetMark')?.value || '').trim();
       if (mark === 'favorite' || mark === 'pinned') params.set(mark, 'true');
+      params.set('media_type', 'image');
       params.set('limit', String(ASSET_PAGE_SIZE));
       params.set('offset', String((Math.max(1, page) - 1) * ASSET_PAGE_SIZE));
       return '/api/assets?' + params.toString();
@@ -604,8 +646,6 @@
           try {
             if (action === 'detail') {
               await openRecordDetail(recordId);
-            } else if (action === 'studio') {
-              await addAssetToStudio(recordId);
             } else if (action === 'download') {
               await downloadCachePath(path, name);
             }
@@ -614,11 +654,6 @@
             button.classList.remove('busy');
           }
           return;
-        }
-        const card = event.target.closest('.asset-card[data-record-id]');
-        if (card && grid.contains(card) && !event.target.closest('input,button')) {
-          event.preventDefault();
-          await openRecordDetail(card.getAttribute('data-record-id') || '');
         }
       });
     }
@@ -629,10 +664,6 @@
       const totalPages = Math.max(1, Math.ceil(filtered / ASSET_PAGE_SIZE));
       ASSET_PAGE = Math.min(Math.max(1, ASSET_PAGE), totalPages);
       const start = Number(ASSET_META.offset ?? ((ASSET_PAGE - 1) * ASSET_PAGE_SIZE));
-      const selectedVisible = rows.filter(row => ASSET_SELECTION.has(String(row.id || ''))).length;
-      if ($('assetSelectionStatus')) $('assetSelectionStatus').textContent = selectedVisible
-        ? `已选择 ${selectedVisible} 项（当前页）`
-        : '当前页未选择资产';
       if ($('assetStats')) {
         const images = rows.length;
         const favorites = rows.filter(row => row.favorite).length;
@@ -648,34 +679,20 @@
           const id = String(record.id || '');
           const media = assetPrimaryPath(record);
           const name = media.path.split('/').pop() || '图片';
-          const prompt = String(record.original_prompt || record.request_prompt || '').trim();
-          const lifecycle = recordLifecycleStatus(record);
           const thumb = media.path
             ? `<div class="status" data-media-placeholder>加载缩略图…</div><img data-cache-path="${escapeHtml(media.path)}" data-cache-variant="thumbnail" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
             : '<div class="status">没有缓存媒体</div>';
           const flags = `${record.pinned ? '<span>置顶</span>' : ''}${record.favorite ? '<span>收藏</span>' : ''}`;
-          const time = String(record.time || '');
-          const model = String(record.used_model || '未记录模型');
           return `<article class="asset-card" data-record-id="${escapeHtml(id)}">
             <div class="asset-thumb">
               <input class="asset-select" type="checkbox" ${ASSET_SELECTION.has(id) ? 'checked' : ''} aria-label="选择资产" data-asset-select="${escapeHtml(id)}">
               ${flags ? `<div class="asset-flag">${flags}</div>` : ''}
               ${thumb}
             </div>
-            <div class="asset-card-body">
-              <div class="asset-card-title"><b title="${escapeHtml(name)}">${escapeHtml(name)}</b><span class="pill ${lifecycle.tone}">${escapeHtml(lifecycle.label)}</span></div>
-              <div class="asset-card-context">
-                <span title="时间：${escapeHtml(time)}"><b>时间</b> ${escapeHtml(time || '未记录')}</span>
-                <span title="模型：${escapeHtml(model)}"><b>模型</b> ${escapeHtml(model)}</span>
-              </div>
-              <div class="asset-card-prompt">${escapeHtml(prompt || record.note || '没有提示词或备注')}</div>
-              <div class="asset-card-meta">${assetTagPills(record)}</div>
               <div class="asset-card-actions">
                 ${media.path ? `<button class="secondary asset-action" type="button" title="下载" aria-label="下载" data-asset-action="download" data-record-id="${escapeHtml(id)}" data-asset-path="${escapeHtml(media.path)}" data-asset-name="${escapeHtml(name)}">${downloadIconSvg()}<span class="asset-action-label">下载</span></button>` : ''}
-                ${media.kind === 'image' && media.path ? `<button class="secondary mini asset-action" type="button" data-asset-action="studio" data-record-id="${escapeHtml(id)}">加入画布</button>` : ''}
                 <button class="secondary asset-action" type="button" data-asset-action="detail" data-record-id="${escapeHtml(id)}">详情</button>
               </div>
-            </div>
           </article>`;
         }).join('') : '<div class="asset-empty muted">没有匹配的资产</div>';
         pruneProtectedMediaLoadQueue();
@@ -689,8 +706,10 @@
           <button class="secondary mini" type="button" onclick="setAssetPage(${ASSET_PAGE + 1})" ${ASSET_PAGE >= totalPages || ASSET_LOADING ? 'disabled' : ''}>下一页</button>
           <button class="secondary mini" type="button" onclick="setAssetPage(${totalPages})" ${ASSET_PAGE >= totalPages || ASSET_LOADING ? 'disabled' : ''}>末页</button>`;
       }
+      syncAssetSelection();
     }
     async function loadAssets(showRefreshToast = false) {
+      if (!$('assetGrid').innerHTML.trim()) $('assetGrid').innerHTML = '<div class="asset-empty" data-initial-loading role="status">正在加载资产…</div>';
       await ensureDashboardPersistentCachesHydrated();
       const requestSeq = ++ASSET_LOAD_SEQ;
       const cacheVersion = ASSET_PAGE_CACHE_VERSION;
@@ -730,6 +749,7 @@
       } catch (e) {
         if (isAbortError(e)) return;
         if (requestSeq === ASSET_LOAD_SEQ && !cached && $('assetStatus')) $('assetStatus').textContent = e.message || '资产读取失败';
+        if (requestSeq === ASSET_LOAD_SEQ && $('assetGrid').querySelector('[data-initial-loading]')) $('assetGrid').innerHTML = '<div class="asset-empty">资产加载失败，请刷新重试</div>';
       } finally {
         if (requestSeq === ASSET_LOAD_SEQ) {
           ASSET_LOADING = false;
@@ -772,93 +792,29 @@
         }
       }
     }
-    async function loadAssetStudioPresets(page = ASSET_STUDIO_PRESET_PAGE) {
-      const select = $('assetStudioPreset');
-      if (!select) return;
-      const loadSeq = ++ASSET_STUDIO_PRESET_LOAD_SEQ;
-      const requestedPage = Math.max(1, Number(page) || 1);
-      ASSET_STUDIO_PRESET_PAGE = requestedPage;
-      const search = String($('assetStudioPresetSearch')?.value || '').trim();
-      try {
-        const selected = select.value;
-        const requestedSearch = search;
-        const result = await fetchCatalogPage('image', search, ASSET_STUDIO_PRESET_PAGE);
-        if (loadSeq !== ASSET_STUDIO_PRESET_LOAD_SEQ
-          || requestedPage !== ASSET_STUDIO_PRESET_PAGE
-          || requestedSearch !== String($('assetStudioPresetSearch')?.value || '').trim()) return;
-        ASSET_STUDIO_PRESETS = result.items;
-        const pageCount = Math.max(1, Math.ceil(result.total / PICKER_PAGE_SIZE));
-        if (requestedPage > pageCount) return loadAssetStudioPresets(pageCount);
-        prefetchCatalogPages('image', search, requestedPage, result.total);
-        select.innerHTML = '<option value="">不套预设</option>';
-        ASSET_STUDIO_PRESETS.forEach(item => {
-          const name = String(item?.name || item?.title || '').trim();
-          if (!name) return;
-          const option = document.createElement('option');
-          option.value = name;
-          option.textContent = `加入画布 · ${name}`;
-          select.appendChild(option);
-        });
-        if ([...select.options].some(option => option.value === selected)) select.value = selected;
-        const prev = $('assetStudioPresetPrev');
-        const next = $('assetStudioPresetNext');
-        if (prev) prev.disabled = requestedPage <= 1;
-        if (next) next.disabled = requestedPage >= pageCount;
-        select.title = `加入画布时附加的预设 · 第 ${requestedPage}/${pageCount} 页，共 ${result.total} 项`;
-      } catch (e) {
-        if (loadSeq === ASSET_STUDIO_PRESET_LOAD_SEQ) {
-          if ($('assetStatus')) $('assetStatus').textContent = e.message || '画布预设读取失败';
-        }
-      }
-    }
-    async function addAssetToStudio(recordId) {
-      const id = String(recordId || '').trim();
-      if (!id) return showToast('资产 ID 为空', 'bad');
-      const preset = String($('assetStudioPreset')?.value || '').trim();
-      try {
-        showToast('正在加入画布…', 'ok');
-        const body = {preset_name: preset};
-        if (STUDIO.current && STUDIO.current.id) body.session_id = STUDIO.current.id;
-        const res = await api('/api/assets/' + encodeURIComponent(id) + '/studio', {method:'POST', body: JSON.stringify(body)});
-        if (!res.success) throw new Error(res.message || '加入画布失败');
-        const data = res.data || {};
-        if (data.session_id) await loadStudioList(data.session_id);
-        document.querySelector('nav.page-nav button[data-tab="studio"]')?.click();
-        showToast(res.message || '资产已加入画布', 'ok');
-      } catch (e) { showToast(e.message || '加入画布失败', 'bad'); }
-    }
-    async function addSelectedAssetToStudio() {
-      const ids = selectedAssetIds();
-      if (!ids.length) return showToast('请选择图片资产', 'bad');
-      if (ids.length === 1) return addAssetToStudio(ids[0]);
-      if (ids.length > 12) return showToast('单次最多加入 12 项图片资产', 'bad');
-      const preset = String($('assetStudioPreset')?.value || '').trim();
-      try {
-        const body = {ids, preset_name: preset};
-        if (STUDIO.current && STUDIO.current.id) body.session_id = STUDIO.current.id;
-        const res = await api('/api/assets/studio', {method:'POST', body: JSON.stringify(body)});
-        if (!res.success) throw new Error(res.message || '批量加入画布失败');
-        const data = res.data || {};
-        ASSET_SELECTION.clear();
-        if (data.session_id) await loadStudioList(data.session_id);
-        document.querySelector('nav.page-nav button[data-tab="studio"]')?.click();
-        const failed = Number(data.error_count || 0);
-        showToast(`已加入 ${Number(data.added_count || 0)} 项${failed ? `，${failed} 项失败` : ''}`, failed ? 'bad' : 'ok');
-      } catch (e) { showToast(e.message || '批量加入画布失败', 'bad'); }
+    function syncAssetSelection() {
+      const rows = Array.isArray(ASSET_RECORDS) ? ASSET_RECORDS : [];
+      const selectedVisible = rows.filter(row => ASSET_SELECTION.has(String(row.id || ''))).length;
+      if ($('assetSelectionStatus')) $('assetSelectionStatus').textContent = selectedVisible
+        ? `已选择 ${selectedVisible} 项（当前页）`
+        : '当前页未选择资产';
+      $('assetGrid')?.querySelectorAll('input[data-asset-select]').forEach(input => {
+        input.checked = ASSET_SELECTION.has(input.getAttribute('data-asset-select') || '');
+      });
     }
     function toggleAssetSelection(id, checked) {
       const value = String(id || '').trim();
       if (!value) return;
       if (checked) ASSET_SELECTION.add(value); else ASSET_SELECTION.delete(value);
-      renderAssets();
+      syncAssetSelection();
     }
     function selectAllAssets() {
       ASSET_RECORDS.forEach(record => { const id = String(record.id || '').trim(); if (id) ASSET_SELECTION.add(id); });
-      renderAssets();
+      syncAssetSelection();
     }
     function clearAssetSelection() {
       ASSET_SELECTION.clear();
-      renderAssets();
+      syncAssetSelection();
     }
     function selectedAssetIds() {
       return Array.from(ASSET_SELECTION).filter(Boolean);
@@ -933,41 +889,6 @@
         if (!input || !String(input.value || '').trim()) return showToast('请输入要应用的备注', 'bad');
         return batchAssetMetadata('note', String(input.value || '').trim());
       }
-    }
-    async function exportAssets() {
-      try {
-        const ids = selectedAssetIds();
-        const suffix = ids.length ? `?ids=${encodeURIComponent(ids.join(','))}` : '';
-        const res = await api('/api/assets/export' + suffix);
-        const payload = res.data || {};
-        const text = JSON.stringify(payload, null, 2);
-        const blob = new Blob([text], {type: 'application/json;charset=utf-8'});
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `selfie-image-assets-${new Date().toISOString().slice(0, 10)}.json`;
-        link.rel = 'noopener';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
-        showToast(`已导出 ${Number(payload.count || 0)} 条资产元数据`, 'ok');
-      } catch (e) { showToast(e.message || '导出失败', 'bad'); }
-    }
-    async function importAssetsFile(file) {
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const payload = JSON.parse(text);
-        if (!payload || typeof payload !== 'object' || !Array.isArray(payload.records)) throw new Error('导入文件必须包含 records 数组');
-        const res = await api('/api/assets/import', {method: 'POST', body: JSON.stringify(payload)});
-        clearAssetPageCache();
-        clearRecordPageCache();
-        clearPickerCache('tags');
-        await Promise.all([loadAssets(false), loadAssetTags()]);
-        const count = Number(res.data?.updated_count || 0);
-        showToast(res.message || `已导入 ${count} 条资产元数据`, 'ok');
-      } catch (e) { showToast(e.message || '导入失败', 'bad'); }
     }
     async function deleteSelectedAssets() {
       const ids = selectedAssetIds();

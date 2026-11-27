@@ -559,6 +559,13 @@ class SelfieImagePlugin(
                 (int(row.get("seq") or 0) for row in merged_tasks.values() if isinstance(row, Mapping)),
                 default=0,
             )
+            active_task_ids = {
+                task_id for task_id, task in merged_tasks.items()
+                if isinstance(task, Mapping) and task.get("status") in {"queued", "running"}
+            }
+            for store in (getattr(self, "studio", None), getattr(self, "creative_canvas", None)):
+                if store is not None:
+                    store.reconcile_interrupted_runs(active_task_ids)
         # Reconcile tasks persisted as active before restart only after
         # both stores are installed, preserving the existing durable flow.
         self.reconcile_expired_tasks_after_restart()
@@ -780,9 +787,11 @@ class SelfieImagePlugin(
         return status
 
     async def list_qq_groups_for_web(self, *, force: bool = False) -> Dict[str, Any]:
+        self.get_config_for_web()
         configured_groups = dict(self.config.group_chat_configs)
         configured_groups.update({group_id: {} for group_id in self.config.whitelist_groups})
         payload = await self.qq_group_cache.list_groups(configured_groups, force=force)
+        updated = self.get_config_for_web()
         configs = self.config.group_chat_configs
         legacy_whitelist = set(self.config.whitelist_groups)
         for row in payload.get("groups", []):
@@ -795,6 +804,8 @@ class SelfieImagePlugin(
             }))
         payload["models"] = [target.label for target in self.config.get_enabled_image_targets()]
         payload["bot_ids"] = self._bot_account_ids()
+        payload["permission"] = updated.get("permission", {})
+        payload["revision"] = self.get_config_revision()
         return payload
 
     def update_group_chat_configs_from_web(self, payload: Any) -> Dict[str, Any]:
@@ -849,45 +860,58 @@ class SelfieImagePlugin(
     @staticmethod
     def _parse_access_user_command(event: AstrMessageEvent, payload: str) -> Tuple[str, str]:
         target = ""
-        message_obj = getattr(event, "message_obj", None)
-        segments = getattr(message_obj, "message", None) or getattr(event, "message", None) or []
-        if not isinstance(segments, (list, tuple)):
-            segments = []
-        for segment in segments:
-            segment_type = str(getattr(segment, "type", "") or type(segment).__name__).lower()
-            data = getattr(segment, "data", None)
-            if not isinstance(data, Mapping):
-                data = {}
-            if segment_type in {"at", "messagecomponenttype.at"} or type(segment).__name__.lower() == "at":
-                candidate = getattr(segment, "qq", None) or getattr(segment, "user_id", None) or data.get("qq") or data.get("user_id")
-                if candidate:
-                    target = str(candidate).strip()
-                    break
-
         text = str(payload or "").strip()
         mention_patterns = (
             r"\[CQ:at,qq=(\d+)(?:,[^\]]*)?\]",
             r"\[At:(\d+)\]",
             r"<at:(\d+)>",
-            r"@([0-9]+)",
+            r"@[^@\r\n()（）]*[（(](\d+)[)）]",
+            r"@(\d+)(?=\s|$|[,，:：|])",
         )
-        if not target:
-            for pattern in mention_patterns:
-                match = re.search(pattern, text, flags=re.IGNORECASE)
-                if match:
-                    target = match.group(1)
-                    break
-        if not target:
-            match = re.search(r"(?<!\w)(\d+)(?!\w)", text)
+        cleaned = text
+        # The payload excludes the command's wake mention; an explicit target wins.
+        for pattern in (*mention_patterns, r"(\d+)(?=\s|$|[,，:：|])"):
+            match = re.match(pattern, text, flags=re.IGNORECASE)
             if match:
                 target = match.group(1)
+                cleaned = text[match.end():]
+                break
+
+        message_obj = getattr(event, "message_obj", None)
+        segments = getattr(message_obj, "message", None) or getattr(event, "message", None) or []
+        if not isinstance(segments, (list, tuple)):
+            segments = []
+        get_self_id = getattr(event, "get_self_id", None)
+        bot_id = str((get_self_id() if callable(get_self_id) else "")
+                     or getattr(message_obj, "self_id", "") or getattr(event, "self_id", "") or "").strip()
+        candidates = []
+        command_index = -1
+        for segment in segments:
+            segment_type = str(segment.get("type", "") if isinstance(segment, Mapping)
+                               else getattr(segment, "type", "") or type(segment).__name__).lower()
+            data = segment.get("data") if isinstance(segment, Mapping) else getattr(segment, "data", None)
+            if not isinstance(data, Mapping):
+                data = {}
+            segment_text = str(getattr(segment, "text", "") or data.get("text") or "")
+            if command_index < 0 and re.search(r"(?:^|\s)[/!！.]?生图(?:加黑|加白|释放)(?=\s|$)", segment_text):
+                command_index = len(candidates)
+            if segment_type in {"at", "messagecomponenttype.at"} or type(segment).__name__.lower() == "at":
+                candidate = getattr(segment, "qq", None) or getattr(segment, "user_id", None) or data.get("qq") or data.get("user_id")
+                if candidate:
+                    candidates.append(str(candidate).strip())
+        if not target:
+            # Some adapters omit At components from message_str. Only fall back
+            # to mentions after the command, excluding the bot used to wake it.
+            for candidate in candidates[max(0, command_index):]:
+                if candidate.isdigit() and candidate != bot_id:
+                    target = candidate
+                    break
+            for pattern in mention_patterns:
+                cleaned = re.sub(pattern, lambda match: " " if match.group(1) == target else match.group(0),
+                                 cleaned, count=1, flags=re.IGNORECASE)
         if not target or not target.isdigit():
             return "", ""
 
-        cleaned = text
-        for pattern in mention_patterns:
-            cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(rf"(?<!\w){re.escape(target)}(?!\w)", " ", cleaned, count=1)
         reason = re.sub(r"^[\s,，:：|]+|[\s,，:：|]+$", "", cleaned).strip()
         return target, reason
 
@@ -897,11 +921,18 @@ class SelfieImagePlugin(
         return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
 
     def _mutate_access_user(self, action: str, event: AstrMessageEvent, payload: str) -> Tuple[bool, str]:
+        release_scope = ""
+        if action == "release":
+            match = re.match(r"^(黑(?:名单)?|白(?:名单)?)(?=\s|@|\[|<|\d|$)\s*", str(payload or "").strip())
+            if match:
+                release_scope = "black" if match.group(1).startswith("黑") else "white"
+                payload = str(payload or "").strip()[match.end():]
         target, reason = self._parse_access_user_command(event, payload)
         if not target:
-            return False, "请提供 QQ 号或 @ 用户。"
+            return False, "格式：生图释放 [黑/白] ID/@用户。" if action == "release" else "请提供 QQ 号或 @ 用户。"
         reason = reason[:200]
 
+        self.get_config_for_web()
         permission = copy.deepcopy(self.raw_config.get("permission") or {})
         blocked = self._access_user_ids(permission.get("blocked_users"))
         whitelisted = self._access_user_ids(permission.get("whitelist_users"))
@@ -927,11 +958,13 @@ class SelfieImagePlugin(
                 whitelist_reasons[target] = reason
             label = "白名单"
         elif action == "release":
-            blocked = [user_id for user_id in blocked if user_id != target]
-            whitelisted = [user_id for user_id in whitelisted if user_id != target]
-            blocked_reasons.pop(target, None)
-            whitelist_reasons.pop(target, None)
-            label = "已释放"
+            if release_scope != "white":
+                blocked = [user_id for user_id in blocked if user_id != target]
+                blocked_reasons.pop(target, None)
+            if release_scope != "black":
+                whitelisted = [user_id for user_id in whitelisted if user_id != target]
+                whitelist_reasons.pop(target, None)
+            label = {"black": "黑名单", "white": "白名单"}.get(release_scope, "黑名单和白名单")
         else:
             return False, "未知的名单操作。"
 
@@ -942,7 +975,7 @@ class SelfieImagePlugin(
             "whitelist_user_reasons": whitelist_reasons,
         }})
         detail = f"（{reason}）" if reason and action != "release" else ""
-        return True, f"{target} 已加入{label}{detail}。" if action != "release" else f"{target} 已从黑名单和白名单释放。"
+        return True, f"{target} 已加入{label}{detail}。" if action != "release" else f"{target} 已从{label}释放。"
 
     @staticmethod
     def _claim_media_command_event(event: AstrMessageEvent) -> None:
@@ -4884,7 +4917,7 @@ class SelfieImagePlugin(
         p1: str = "", p2: str = "", p3: str = "", p4: str = "", p5: str = "",
         p6: str = "", p7: str = "", p8: str = "", p9: str = "", p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        """从生图黑名单和白名单中移除用户。"""
+        """生图释放 [黑/白] ID/@用户，不指定名单时同时移出黑白名单。"""
         fallback = " ".join(item for item in (p1, p2, p3, p4, p5, p6, p7, p8, p9, p10) if item).strip()
         payload = extract_command_message(event, "生图释放", fallback)
         success, message = self._mutate_access_user("release", event, payload)

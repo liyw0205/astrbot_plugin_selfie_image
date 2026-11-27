@@ -6,77 +6,6 @@
         reader.readAsDataURL(file);
       });
     }
-    function testTemplateValues() {
-      const map = {
-        role: 'testTemplateRole', outfit: 'testTemplateOutfit', scene: 'testTemplateScene',
-        pose: 'testTemplatePose', shot: 'testTemplateShot', view: 'testTemplateView',
-        lighting: 'testTemplateLighting'
-      };
-      const values = {};
-      Object.entries(map).forEach(([key, id]) => {
-        const value = String($(id)?.value || '').trim();
-        if (value) values[key] = value;
-      });
-      return values;
-    }
-    const TEST_TEMPLATE_RANDOM_POOLS = {
-      role: ['成年女性', '成年男性', '东方女性', '短发女孩', '年轻男生'],
-      outfit: ['白色衬衫与牛仔裤', '红色旗袍', '黑色西装', '浅色针织衫', '简洁的夏日连衣裙'],
-      scene: ['窗边客厅', '安静庭院', '城市街角', '简洁影棚', '黄昏海边'],
-      pose: ['自然站姿', '轻步转身', '侧身回看', '双手自然放在身侧', '坐姿看向镜头'],
-      shot: ['竖屏半身', '三分之四侧面', '环境人像', '近距离人像', '全身构图'],
-      view: ['自拍视角', '他拍视角', '平视视角', '轻微低机位'],
-      lighting: ['窗光', '柔和室内光', '阴天散射光', '暖色环境光', '夕阳轮廓光']
-    };
-    function randomTemplateValue(values, current = '') {
-      const options = Array.isArray(values) ? values.filter(Boolean) : [];
-      if (!options.length) return '';
-      const available = options.filter(value => value !== current);
-      return (available.length ? available : options)[Math.floor(Math.random() * (available.length || options.length))];
-    }
-    function randomizeTestTemplateValues() {
-      const fields = {
-        role: 'testTemplateRole', outfit: 'testTemplateOutfit', scene: 'testTemplateScene',
-        pose: 'testTemplatePose', shot: 'testTemplateShot', view: 'testTemplateView', lighting: 'testTemplateLighting'
-      };
-      Object.entries(fields).forEach(([key, id]) => {
-        const input = $(id);
-        if (!input) return;
-        input.value = randomTemplateValue(TEST_TEMPLATE_RANDOM_POOLS[key], String(input.value || '').trim());
-        input.dispatchEvent(new Event('input', {bubbles:true}));
-      });
-      const preview = $('testTemplatePreview');
-      if (preview) {
-        preview.style.display = '';
-        preview.textContent = '已填充一组随机模板变量，点击“预览模板”查看组合结果。';
-      }
-    }
-    function testVariationFields() {
-      return Array.from(document.querySelectorAll('[data-test-vary]:checked')).map(el => String(el.value || '').trim()).filter(Boolean);
-    }
-    function creativeTestPayload() {
-      const variationEnabled = !!$('testVariationEnabled')?.checked;
-      return {
-        template_values: testTemplateValues(),
-        template_randomize: !!$('testTemplateRandomize')?.checked,
-        variation_enabled: variationEnabled,
-        variation_fields: variationEnabled ? testVariationFields() : []
-      };
-    }
-    async function previewTestTemplate() {
-      const target = $('testTemplatePreview');
-      if (!target) return;
-      const body = {prompt: String($('testPrompt')?.value || ''), ...creativeTestPayload()};
-      target.style.display = '';
-      target.textContent = '正在预览…';
-      try {
-        const res = await api('/api/creative/template/render', {method:'POST', body: JSON.stringify(body)});
-        const data = res.data || {};
-        const unresolved = Array.isArray(data.unresolved) && data.unresolved.length ? `；未填写：${data.unresolved.join('、')}` : '';
-        const randomized = data.randomized && Object.keys(data.randomized).length ? `；随机：${Object.entries(data.randomized).map(([k,v]) => `${k}=${v}`).join('、')}` : '';
-        target.textContent = `预览：${data.prompt || body.prompt || ''}${unresolved}${randomized}`;
-      } catch (e) { target.textContent = e.message || '模板预览失败'; }
-    }
     function clearTestTaskPoll() {
       if (TEST_TASK_POLL_TIMER) {
         clearTimeout(TEST_TASK_POLL_TIMER);
@@ -112,10 +41,9 @@
       if (TEST_TASK_ID && !(await prepareActiveTestTask('刷新试画'))) return;
       $('testResolutionWrap').style.display = '';
       if ($('testCountWrap')) $('testCountWrap').style.display = '';
-      if ($('promptEnhanceWrap')) $('promptEnhanceWrap').style.display = '';
       $('useSelfieWrap').style.display = '';
       $('useSelfie').disabled = false;
-      $('testRefs').multiple = true;
+      renderTestExtraReferences();
       setSelectOptions('testAspect', ASPECTS, CONFIG.image?.default_aspect_ratio || '9:16');
       refreshModelSelectors();
       clearTestData(false);
@@ -152,6 +80,11 @@
       ).trim();
       if (source === 'studio-run') return `Web/${title || '画布'}`;
       if (source === 'web-test') return 'Web/快速试画';
+      const group = String(item?.group_id || '').trim(), user = String(item?.user_id || '').trim();
+      if (user) return group ? `${group}/${user}` : user;
+      const label = String(item?.source_label || '').trim();
+      const legacy = label.match(/^(?:群\s*(\d+)\s*\/\s*)?QQ\s*(\d+)$/);
+      if (legacy) return legacy[1] ? `${legacy[1]}/${legacy[2]}` : legacy[2];
       return String(item?.source_label || item?.source || '未知来源');
     }
     async function recoverTestTaskAfterCancelFailure(taskId) {
@@ -229,7 +162,7 @@
       const hasMedia = imagePaths.length > 0;
       if (!data || (data.success !== true && !(partial && hasMedia))) {
         $('testStatus').textContent = `失败：${(data && (data.error || data.response_data?.error)) || '这次没顺好'}`;
-        showTestPanel('response');
+        showTestPanel('response', false);
         return;
       }
       const generatedCount = Number(data.succeeded_count || data.generated_image_paths?.length || 0);
@@ -237,7 +170,7 @@
       $('testStatus').textContent = `${prefix}：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，${generatedCount || 1} 张，参考图 ${data.reference_images || 0} 张${partial && data.error ? `；${data.error}` : ''}`;
       $('testImages').innerHTML = imageThumbs(data.generated_image_paths || [], '生成图', data.generated_image_sources || []);
       loadProtectedImages($('testImages'));
-      showTestPanel('result');
+      showTestPanel('result', false);
     }
     function testTaskStatusPath(taskId) {
       return `/api/test-image-channel/tasks/${encodeURIComponent(taskId)}`;
@@ -309,7 +242,7 @@
         $('testStatus').textContent = errorText;
         $('testRetryStatusBtn').style.display = TEST_TASK_ID ? '' : 'none';
         $('testResponseData').textContent = JSON.stringify({success:false, error:errorText}, null, 2);
-        showTestPanel('response');
+        showTestPanel('response', false);
       }
     }
     async function resumeImageTestTask() {
@@ -351,8 +284,9 @@
         if (!$('testChannel').value) throw new Error('还没有可用渠道，先去「渠道」里启用');
         if (!$('testModel').value) throw new Error('这个渠道还没有可用模型，先启用模型');
         const images = [];
-        for (const file of $('testRefs').files) {
-          images.push(await readFileDataUrl(file));
+        for (const reference of TEST_EXTRA_REFS) {
+          if (reference.image) images.push(reference.image);
+          else if (reference.image_path) images.push((await getProtectedMedia(reference.image_path)).dataUrl);
         }
         const payload = {
           media_type: 'image',
@@ -362,13 +296,12 @@
           aspect_ratio: $('testAspect').value,
           resolution: $('testResolution').value,
           count: Number($('testCount')?.value || 1),
-          prompt_enhance: $('promptEnhance').checked,
+          prompt_enhance: false,
           use_selfie_reference: $('useSelfie').checked,
-          images,
-          ...creativeTestPayload()
+          images
         };
         $('testRequestData').textContent = JSON.stringify({...payload, images: `[${images.length} images]`}, null, 2);
-        showTestPanel('request');
+        showTestPanel('request', false);
         const res = await api('/api/test-image-channel/tasks', {method:'POST', body: JSON.stringify(payload)});
         const task = res.data || {};
         TEST_TASK_ID = task.task_id || '';
@@ -382,13 +315,16 @@
         setTestBusy(false);
         $('testStatus').textContent = e.message;
         $('testResponseData').textContent = JSON.stringify({success:false, error:e.message}, null, 2);
-        showTestPanel('response');
+        showTestPanel('response', false);
       }
     }
     async function runImageTest() { return runMediaTest(); }
-    function showTestPanel(name) {
+    function showTestPanel(name, open = true) {
       ['request','response','result'].forEach(key => $('test' + key[0].toUpperCase() + key.slice(1) + 'Panel').classList.toggle('active', key === name));
+      $('testDataTitle').textContent = {request:'请求数据', response:'响应数据', result:'生成结果'}[name] || '试画数据';
+      if (open) $('testDataModal').classList.add('show');
     }
+    function closeTestPanel() { $('testDataModal').classList.remove('show'); }
     function clearTestData(clearStatus = true) {
       const active = !!String(TEST_TASK_ID || '').trim();
       if (!active) {
@@ -402,5 +338,5 @@
       $('testRequestData').textContent = '';
       $('testResponseData').textContent = '';
       if (clearStatus) $('testStatus').textContent = active ? `任务 ${TEST_TASK_ID} 仍在后台运行，展示已清空。` : '';
-      showTestPanel('result');
+      showTestPanel('result', false);
     }

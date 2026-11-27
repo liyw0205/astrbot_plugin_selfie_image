@@ -35,7 +35,6 @@
       // Invalidate its consumer generations too, so a late response cannot
       // repaint an already-cleared panel with stale items.
       if (typeof STUDIO !== 'undefined') STUDIO.galleryRequestSeq += 1;
-      if (typeof CREATIVE_CANVAS !== 'undefined') CREATIVE_CANVAS.galleryRequestSeq += 1;
       removeDashboardPersistCache('gallery-picker', 'items');
     }
     function normalizeGalleryPickerItems(items) {
@@ -486,27 +485,21 @@
         if (!PROTECTED_MEDIA_LOAD_QUEUE[index]?.element?.isConnected) PROTECTED_MEDIA_LOAD_QUEUE.splice(index, 1);
       }
     }
-    function zoomIconSvg() {
-      return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path><path d="M11 8v6M8 11h6"></path></svg>';
-    }
     function attachImageLightbox(img, path) {
       if (!img || !path || img.closest('.media-zoom-shell')) return;
-      const shell = document.createElement('span');
+      if (img.closest('.studio-gallery-item, .studio-canvas-node, .studio-node-list-item')) return;
+      const shell = document.createElement('button');
+      shell.type = 'button';
       shell.className = 'media-zoom-shell';
+      shell.title = '放大预览';
+      shell.setAttribute('aria-label', '放大预览');
       img.parentNode?.insertBefore(shell, img);
       shell.appendChild(img);
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'media-zoom-button';
-      button.title = '放大预览';
-      button.setAttribute('aria-label', '放大预览');
-      button.innerHTML = zoomIconSvg();
-      button.addEventListener('click', event => {
+      shell.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
         openMediaLightbox(path, img.alt || '图片预览');
       });
-      shell.appendChild(button);
     }
     function enqueueProtectedMediaLoad(element, path, variant = 'full', priority = 0) {
       PROTECTED_MEDIA_LOAD_QUEUE.push({element, path, variant, priority, loader: () => loadProtectedImage(element, path, variant)});
@@ -578,7 +571,7 @@
       shell.innerHTML = '';
       shell.appendChild(img);
       attachImageLightbox(img, path);
-      loadProtectedImage(img, path);
+      loadProtectedImage(img, path, 'thumbnail');
     }
     function lazyMediaPreview(kind, path) {
       return `<div class="media-preview-shell"><button class="secondary mini" type="button" onclick="loadRecordMediaPreview(this,'image','${escapeJs(path)}')">加载图片预览</button><span class="muted" style="margin-left:8px">打开详情时不自动下载</span></div>`;
@@ -589,7 +582,7 @@
       if (!items.length) return `${mediaHead(title, normalizedSources, 'image')}<div class="muted">无图片</div>`;
       const grid = `<div class="images">${items.map((path, index) => {
         const name = String(path).split('/').pop() || 'image';
-        const preview = lazy ? lazyMediaPreview('image', path) : `<img data-cache-path="${escapeHtml(path)}" alt="${escapeHtml(path)}">`;
+        const preview = lazy ? lazyMediaPreview('image', path) : `<img data-cache-path="${escapeHtml(path)}" data-cache-variant="thumbnail" alt="${escapeHtml(path)}">`;
         return `<div class="thumb-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button>${preview}<div class="muted">${escapeHtml(path)}</div>${mediaItemSource(normalizedSources, index, 'image')}</div>`;
       }).join('')}</div>`;
       return `${mediaHead(title, normalizedSources, 'image')}${grid}`;
@@ -648,6 +641,8 @@
           if (placeholder) placeholder.textContent = '形象图加载失败';
         };
         img.src = src;
+        const slot = Number(SELFIE_IDENTITY_DATA?.active_image_slot) || 0;
+        if (slot) bindSelfieImagePreview(img, slot);
       });
     }
     function recordRequestReferences(record) {

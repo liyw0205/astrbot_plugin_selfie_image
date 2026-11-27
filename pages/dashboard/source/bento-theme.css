@@ -56,7 +56,6 @@
     nav.page-nav button[data-tab="monitor"]::before { content: "☷"; }
     nav.page-nav button[data-tab="assets"]::before { content: "▦"; }
     nav.page-nav button[data-tab="studio"]::before { content: "✦"; }
-    nav.page-nav button[data-tab="creativeCanvas"]::before { content: "✎"; }
     nav.page-nav button[data-tab="presets"]::before { content: "▤"; }
     nav.page-nav button[data-tab="test"]::before { content: "◎"; }
     nav.page-nav button[data-tab="image"]::before { content: "▧"; }
@@ -110,6 +109,16 @@
     .bento-tile:nth-child(2) .bento-icon { color: var(--ok); }
     .bento-tile:nth-child(3) .bento-icon { color: #c17a2d; }
     .base-config { margin-top: 0; }
+    body.authed #selfie .identity-mode-switch button,
+    body.authed #selfie .identity-mode-switch button:hover {
+      background: transparent !important;
+      border-color: transparent !important;
+      box-shadow: none !important;
+      color: var(--muted) !important;
+    }
+    body.authed #selfie .identity-mode-switch button[aria-pressed="true"] { color: var(--primary-strong) !important; }
+    .identity-mode-switch::before { background: var(--primary-weak); opacity: 0; }
+    .identity-mode-switch[data-mode]::before { opacity: 1; }
     /* Light active state for the Bento UI: clear contrast without dark blocks. */
     nav.page-nav button.active,
     nav.page-nav button.active:hover,
@@ -139,7 +148,7 @@
       background: #f6f7ff !important;
     }
     /* Unified light action system: positive actions share one visual language. */
-    body.authed button:not(.secondary):not(.danger),
+    body.authed button:not(.secondary):not(.danger):not(.media-zoom-shell),
     body.authed button.ok,
     body.authed button.ok:hover {
       background: #eef0ff !important;
@@ -147,7 +156,7 @@
       color: #3730a3 !important;
       box-shadow: 0 3px 10px rgba(89, 100, 242, .10) !important;
     }
-    body.authed button:not(.secondary):not(.danger):hover,
+    body.authed button:not(.secondary):not(.danger):not(.media-zoom-shell):hover,
     body.authed button.ok:hover {
       background: #e3e6ff !important;
       border-color: #b8c0f8 !important;
@@ -184,6 +193,11 @@
       color: var(--text) !important;
       box-shadow: none !important;
     }
+    body.authed button.media-zoom-shell,
+    body.authed button.media-zoom-shell:hover {
+      background: transparent !important; border: 0 !important; border-radius: 0;
+      color: inherit !important; box-shadow: none !important;
+    }
     /* Keep navigation states independent from the general action-button rules. */
     body.authed nav.page-nav button:not(.active),
     body.authed nav.page-nav button:not(.active):hover,
@@ -209,6 +223,34 @@
       color: #3730a3 !important;
       box-shadow: 0 3px 10px rgba(89, 100, 242, .12) !important;
     }
+    body.authed #pageNav button {
+      position: relative; isolation: isolate; z-index: 0; min-height: 44px;
+      border: 1px solid #e1e3ed; border-radius: 8px; color: var(--text) !important;
+      background: #fff !important; border-color: #e1e3ed !important; box-shadow: none !important;
+      transform: scale(1); user-select: none; -webkit-touch-callout: none;
+      transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+    }
+    body.authed #pageNav button:hover { background: #f6f7ff !important; border-color: #c7cdfc !important; }
+    body.authed #pageNav button::first-letter { color: inherit; }
+    body.authed #pageNav button::before { color: var(--primary) !important; }
+    body.authed #pageNav button::after {
+      content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+      background: inherit; transition: inset 180ms ease; pointer-events: none;
+    }
+    body.authed #pageNav button.active {
+      background: #eef0ff !important; border-color: #c7cdfc !important;
+      box-shadow: 0 3px 10px rgba(89, 100, 242, .12) !important; transform: scale(.94);
+    }
+    body.authed #pageNav button.nav-switching { z-index: 2; animation: sidebar-select 360ms ease-out; }
+    body.authed #pageNav button.nav-switching::after { animation: sidebar-select-frame 360ms ease-out; }
+    body.authed #pageNav button.nav-expanded { z-index: 3; transform: scale(1.04); animation: none; }
+    body.authed #pageNav button.nav-expanded::after { inset: -4px 0; animation: none; }
+    @keyframes sidebar-select { 0% { transform: scale(1); } 40% { transform: scale(1.04); } 100% { transform: scale(.94); } }
+    @keyframes sidebar-select-frame { 0%, 100% { inset: 0; } 40% { inset: -4px 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      body.authed #pageNav button, body.authed #pageNav button::after,
+      body.authed #pageNav button.nav-switching, body.authed #pageNav button.nav-switching::after { transition: none; animation: none; }
+    }
     html, body { max-width: 100%; overflow-x: hidden; }
     html { scrollbar-gutter: stable; }
     body.authed main.app-shell, body.authed main.app-shell * { min-width: 0; }
@@ -219,6 +261,12 @@
     body.authed .baseurl-row, body.authed .proxy-card, body.authed .proxy-actions,
     body.authed .proxy-kpi, body.authed .proxy-qgrid { min-width: 0; }
     body.authed textarea { max-width: 100%; }
+    .sidebar-logo-menu {
+      display: none; position: fixed; left: max(10px, env(safe-area-inset-left)); top: max(14px, env(safe-area-inset-top));
+      z-index: 21; width: 48px; height: 48px; padding: 3px; align-items: center; justify-content: center;
+      border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); overflow: hidden;
+    }
+    .sidebar-logo-menu svg { display: block; width: 24px; height: 24px; }
     @media (max-width: 1180px) {
       body.authed { display: block; }
       body.authed.sidebar-open { overflow: hidden; }
@@ -228,12 +276,14 @@
       body.authed main.app-shell { padding: 24px 24px 36px; }
       body.authed main.app-shell::before { display: none; }
       .bento-mobile-menu { display: inline-flex !important; }
+      body.authed:not(.sidebar-open) .sidebar-logo-menu:not([hidden]) { display: inline-flex; }
       nav.page-nav { margin-top: 0; }
       .bento-welcome { grid-template-columns: 1fr; }
       .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .channel-row { grid-template-columns: minmax(0, 1fr) 120px 90px; }
+      .channel-row { grid-template-columns: minmax(0, 1fr) auto; }
       .channel-row .actions { grid-column: 1 / -1; }
     }
+    html.embedded-dashboard:not(.embedded-dashboard-ready) .sidebar-logo-menu { display: none !important; }
     @media (max-width: 900px) {
       body.authed main.app-shell { padding: 20px 16px 32px; }
     }

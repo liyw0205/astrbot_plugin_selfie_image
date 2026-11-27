@@ -6165,6 +6165,165 @@ class SessionModelAndTaskTests(unittest.TestCase):
             ("54321", "reason text"),
         )
 
+    def test_access_user_command_ignores_bot_wake_mention(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        for command in ("生图加黑", "生图加白", "生图释放"):
+            for target in ("341195867", "@341195867", "@压抑(341195867)", "[At:341195867]", "[CQ:at,qq=341195867]"):
+                with self.subTest(command=command, target=target):
+                    event = types.SimpleNamespace(
+                        message_str=f"@Bot(2132965351) {command} {target} 测试",
+                        message_obj=types.SimpleNamespace(message=[
+                            types.SimpleNamespace(type="at", qq="2132965351"),
+                            types.SimpleNamespace(type="plain", text=f" {command} "),
+                            types.SimpleNamespace(type="at", qq="341195867"),
+                        ]),
+                        get_self_id=lambda: "2132965351",
+                    )
+                    payload = plugin_main.extract_command_message(event, command)
+                    self.assertEqual(
+                        plugin_main.SelfieImagePlugin._parse_access_user_command(event, payload),
+                        ("341195867", "测试"),
+                    )
+
+    def test_access_user_command_uses_only_mentions_after_command_when_text_omits_at(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        parse = plugin_main.SelfieImagePlugin._parse_access_user_command
+        bot = types.SimpleNamespace(type="at", qq="2132965351")
+        command = types.SimpleNamespace(type="plain", text=" 生图加黑 ")
+        target = types.SimpleNamespace(type="at", qq="341195867")
+        event = types.SimpleNamespace(message_obj=types.SimpleNamespace(message=[bot, command, target]))
+        self.assertEqual(parse(event, "测试"), ("341195867", "测试"))
+        event.message_obj.message = [bot, command]
+        self.assertEqual(parse(event, ""), ("", ""))
+        event.message_obj.message = [bot]
+        event.get_self_id = lambda: "2132965351"
+        self.assertEqual(parse(event, ""), ("", ""))
+
+    def test_access_user_command_keeps_mentioned_reason_and_explicit_target(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        event = types.SimpleNamespace(message_obj=types.SimpleNamespace(message=[
+            types.SimpleNamespace(type="at", qq="2132965351"),
+            types.SimpleNamespace(type="plain", text=" 生图加黑 341195867 "),
+            types.SimpleNamespace(type="at", qq="98765"),
+        ]))
+        self.assertEqual(
+            plugin_main.SelfieImagePlugin._parse_access_user_command(event, "341195867 骚扰 @另一个人(98765)"),
+            ("341195867", "骚扰 @另一个人(98765)"),
+        )
+
+    def test_access_user_handlers_with_bot_wake_mutate_only_target(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.raw_config = {"permission": {
+            "blocked_users": [], "blocked_user_reasons": {},
+            "whitelist_users": [], "whitelist_user_reasons": {},
+        }}
+        plugin.update_config_from_web = lambda patch: plugin.raw_config["permission"].update(patch["permission"])
+
+        async def invoke(command, handler, argument):
+            event = types.SimpleNamespace(
+                message_str=f"@Bot(2132965351) {command} {argument}",
+                message_obj=types.SimpleNamespace(message=[
+                    types.SimpleNamespace(type="at", qq="2132965351"),
+                    types.SimpleNamespace(type="plain", text=f" {command} "),
+                    types.SimpleNamespace(type="at", qq="341195867"),
+                ]),
+                plain_result=lambda text: text,
+                get_self_id=lambda: "2132965351",
+            )
+            return [result async for result in handler(event)]
+
+        for command, handler, argument, expected_black, expected_white in (
+            ("生图加黑", plugin.cmd_image_access_black, "@压抑(341195867) 测试", ["341195867"], []),
+            ("生图释放", plugin.cmd_image_access_release, "黑 @压抑(341195867)", [], []),
+            ("生图加白", plugin.cmd_image_access_white, "341195867 可信", [], ["341195867"]),
+            ("生图释放", plugin.cmd_image_access_release, "白 @341195867", [], []),
+            ("生图加黑", plugin.cmd_image_access_black, "[At:341195867]", ["341195867"], []),
+            ("生图释放", plugin.cmd_image_access_release, "@341195867", [], []),
+        ):
+            with self.subTest(command=command, argument=argument):
+                replies = asyncio.run(invoke(command, handler, argument))
+                self.assertEqual(len(replies), 1)
+                self.assertIn("341195867", replies[0])
+                self.assertNotIn("2132965351", replies[0])
+                permission = plugin.raw_config["permission"]
+                self.assertEqual(permission["blocked_users"], expected_black)
+                self.assertEqual(permission["whitelist_users"], expected_white)
+                self.assertNotIn("2132965351", permission["blocked_user_reasons"])
+                self.assertNotIn("2132965351", permission["whitelist_user_reasons"])
+
+    def test_access_user_release_supports_scopes_and_mentions(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.update_config_from_web = lambda patch: plugin.raw_config["permission"].update(patch["permission"])
+        for scope, remaining_black, remaining_white in (("黑", False, True), ("白", True, False), ("", False, False)):
+            for mention in ("12345", "@12345", "[CQ:at,qq=12345]", "[At:12345]", "segment"):
+                with self.subTest(scope=scope, mention=mention):
+                    plugin.raw_config = {"permission": {
+                        "blocked_users": ["12345", "67890"], "blocked_user_reasons": {"12345": "blocked", "67890": "keep"},
+                        "whitelist_users": ["12345", "98765"], "whitelist_user_reasons": {"12345": "trusted", "98765": "keep"},
+                    }}
+                    segments = [types.SimpleNamespace(type="at", qq="12345")] if mention == "segment" else []
+                    event = types.SimpleNamespace(message_obj=types.SimpleNamespace(message=segments))
+                    success, message = plugin._mutate_access_user("release", event, f"{scope} {'' if segments else mention}")
+                    self.assertTrue(success)
+                    permission = plugin.raw_config["permission"]
+                    for key, remains in (("blocked_users", remaining_black), ("whitelist_users", remaining_white)):
+                        self.assertEqual("12345" in permission[key], remains)
+                    for key, remains in (("blocked_user_reasons", remaining_black), ("whitelist_user_reasons", remaining_white)):
+                        self.assertEqual("12345" in permission[key], remains)
+                    self.assertIn("67890", permission["blocked_users"])
+                    self.assertIn("98765", permission["whitelist_users"])
+                    self.assertIn("黑名单和白名单" if not scope else f"{scope}名单", message)
+        success, message = plugin._mutate_access_user("release", types.SimpleNamespace(), "白")
+        self.assertFalse(success)
+        self.assertIn("生图释放 [黑/白]", message)
+
+    def test_access_user_commands_and_group_api_share_persisted_permission(self) -> None:
+        plugin = self._plugin_stub()
+        with tempfile.TemporaryDirectory() as directory:
+            plugin.config_path = str(Path(directory) / "config.json")
+            plugin.key_config = {"web": {"enable": False, "token": ""}}
+            plugin._config_lock = threading.RLock()
+            plugin.raw_config, plugin.config = plugin._load_initial_config_state()
+            plugin._initialize_config_revision_state()
+
+            async def groups(*args, **kwargs):
+                return {"groups": [{"group_id": "10000"}], "available": True}
+
+            plugin.qq_group_cache = types.SimpleNamespace(list_groups=groups)
+            plugin._bot_account_ids = lambda: []
+            event = types.SimpleNamespace(user_id="12345")
+            client = FlaskWebServer(plugin)._create_app().test_client()
+
+            self.assertTrue(plugin._mutate_access_user("black", event, "12345 spam")[0])
+            response = client.get("/api/qq-groups?refresh=1").get_json()["data"]
+            self.assertEqual(response["permission"]["blocked_users"], ["12345"])
+            self.assertEqual(response["permission"]["blocked_user_reasons"], {"12345": "spam"})
+            self.assertFalse(plugin._access_status(event)["allowed"])
+
+            response = client.post("/api/qq-groups/config", json={
+                "groups": [], "revision": response["revision"],
+                "permission": {"blocked_users": [], "blocked_user_reasons": {}, "whitelist_users": ["12345"]},
+            })
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(plugin._access_status(event)["whitelist"])
+            self.assertEqual(plugin.get_config_for_web()["permission"]["blocked_user_reasons"], {})
+
+            self.assertTrue(plugin._mutate_access_user("release", event, "黑 12345")[0])
+            self.assertEqual(plugin.config.whitelist_users, ["12345"])
+            self.assertTrue(plugin._mutate_access_user("release", event, "白 @12345")[0])
+            self.assertFalse(plugin.config.whitelist_users)
+            self.assertTrue(plugin._mutate_access_user("white", event, "12345 trusted")[0])
+            self.assertTrue(plugin._mutate_access_user("black", event, "12345 spam")[0])
+            self.assertEqual(plugin.get_config_for_web()["permission"]["whitelist_user_reasons"], {})
+            self.assertTrue(plugin._mutate_access_user("release", event, "12345")[0])
+            permission = client.get("/api/qq-groups").get_json()["data"]["permission"]
+            for key in ("blocked_users", "whitelist_users", "blocked_user_reasons", "whitelist_user_reasons"):
+                self.assertFalse(permission[key])
+            self.assertEqual(json.loads(Path(plugin.config_path).read_text(encoding="utf-8"))["permission"], permission)
+
     def test_command_error_hides_leading_channel_model_route(self) -> None:
         from astrbot_plugin_selfie_image.prompts.response_text import friendly_user_error_message
 
@@ -7354,9 +7513,8 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertNotEqual(bridge_endpoint("/api/config"), "page/api/config")
 
     def test_channel_test_defaults_and_poll_retry_contract(self) -> None:
-        self.assertIn('id="promptEnhance"', self.html)
-        # default unchecked (no checked attribute on enhance)
-        self.assertNotRegex(self.html, r'id="promptEnhance"[^>]*checked')
+        self.assertTrue('id="promptEnhance"' not in self.html)
+        self.assertIn('prompt_enhance: false', self.html)
         self.assertIn("pollImageTestTask(taskId, failStreak = 0)", self.html)
         self.assertIn("nextFail = failStreak + 1", self.html)
         self.assertIn("failStreak", self.html)
@@ -9408,6 +9566,154 @@ class LegFocusTests(unittest.TestCase):
 
 
 class StudioStoreTests(unittest.TestCase):
+    def test_restart_releases_orphaned_canvas_locks_and_preserves_live_tasks(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio import StudioStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = StudioStore(directory)
+            session = store.create("interrupted")
+            sid = session["id"]
+            root_id = session["canvas"]["root_node_id"]
+            store.update_canvas(sid, {"nodes": [{"id": root_id, "image_path": "keep.png", "extra_refs": [{"id": "keep", "image_path": "extra.png"}]}]})
+            child = store.add_canvas_node(sid, {"parent_id": root_id})
+            store.attach_run_start(sid, "missing-task", {"target_node_id": child["id"]})
+            live = store.create("live")
+            live_root = live["canvas"]["root_node_id"]
+            store.attach_run_start(live["id"], "live-task", {"target_node_id": live_root})
+
+            store = StudioStore(directory)
+            self.assertEqual(store.reconcile_interrupted_runs({"live-task"}), 1)
+            recovered = store.get(sid)
+            self.assertEqual(recovered["last_run"]["status"], "failed")
+            self.assertIn("重启中断", recovered["last_run"]["error"])
+            root, recovered_child = recovered["canvas"]["nodes"]
+            self.assertEqual(root["result"]["media_path"], "keep.png")
+            self.assertEqual(root["extra_refs"][0]["image_path"], "extra.png")
+            self.assertEqual(recovered_child["status"], "failed")
+            self.assertEqual(recovered_child["parent_id"], root_id)
+            store.update_canvas(sid, {"nodes": [{"id": child["id"], "extra_refs": [{"id": "new"}]}]})
+            reloaded = StudioStore(directory)
+            self.assertEqual(reloaded.get(sid)["canvas"]["nodes"][1]["extra_refs"], [{"id": "new"}])
+            self.assertEqual(reloaded.get(live["id"])["last_run"]["status"], "running")
+            self.assertEqual(reloaded.get(live["id"])["canvas"]["nodes"][0]["status"], "running")
+            self.assertEqual(reloaded.reconcile_interrupted_runs({"live-task"}), 0)
+
+    def test_raw_canvas_extra_references_survive_reload_and_reach_generation(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio import StudioStore
+
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        image = (Path(__file__).resolve().parents[1] / "logo.png").read_bytes()
+        with tempfile.TemporaryDirectory() as directory:
+            plugin.studio = StudioStore(directory)
+            session = plugin.studio.create("references", template="duo")
+            sid = session["id"]
+            root_id = session["canvas"]["root_node_id"]
+            cached = Path(directory) / "reference.png"
+            cached.write_bytes(image)
+            plugin.get_cached_image_info = lambda path: {"exists": path in {"main.png", "extra.png"}, "is_image": True, "absolute_path": str(cached), "mime_type": "image/png"}
+            plugin._load_cache_image_bytes = lambda path: (path.encode(), "image/png") if path in {"main.png", "extra.png"} else None
+            plugin.studio_canvas_update(sid, {"nodes": [{"id": root_id, "image_path": "main.png", "extra_refs": [{"id": "detail", "image_path": "extra.png"}]}]})
+            plugin.studio = StudioStore(directory)
+            session = plugin.studio.get(sid)
+            root = session["canvas"]["nodes"][0]
+            self.assertEqual(root["extra_refs"][0]["image_path"], "extra.png")
+            self.assertIn("extra.png", plugin.studio.referenced_cache_paths())
+            child = plugin.studio_canvas_node_create(sid, {"parent_id": root_id, "extra_refs": root["extra_refs"]})
+            session = plugin.studio.get(sid)
+            refs, _ = plugin._resolve_studio_refs(session, root_id, persona_ref=None, extra_refs=child["extra_refs"], raw_canvas=True)
+            self.assertEqual([data for data, _ in refs], [b"main.png", b"extra.png"])
+            plugin.loop = types.SimpleNamespace(is_running=lambda: True)
+            plugin._ensure_generation_available = lambda: None
+            plugin._prune_web_tasks_locked = lambda: None
+            plugin._persist_web_tasks_locked = lambda: None
+            plugin._start_runtime_generation = lambda _task_id, coro: coro.close()
+            plugin.get_web_image_task = lambda task_id: plugin._web_tasks[task_id]
+            task = plugin.start_studio_run(sid, {"raw_canvas": True, "target_node_id": root_id, "node_params": {"prompt": "precise fixture prompt"}})
+            summary = plugin.studio.get(sid)["last_run"]["summary"]
+            self.assertEqual(summary["mode"], "t2i")
+            self.assertEqual(summary["prompt"], "precise fixture prompt")
+            self.assertEqual(summary["extra_refs"][0]["image_path"], "extra.png")
+            plugin._canvas_store = lambda _: plugin.studio
+            plugin._task_cancel_requested = lambda _: False
+            plugin._web_task_timestamp = lambda: "now"
+            state = {}
+            plugin._set_web_image_task = lambda _, **fields: state.update(fields)
+            plugin.get_web_image_task = lambda _: state
+            plugin._wait_for_record_commits = lambda _: asyncio.sleep(0)
+            plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+            plugin._record_task = lambda _: None
+            calls = []
+
+            async def generate(**kwargs):
+                calls.append(kwargs)
+                return {"success": True, "image_paths": ["generated.png"]}
+
+            plugin._run_image_generation = generate
+            asyncio.run(plugin._run_studio_task(task["task_id"], sid))
+            self.assertEqual(state["status"], "succeeded", state.get("error"))
+            self.assertEqual(calls[0]["original_prompt"], "precise fixture prompt")
+            self.assertEqual([ref.data for ref in calls[0]["refs"]], [b"main.png", b"extra.png"])
+            plugin.studio_canvas_update(sid, {"nodes": [{"id": root_id, "extra_refs": []}]})
+            self.assertEqual(plugin.studio.get(sid)["canvas"]["nodes"][0]["extra_refs"], [])
+            with self.assertRaisesRegex(ValueError, "图片不存在"):
+                plugin.studio_canvas_update(sid, {"nodes": [{"id": root_id, "extra_refs": [{"image_path": "missing.png"}]}]})
+
+    def test_node_images_use_validated_originals_and_keep_graph_after_reload(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio import StudioStore
+
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        image = (Path(__file__).resolve().parents[1] / "logo.png").read_bytes()
+        with tempfile.TemporaryDirectory() as directory:
+            plugin.studio = StudioStore(directory)
+            session = plugin.studio.create("node images", template="i2i")
+            sid = session["id"]
+            graph = plugin.studio.canvas_graph(sid)
+            root_id = graph["root_node_id"]
+            cached = Path(directory) / "gallery.png"
+            cached.write_bytes(image)
+            plugin.get_cached_image_info = lambda path: {
+                "exists": path in {"gallery.png", "upload.png"}, "is_image": True,
+                "absolute_path": str(cached), "mime_type": "image/png",
+            }
+            plugin._save_cache_image = lambda data, *args: "upload.png"
+            plugin._load_cache_image_bytes = lambda path: (image, "image/png") if path in {"gallery.png", "upload.png"} else None
+            child = plugin.studio.add_canvas_node(sid, {"parent_id": root_id})
+            graph = plugin.studio_canvas_update(sid, {"nodes": [{
+                "id": child["id"], "image_path": "gallery.png", "source_record_id": "record-gallery",
+                "params": {"prompt": "preserve this prompt"},
+            }]})
+            node = next(node for node in graph["nodes"] if node["id"] == child["id"])
+            self.assertEqual(node["result"]["media_path"], "gallery.png")
+            self.assertEqual(node["record_id"], "record-gallery")
+            self.assertEqual(node["parent_id"], root_id)
+            refs, _ = plugin._resolve_studio_refs(plugin.studio.get(sid), node["id"], persona_ref=None)
+            self.assertEqual(refs, [(image, "image/png")])
+
+            # A legacy result must not be reconstructed as an extra node after replacing its picture.
+            plugin.studio._sessions[sid]["results"] = [{"image_path": "gallery.png", "task_id": "old", "record_id": "record-gallery"}]
+            graph = plugin.studio_canvas_update(sid, {"nodes": [{
+                "id": child["id"], "image": "data:image/png;base64," + base64.b64encode(image).decode("ascii"),
+            }]})
+            self.assertEqual(len(graph["nodes"]), 2)
+            reloaded = StudioStore(directory).canvas_graph(sid)
+            self.assertEqual(len(reloaded["nodes"]), 2)
+            node = next(node for node in reloaded["nodes"] if node["id"] == child["id"])
+            self.assertEqual(node["result"]["media_path"], "upload.png")
+            self.assertEqual(node["params"]["prompt"], "preserve this prompt")
+            self.assertEqual(node["parent_id"], root_id)
+            self.assertIsNone(node["record_id"])
+
+            plugin.studio_canvas_update(sid, {"nodes": [{"id": root_id, "image_path": "gallery.png"}]})
+            self.assertIn("gallery.png", [slot.get("image_path") for slot in plugin.studio.get(sid)["slots"]])
+            with self.assertRaisesRegex(ValueError, "图片不存在"):
+                plugin.studio_canvas_update(sid, {"nodes": [{"id": child["id"], "image_path": "missing.png"}]})
+            with self.assertRaisesRegex(ValueError, "节点不存在"):
+                plugin.studio_canvas_update(sid, {"nodes": [{"id": "missing", "image_path": "gallery.png"}]})
+            node = next(node for node in plugin.studio._sessions[sid]["canvas"]["nodes"] if node["id"] == child["id"])
+            node["status"] = "running"
+            with self.assertRaisesRegex(ValueError, "生成中的画面"):
+                plugin.studio_canvas_update(sid, {"nodes": [{"id": child["id"], "image_path": "gallery.png"}]})
+
     def test_both_canvas_namespaces_finalize_pool_negatives_with_actual_refs(self) -> None:
         from astrbot_plugin_selfie_image.cos.cos_looks import (
             _COS_ANIME_NEGATIVE_PROMPT,
@@ -11843,8 +12149,8 @@ class StudioStoreTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.webui.web import INDEX_HTML, WEB_TASK_ID_RE
 
         self.assertIn('data-tab="studio"', INDEX_HTML)
-        self.assertIn("studioTemplateSelect", INDEX_HTML)
-        self.assertIn("按模板新建", INDEX_HTML)
+        self.assertTrue('id="studioTemplateSelect"' not in INDEX_HTML)
+        self.assertIn('raw_canvas:true', INDEX_HTML)
         self.assertIn("studioPresetBtn", INDEX_HTML)
         self.assertIn("testPresetBtn", INDEX_HTML)
         self.assertIn("studioCosBtn", INDEX_HTML)
@@ -11871,8 +12177,7 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("setStudioRunningUI", INDEX_HTML)
         self.assertIn("data-cache-path", INDEX_HTML)
         self.assertIn("loadProtectedImages(wrap)", INDEX_HTML)
-        self.assertIn("/api/assets/studio", INDEX_HTML)
-        self.assertIn("addSelectedAssetToStudio", INDEX_HTML)
+        self.assertNotIn("addSelectedAssetToStudio", INDEX_HTML)
         self.assertTrue(WEB_TASK_ID_RE.fullmatch("web-studio-12345678-1"))
 
         dashboard_html = (

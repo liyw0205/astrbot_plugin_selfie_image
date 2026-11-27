@@ -287,6 +287,15 @@
       if (runningSeconds > 0) parts.push(`已用 ${runningSeconds.toFixed(1)}s`);
       return parts.join(' · ');
     }
+    function openTaskQueue() {
+      $('taskQueueModal')?.classList.add('show');
+      $('closeTaskQueueBtn')?.focus({preventScroll: true});
+      void loadTasks();
+    }
+    function closeTaskQueue() {
+      $('taskQueueModal')?.classList.remove('show');
+      $('openTaskQueueBtn')?.focus({preventScroll: true});
+    }
     function taskQueueScope() {
       return $('taskQueueScope')?.value === 'recent' ? 'recent' : 'active';
     }
@@ -539,6 +548,7 @@
         if (loadSeq !== TASK_LOAD_SEQ) return;
         const data = res.data || {};
         const summary = data.summary || {};
+        if ($('taskQueueCount')) $('taskQueueCount').textContent = String(Number(summary.total_active ?? (Number(summary.queued || 0) + Number(summary.running || 0))));
         // Every successful task poll checks for new/changed records without discarding cached pages.
         if ($('monitor')?.classList.contains('active')) void loadRecords(false, {background: true});
         const prefix = scope === 'recent' ? '最近任务' : '活动任务';

@@ -696,6 +696,8 @@ class StudioStore:
             for node in nodes
             if isinstance(node.get("result"), dict)
         }
+        for node in nodes:
+            known_paths.update(node.get("replaced_media_paths") or [])
         previous_id = root_id
         for index, result in enumerate(reversed(result_rows) if not is_creative else []):
             path = str(result.get("image_path") or "").strip()
@@ -832,6 +834,9 @@ class StudioStore:
                 for node in canvas.get("nodes") or []:
                     if not isinstance(node, dict):
                         continue
+                    for reference in node.get("extra_refs") or []:
+                        if isinstance(reference, dict):
+                            add(reference.get("image_path"))
                     result = node.get("result")
                     if isinstance(result, dict):
                         add(result.get("media_path"))
@@ -859,6 +864,12 @@ class StudioStore:
             if not isinstance(patch, dict):
                 raise ValueError("canvas 必须是对象")
             before_canvas = copy.deepcopy(canvas)
+            for raw in patch.get("nodes") or []:
+                if not isinstance(raw, dict) or "image_path" not in raw:
+                    continue
+                target = next((node for node in canvas["nodes"] if node.get("id") == raw.get("id")), None)
+                if target and target.get("status") in {"queued", "running"}:
+                    raise ValueError("生成中的画面不能替换图片")
             viewport = patch.get("viewport")
             if isinstance(viewport, dict):
                 try:
@@ -892,6 +903,24 @@ class StudioStore:
                     node = by_id.get(str(raw.get("id") or "").strip())
                     if not node:
                         continue
+                    if "extra_refs" in raw:
+                        if node.get("status") in {"queued", "running"}:
+                            raise ValueError("生成中的画面不能替换参考图")
+                        node["extra_refs"] = copy.deepcopy(raw["extra_refs"])
+                    image_path = str(raw.get("image_path") or "").strip()
+                    if image_path:
+                        previous_path = str((node.get("result") or {}).get("media_path") or "")
+                        if previous_path and previous_path != image_path:
+                            node["replaced_media_paths"] = list(dict.fromkeys([*(node.get("replaced_media_paths") or []), previous_path]))
+                        node["result"] = {"media_path": image_path, "thumbnail_path": image_path, "mime": str(raw.get("mime") or "")}
+                        node["record_id"] = raw.get("source_record_id") or None
+                        node["status"] = "succeeded"
+                        node.pop("error", None)
+                        if str(node["id"]) == str(canvas.get("root_node_id")):
+                            slots = session.get("slots") or []
+                            slot = next((item for item in slots if item.get("role") in {"identity", "base"}), slots[0] if slots else None)
+                            if slot is not None:
+                                slot.update({"image_path": image_path, "mime": str(raw.get("mime") or ""), "source": str(raw.get("source") or "upload"), "source_record_id": node["record_id"]})
                     if "title" in raw:
                         node["title"] = str(raw.get("title") or "节点").strip()[:80] or "节点"
                     if "template_id" in raw:
@@ -942,6 +971,7 @@ class StudioStore:
                     "y": float(position.get("y", float((parent.get("position") or {}).get("y", 0)) + (CANVAS_NODE_GAP_Y if len(canvas["nodes"]) % 2 else -CANVAS_NODE_GAP_Y))),
                 },
                 "status": "draft",
+                "extra_refs": copy.deepcopy(payload.get("extra_refs") or []),
                 "result": {"media_path": "", "thumbnail_path": ""},
                 "created_at": _now(),
             }
@@ -1197,6 +1227,32 @@ class StudioStore:
             self._persist()
             return public_session(session)
 
+    def reconcile_interrupted_runs(self, active_task_ids: set[str]) -> int:
+        """Release persisted canvas locks after task recovery has completed."""
+        with self._lock:
+            changed = 0
+            error = "上次画布任务已结束或因重启中断，请重新生成"
+            for session in self._sessions.values():
+                last = session.get("last_run") or {}
+                task_id = str(last.get("task_id") or "")
+                updated = False
+                if last.get("status") in {"queued", "running"} and task_id not in active_task_ids:
+                    last.update(status="failed", error=error, finished_at=_now())
+                    session["last_run"] = last
+                    updated = True
+                target_id = str((last.get("summary") or {}).get("target_node_id") or "")
+                for node in (session.get("canvas") or {}).get("nodes") or []:
+                    node_task_id = str(node.get("task_id") or (task_id if str(node.get("id")) == target_id else ""))
+                    if node.get("status") in {"queued", "running"} and node_task_id not in active_task_ids:
+                        node.update(status="failed", error=error)
+                        updated = True
+                if updated:
+                    session["updated_at"] = _now()
+                    changed += 1
+            if changed:
+                self._persist()
+            return changed
+
     def attach_run_start(self, session_id: str, task_id: str, summary: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
             session = self._require(session_id)
@@ -1324,6 +1380,7 @@ class StudioStore:
                         "title": "生成结果" if len(created_results) == 1 else f"生成结果 {index + 1}",
                         "template_id": str(summary.get("template") or session.get("template") or ""),
                         "params": dict(params),
+                        "extra_refs": copy.deepcopy(summary.get("extra_refs") or []),
                         "position": {
                             "x": float(parent_pos.get("x", 0) or 0) + CANVAS_NODE_GAP_X,
                             "y": float(parent_pos.get("y", 0) or 0) + (sibling_count + index - 0.5) * CANVAS_NODE_GAP_Y,

@@ -99,6 +99,10 @@
       }
     }
     function studioNodeMedia(node) { return node && node.result && (node.result.thumbnail_path || node.result.media_path) || ''; }
+    function studioNodeImageLocked(node) {
+      return !!node && (node.status === 'queued' || node.status === 'running'
+        || (STUDIO.running && String(STUDIO.taskNodeId || '') === String(node.id)));
+    }
     function studioSetStatus(message, kind = '') {
       const el = $('studioStatus');
       if (el) { el.textContent = message || ''; el.className = 'studio-status-line' + (kind ? ' ' + kind : ''); }
@@ -139,8 +143,10 @@
     }
     function studioPersistCanvas(delay = 260) {
       clearTimeout(STUDIO.canvasSaveTimer);
+      const sessionId = STUDIO.current?.id;
+      const editVersion = STUDIO.canvasEditVersion = (STUDIO.canvasEditVersion || 0) + 1;
       STUDIO.canvasSaveTimer = setTimeout(async () => {
-        if (!STUDIO.current || !STUDIO.canvas) return;
+        if (!sessionId || STUDIO.current?.id !== sessionId || !STUDIO.canvas) return;
         const positions = {};
         for (const node of STUDIO.canvas.nodes || []) positions[node.id] = node.position || {x:0, y:0};
         try {
@@ -153,7 +159,7 @@
           const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas', {
             method:'POST', body: JSON.stringify({viewport: STUDIO.viewport, positions, nodes})
           });
-          if (res.success && res.data) STUDIO.canvas = res.data;
+          if (res.success && res.data && STUDIO.current?.id === sessionId && STUDIO.canvasEditVersion === editVersion) STUDIO.canvas = res.data;
         } catch (error) { console.warn('[studio-canvas] save failed', error); }
       }, delay);
     }
@@ -178,14 +184,13 @@
       if (node.status === 'running' || node.status === 'queued') return '生成中';
       if (node.status === 'failed') return '失败';
       if (node.status === 'cancelled') return '已取消';
-      return String(node.template_id || '生成结果');
+      return '生成结果';
     }
     function studioNodeTitle(node) {
       const explicit = String(node?.title || '').trim();
       if (explicit && !['生成结果', '新画面', '画面'].includes(explicit)) return explicit;
-      const template = (STUDIO.templates || []).find(item => String(item.id || '') === String(node?.template_id || ''));
       const index = Math.max(1, (studioGraph().nodes || []).findIndex(item => String(item.id) === String(node?.id)) + 1);
-      return `${template?.title || node?.template_id || '画面'} ${index}`;
+      return `画面 ${index}`;
     }
     function studioRenderNodes() {
       const wrap = $('studioCanvasNodes');
@@ -252,12 +257,15 @@
       if (!node) return;
       const params = node.params && typeof node.params === 'object' ? node.params : {};
       const media = studioNodeMedia(node);
-      const templates = STUDIO.templates || [];
-      body.innerHTML = `${media ? `<img class="studio-node-result" data-cache-path="${escapeHtml(media)}" alt="画面结果">` : ''}
-        <div class="studio-node-field"><label>模板</label><select id="studioNodeTemplate">${templates.map(item => `<option value="${escapeHtml(item.id || '')}"${String(item.id || '') === String(node.template_id || '') ? ' selected' : ''}>${escapeHtml(item.title || item.id || '')}</option>`).join('')}</select></div>
+      const sessionId = STUDIO.current?.id;
+      const isRoot = String(node.id) === String(studioGraph().root_node_id);
+      const imageLocked = studioNodeImageLocked(node);
+      body.innerHTML = `${media ? `<img class="studio-node-result" data-cache-path="${escapeHtml(media)}" data-cache-variant="thumbnail" alt="画面结果">` : ''}
+        ${isRoot ? `<div class="studio-node-picker-actions"><button class="secondary" type="button" data-panel-action="upload" ${imageLocked ? 'disabled' : ''}>上传</button><button class="secondary" type="button" data-panel-action="gallery" ${imageLocked ? 'disabled' : ''}>图库</button></div>
+        <input id="studioNodeFilePick" type="file" accept="image/*" hidden>` : ''}
+        <div id="studioExtraReferences"></div>
         <div class="studio-node-field"><label>画面描述</label><textarea id="studioNodePrompt">${escapeHtml(params.prompt || '')}</textarea></div>
         <div class="studio-node-picker-actions"><button class="secondary" type="button" id="studioNodePresetBtn" data-panel-action="presets">提示词预设</button><button class="secondary" type="button" id="studioNodeCosBtn" data-panel-action="cos">COS 池</button></div>
-        <div id="studioNodePresetPanel" class="preset-panel studio-node-picker"></div><div id="studioNodeCosPanel" class="preset-panel studio-node-picker"></div>
         <div class="grid2"><div class="studio-node-field"><label>比例</label><select id="studioNodeAspect">${['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'].map(item => `<option${item === (params.aspect_ratio || '自动') ? ' selected' : ''}>${item}</option>`).join('')}</select></div><div class="studio-node-field"><label>清晰度</label><select id="studioNodeResolution">${['1K','2K','4K'].map(item => `<option${item === (params.resolution || '1K') ? ' selected' : ''}>${item}</option>`).join('')}</select></div></div>
         <div class="studio-node-field"><label>状态</label><div class="status">${escapeHtml(studioNodeLabel(node))}${node.parent_id ? ' · 沿用上一张图' : ''}</div>${(() => {
           const task = STUDIO.taskProgress || {};
@@ -276,37 +284,80 @@
       body.querySelector('[data-panel-action="delete"]').onclick = () => studioDeleteNode(node.id);
       body.querySelector('[data-panel-action="presets"]').onclick = () => studioToggleNodePresets();
       body.querySelector('[data-panel-action="cos"]').onclick = () => studioToggleNodeCos();
-      body.querySelector('#studioNodeTemplate').onchange = () => studioPanelChanged(node);
+      const uploadButton = body.querySelector('[data-panel-action="upload"]');
+      const galleryButton = body.querySelector('[data-panel-action="gallery"]');
+      const fileInput = body.querySelector('#studioNodeFilePick');
+      if (uploadButton) uploadButton.onclick = () => fileInput.click();
+      if (galleryButton) galleryButton.onclick = () => openStudioNodeGallery(node);
+      if (fileInput) fileInput.onchange = async event => {
+        const input = event.target;
+        const file = input.files?.[0];
+        input.value = '';
+        if (!file) return;
+        input.disabled = true;
+        const upload = body.querySelector('[data-panel-action="upload"]');
+        upload.disabled = true;
+        try {
+          const image = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          await studioSetNodeImage(node, {image, source: 'upload'}, sessionId);
+        } catch (error) { showToast(error.message || '上传失败', 'bad'); }
+        finally { input.disabled = false; upload.disabled = studioNodeImageLocked(studioNode(node.id)); }
+      };
+      renderExtraReferences(body.querySelector('#studioExtraReferences'), node.extra_refs || [], {
+        disabled: imageLocked,
+        onChange: rows => studioSetNodeImage(node, {extra_refs:rows}, sessionId),
+      });
       body.querySelector('#studioNodePrompt').oninput = () => studioPanelChanged(node);
       body.querySelector('#studioNodeAspect').onchange = () => studioPanelChanged(node);
       body.querySelector('#studioNodeResolution').onchange = () => studioPanelChanged(node);
-      renderPresetPanel('studioNodePresetPanel', 'studioNodePrompt', !!STUDIO.nodePresetOpen, 'studioNodePresetBtn');
-      renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', !!STUDIO.nodeCosOpen, 'studioNodeCosBtn');
       loadProtectedImages(body);
     }
-    async function studioToggleNodePresets() {
-      STUDIO.nodePresetOpen = !STUDIO.nodePresetOpen;
-      STUDIO.nodeCosOpen = false;
-      if (STUDIO.nodePresetOpen) {
-        const state = catalogPickerState('studioNodePresetPanel');
-        await loadCatalogPickerPage('studioNodePresetPanel', 'image', state.page);
+    async function studioSetNodeImage(node, image, sessionId = STUDIO.current?.id) {
+      if (!sessionId || STUDIO.current?.id !== sessionId || !studioNode(node.id) || STUDIO.selectedNodeId !== node.id || studioNodeImageLocked(studioNode(node.id)) || STUDIO.nodeImageRequest?.sessionId === sessionId) return false;
+      node = studioNode(node.id);
+      studioPanelChanged(node);
+      clearTimeout(STUDIO.canvasSaveTimer);
+      const request = {sessionId, nodeId: node.id};
+      STUDIO.nodeImageRequest = request;
+      const buttons = [...$('studioNodePanelBody').querySelectorAll('[data-panel-action="upload"], [data-panel-action="gallery"]')];
+      buttons.forEach(button => { button.disabled = true; });
+      try {
+        const positions = Object.fromEntries((STUDIO.canvas.nodes || []).map(item => [item.id, item.position || {x:0, y:0}]));
+        const nodes = (STUDIO.canvas.nodes || []).map(item => ({id: item.id, title: item.title, template_id: item.template_id, params: {...item.params}, ...(item.id === node.id ? image : {})}));
+        const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(sessionId) + '/canvas', {
+          method: 'POST', body: JSON.stringify({viewport: STUDIO.viewport, positions, nodes})
+        });
+        if (!res.success) throw new Error(res.message || '图片更新失败');
+        if (STUDIO.current?.id !== sessionId) return false;
+        STUDIO.canvas = res.data;
+        studioRenderCanvas();
+        showToast(image.extra_refs ? '额外参考图已更新' : '画面图片已更新', 'ok');
+        return true;
+      } catch (error) { showToast(error.message || '图片更新失败', 'bad'); return false; }
+      finally {
+        if (STUDIO.nodeImageRequest === request) STUDIO.nodeImageRequest = null;
+        buttons.forEach(button => { button.disabled = studioNodeImageLocked(studioNode(node.id)); });
       }
-      renderPresetPanel('studioNodePresetPanel', 'studioNodePrompt', STUDIO.nodePresetOpen, 'studioNodePresetBtn');
-      renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', false, 'studioNodeCosBtn');
     }
-    async function studioToggleNodeCos() {
-      STUDIO.nodeCosOpen = !STUDIO.nodeCosOpen;
-      STUDIO.nodePresetOpen = false;
-      if (STUDIO.nodeCosOpen) {
-        const state = catalogPickerState('studioNodeCosPanel');
-        await loadCatalogPickerPage('studioNodeCosPanel', 'cos', state.page);
-      }
-      renderPresetPanel('studioNodePresetPanel', 'studioNodePrompt', false, 'studioNodePresetBtn');
-      renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', STUDIO.nodeCosOpen, 'studioNodeCosBtn');
+    async function openStudioNodeGallery(node) {
+      if (studioNodeImageLocked(studioNode(node.id))) return;
+      const sessionId = STUDIO.current?.id;
+      return openReferenceGallery(image => studioSetNodeImage(node, image, sessionId));
+    }
+    function studioToggleNodePresets() {
+      openCatalogPicker('image', 'studioNodePrompt', 'studioNodePresetBtn');
+    }
+    function studioToggleNodeCos() {
+      openCatalogPicker('cos', 'studioNodePrompt', 'studioNodeCosBtn');
     }
     function studioPanelChanged(node) {
+      node = node && studioNode(node.id);
       if (!node) return;
-      node.template_id = $('studioNodeTemplate')?.value || node.template_id || '';
       node.params = Object.assign({}, node.params || {}, {
         prompt: $('studioNodePrompt')?.value || '',
         aspect_ratio: $('studioNodeAspect')?.value || '自动',
@@ -459,7 +510,7 @@
       if (!STUDIO.current || !parent) return;
       if (String(STUDIO.selectedNodeId || '') === String(parent.id || '')) studioPanelChanged(parent);
       const params = Object.assign({}, parent.params || {});
-      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas/nodes', {method:'POST', body:JSON.stringify({parent_id:parent.id, template_id:parent.template_id, params, title:'新画面'})});
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas/nodes', {method:'POST', body:JSON.stringify({parent_id:parent.id, template_id:'blank', params, extra_refs:parent.extra_refs || [], title:'新画面'})});
       if (!res.success) return showToast(res.message || '创建画面失败', 'bad');
       const graph = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas');
       if (graph.success) STUDIO.canvas = graph.data;
@@ -476,13 +527,13 @@
       studioRenderCanvas(); showToast('画面已删除', 'ok');
     }
     async function studioRunNode(node) {
-      if (!STUDIO.current || !node || STUDIO.running) return;
+      if (!STUDIO.current || !node || STUDIO.running || STUDIO.nodeImageRequest) return;
       studioPanelChanged(node);
       const params = Object.assign({}, node.params || {});
       const isRoot = !node.parent_id;
       const parentNodeId = isRoot ? '' : (node.status === 'draft' ? node.parent_id : node.id);
       const targetNodeId = node.status === 'draft' || isRoot ? node.id : '';
-      const payload = {parent_node_id: parentNodeId, target_node_id: targetNodeId, template_id: node.template_id || STUDIO.current.template || '', node_params: Object.assign({}, params), graph: {prompt:params.prompt || '', mode:params.mode || STUDIO.current.graph?.mode || 'group', aspect_ratio:params.aspect_ratio || '自动', resolution:params.resolution || '1K', count:Number(params.count || 1), use_persona_identity:STUDIO.current.graph?.use_persona_identity !== false}};
+      const payload = {parent_node_id: parentNodeId, target_node_id: targetNodeId, raw_canvas:true, node_params: Object.assign({}, params), graph: {prompt:params.prompt || '', mode:'t2i', aspect_ratio:params.aspect_ratio || '自动', resolution:params.resolution || '1K', count:Number(params.count || 1), use_persona_identity:false}};
       const optimisticDraft = node.status === 'draft';
       if (optimisticDraft) { node.status = 'running'; node.error = ''; }
       STUDIO.running = true; STUDIO.taskNodeId = String(node.id || ''); STUDIO.taskProgress = null; studioSetStatus('正在提交生成…'); studioRenderCanvas();
@@ -524,9 +575,8 @@
       select.innerHTML = '<option value="">选择画布…</option>' + (STUDIO.sessions || []).map(item => {
         const id = String(item.id || '');
         const suffix = id.slice(-4).toUpperCase();
-        const template = item.template || item.template_id || '';
         const status = item.last_status || '';
-        const detail = [template, Number(item.result_count || 0) ? `${Number(item.result_count)} 图` : '', status, suffix ? `#${suffix}` : ''].filter(Boolean).join(' · ');
+        const detail = [Number(item.result_count || 0) ? `${Number(item.result_count)} 图` : '', status, suffix ? `#${suffix}` : ''].filter(Boolean).join(' · ');
         return `<option value="${escapeHtml(id)}">${escapeHtml(item.title || '未命名')} · ${escapeHtml(detail)}</option>`;
       }).join('');
       if (STUDIO.current?.id) select.value = STUDIO.current.id;
@@ -538,7 +588,7 @@
       if ($('studioDeleteBtn')) $('studioDeleteBtn').disabled = !has;
     }
     function renderStudio() { syncStudioEditorVisibility(); renderStudioSessionSelect(); studioBindCanvasInteractions(); if (!STUDIO.current) return; studioRenderCanvas(); }
-    function openStudioCreateModal() { renderStudioTemplateSelect(); $('studioCreateTitle').value = ''; $('studioCreateStatus').textContent = ''; if ($('studioCreateConfirmBtn')) $('studioCreateConfirmBtn').disabled = false; $('studioCreateModal').classList.add('show'); setTimeout(() => $('studioCreateTitle')?.focus(), 0); }
+    function openStudioCreateModal() { $('studioCreateTitle').value = ''; $('studioCreateStatus').textContent = ''; if ($('studioCreateConfirmBtn')) $('studioCreateConfirmBtn').disabled = false; $('studioCreateModal').classList.add('show'); setTimeout(() => $('studioCreateTitle')?.focus(), 0); }
     function closeStudioCreateModal() { $('studioCreateModal')?.classList.remove('show'); }
     async function loadStudioSessionList(force = false) {
       const fresh = !force && STUDIO.sessionsLoadedAt && (Date.now() - STUDIO.sessionsLoadedAt) < CANVAS_SESSION_CACHE_TTL_MS;
@@ -612,7 +662,7 @@
       }
     }
     async function studioCreate() {
-      const template = $('studioTemplateSelect')?.value || 'duo';
+      const template = 'blank';
       const title = $('studioCreateTitle')?.value?.trim() || '';
       const confirm = $('studioCreateConfirmBtn');
       const status = $('studioCreateStatus');

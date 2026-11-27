@@ -32,12 +32,16 @@ def _startup_probe() -> SelfieImagePlugin:
 
 def test_startup_state_installation_preserves_early_live_writes():
     probe = _startup_probe()
+    probe._web_tasks["early-task"]["status"] = "running"
+    canvas_recovery_calls = []
+    probe.studio = SimpleNamespace(reconcile_interrupted_runs=canvas_recovery_calls.append)
 
     probe._load_persistent_state()
 
     assert [row["id"] for row in probe._records] == ["early-record", "saved-record"]
     assert set(probe._web_tasks) == {"early-task", "saved-task"}
     assert probe._web_task_seq == 9
+    assert canvas_recovery_calls == [{"early-task"}]
     assert probe.get_startup_readiness()["records_loaded"] is True
 
 

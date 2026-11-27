@@ -6,12 +6,17 @@
       DASHBOARD_VISITED_TABS.add(target);
       const current = document.querySelector('nav.page-nav button.active')?.dataset.tab || '';
       if (current === target && options.force !== true) return false;
-      document.querySelectorAll('nav.page-nav button').forEach(item => item.classList.toggle('active', item === button));
+      document.querySelectorAll('nav.page-nav button').forEach(item => {
+        item.classList.toggle('active', item === button);
+        item.classList.remove('nav-switching');
+        if (item === button) item.setAttribute('aria-current', 'page');
+        else item.removeAttribute('aria-current');
+      });
+      if (current !== target && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) button.classList.add('nav-switching');
       document.querySelectorAll('main.app-shell > section').forEach(item => item.classList.toggle('active', item === section));
       if (target === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
-      if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); loadAssetCollections(); }
+      if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetCollections(); }
       if (target === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
-      if (target === 'creativeCanvas') loadCreativeCanvasList(CREATIVE_CANVAS.current && CREATIVE_CANVAS.current.id);
       if (target === 'presets') loadManagedPromptPresets(PRESET_KIND);
       if (target === 'selfie') refreshSelfie();
       if (target === 'backup') loadBackupManager();
@@ -50,11 +55,18 @@
     document.querySelectorAll('.modal-mask').forEach(mask => mask.addEventListener('click', event => {
       if (event.target !== mask || mask === $('confirmModal')) return;
       if (mask === $('channelModal')) closeChannelModal();
+      else if (mask === $('cacheModelsModal')) closeCacheModels();
+      else if (mask === $('modelSettingsModal')) closeModelSettings();
       else if (mask === $('proxyModal')) closeProxyModal();
+      else if (mask === $('proxyInfoModal')) closeProxyInfo();
+      else if (mask === $('testDataModal')) closeTestPanel();
+      else if (mask === $('referenceGalleryModal')) closeReferenceGallery();
+      else if (mask === $('catalogPickerModal')) closeCatalogPicker();
       else if (mask === $('recordModal')) closeRecordDetail();
       else if (mask === $('recordFieldModal')) closeRecordField();
       else if (mask === $('compareModal')) closeCompareModal();
       else if (mask === $('taskModal')) closeTaskDetail();
+      else if (mask === $('taskQueueModal')) closeTaskQueue();
       else if (mask === $('metricsModal')) closeMetricsModal();
       else if (mask === $('metricAlertSettingsModal')) closeMetricAlertSettings();
       else if (mask === $('mediaSourceModal')) closeMediaSourceModal();
@@ -63,29 +75,36 @@
       else if (mask === $('cosPoolModal')) closeCosPoolModal();
       else if (mask === $('studioCreateModal')) closeStudioCreateModal();
       else if (mask === $('studioConnectModal')) closeStudioConnectModal();
-      else if (mask === $('creativeCanvasCreateModal')) closeCreativeCanvasCreateModal();
       else if (mask === $('groupConfigModal')) closeGroupConfigModal();
       else if (mask === $('backupRestoreModal')) closeBackupRestore();
     }));
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
       if ($('confirmModal')?.classList.contains('show')) { closeConfirmAction(false); return; }
+      if ($('mediaLightboxModal')?.classList.contains('show')) { closeMediaLightbox(); return; }
+      if ($('cosPoolModal')?.classList.contains('show')) { closeCosPoolModal(); return; }
+      if ($('catalogPickerModal')?.classList.contains('show')) { closeCatalogPicker(); return; }
+      if ($('referenceGalleryModal')?.classList.contains('show')) { closeReferenceGallery(); return; }
+      if ($('testDataModal')?.classList.contains('show')) { closeTestPanel(); return; }
+      if ($('proxyInfoModal')?.classList.contains('show')) { closeProxyInfo(); return; }
       if ($('backupRestoreModal')?.classList.contains('show')) { closeBackupRestore(); return; }
       if ($('mediaSourceModal')?.classList.contains('show')) { closeMediaSourceModal(); return; }
       if ($('mediaLightboxModal')?.classList.contains('show')) { closeMediaLightbox(); return; }
       if ($('recordFieldModal')?.classList.contains('show')) { closeRecordField(); return; }
       if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }
+      if ($('taskQueueModal')?.classList.contains('show')) { closeTaskQueue(); return; }
       if ($('metricsModal')?.classList.contains('show')) { closeMetricsModal(); return; }
       if ($('metricAlertSettingsModal')?.classList.contains('show')) { closeMetricAlertSettings(); return; }
       if ($('recordModal')?.classList.contains('show')) { closeRecordDetail(); return; }
       if ($('compareModal')?.classList.contains('show')) { closeCompareModal(); return; }
+      if ($('modelSettingsModal')?.classList.contains('show')) { closeModelSettings(); return; }
+      if ($('cacheModelsModal')?.classList.contains('show')) { closeCacheModels(); return; }
       if ($('channelModal')?.classList.contains('show')) { closeChannelModal(); return; }
       if ($('proxyModal')?.classList.contains('show')) { closeProxyModal(); return; }
       if ($('presetEditorModal')?.classList.contains('show')) { closePresetEditor(); return; }
       if ($('cosPoolModal')?.classList.contains('show')) { closeCosPoolModal(); return; }
       if ($('studioCreateModal')?.classList.contains('show')) { closeStudioCreateModal(); return; }
       if ($('studioConnectModal')?.classList.contains('show')) closeStudioConnectModal();
-      if ($('creativeCanvasCreateModal')?.classList.contains('show')) { closeCreativeCanvasCreateModal(); return; }
       if ($('groupConfigModal')?.classList.contains('show')) { closeGroupConfigModal(); return; }
     });
     if ($('cleanupCacheBtn')) $('cleanupCacheBtn').onclick = cleanupCache;
@@ -94,6 +113,7 @@
     if ($('mediaLightboxDownload')) {
       $('mediaLightboxDownload').innerHTML = downloadIconSvg();
       $('mediaLightboxDownload').onclick = () => {
+        if (MEDIA_LIGHTBOX_DOWNLOAD) { void MEDIA_LIGHTBOX_DOWNLOAD(); return; }
         if (!MEDIA_LIGHTBOX_PATH) return;
         const filename = MEDIA_LIGHTBOX_PATH.split(/[\\/]/).pop() || 'image';
         downloadCachePath(MEDIA_LIGHTBOX_PATH, filename);
@@ -129,7 +149,7 @@
       await loadManagedPromptPresets(PRESET_KIND);
     };
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
-    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); invalidateMetricsRequests(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); await loadAssetCollections(true); };
+    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); invalidateMetricsRequests(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetCollections(true); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;
@@ -137,7 +157,8 @@
     $('modalProvider').onchange = modalProviderChanged;
     $('modalRefreshModels').onclick = () => refreshChannelModels();
     $('modalEnableAll').onclick = () => { removeAllEnabledModels(); };
-    $('cacheSearch').oninput = () => renderModalModels(currentModalChannel());
+    $('openCacheModels').onclick = openCacheModels;
+    $('cacheSearch').oninput = () => renderCacheModels();
     $('manualAdd').onclick = () => {
       const value = $('manualModel').value.trim();
       if (!value) return;
@@ -153,13 +174,19 @@
       el.addEventListener(eventName, () => { if (isChannelModalOpen()) CHANNEL_MODAL_DIRTY = true; });
     });
     $('testImageBtn').onclick = runImageTest;
+    renderTestExtraReferences();
+    document.querySelectorAll('[data-identity-mode]').forEach(button => {
+      button.onclick = () => {
+        const checkbox = $('selfiePersonaEnabled');
+        if (checkbox.disabled || button.getAttribute('aria-pressed') === 'true') return;
+        checkbox.checked = button.dataset.identityMode === 'persona';
+        void saveSelfieIdentityMode();
+      };
+    });
     $('testCancelBtn').onclick = cancelTestTask;
     $('testRetryStatusBtn').onclick = () => {
       if (TEST_TASK_ID) pollImageTestTask(TEST_TASK_ID, 0);
     };
-    if ($('testTemplatePreviewBtn')) $('testTemplatePreviewBtn').onclick = previewTestTemplate;
-    if ($('testTemplateRandomBtn')) $('testTemplateRandomBtn').onclick = randomizeTestTemplateValues;
-    if ($('testVariationEnabled')) $('testVariationEnabled').onchange = () => { $('testVariationFieldsWrap').style.display = $('testVariationEnabled').checked ? '' : 'none'; };
     if ($('studioCreateBtn')) $('studioCreateBtn').onclick = openStudioCreateModal;
     if ($('studioCreateConfirmBtn')) $('studioCreateConfirmBtn').onclick = studioCreate;
     if ($('studioCreateModal')) $('studioCreateModal').addEventListener('click', event => {
@@ -221,34 +248,10 @@
       if (!id) { STUDIO.current = null; renderStudio(); return; }
       await loadStudioList(id);
     };
-    if ($('creativeCanvasSessionSelect')) $('creativeCanvasSessionSelect').onchange = () =>
-      loadCreativeCanvasList($('creativeCanvasSessionSelect').value || '');
-    if ($('creativeCanvasReloadBtn')) $('creativeCanvasReloadBtn').onclick = () =>
-      loadCreativeCanvasList(CREATIVE_CANVAS.current && CREATIVE_CANVAS.current.id, {force:true});
-    if ($('creativeCanvasDeleteBtn')) $('creativeCanvasDeleteBtn').onclick = deleteCreativeCanvas;
-    if ($('creativeCanvasCreateBtn')) $('creativeCanvasCreateBtn').onclick = openCreativeCanvasCreateModal;
-    if ($('creativeCanvasCreateConfirmBtn')) $('creativeCanvasCreateConfirmBtn').onclick = createCreativeCanvas;
-    if ($('creativeCanvasSaveBtn')) $('creativeCanvasSaveBtn').onclick = saveCreativeCanvas;
-    if ($('creativeCanvasRunBtn')) $('creativeCanvasRunBtn').onclick = runCreativeCanvas;
-    if ($('creativeCanvasRerunBtn')) $('creativeCanvasRerunBtn').onclick = runCreativeCanvas;
-    if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').onclick = cancelCreativeCanvasTask;
-    if ($('creativeCanvasAddSlotBtn')) $('creativeCanvasAddSlotBtn').onclick = addCreativeCanvasSlot;
-    if ($('creativeCanvasPresetBtn')) $('creativeCanvasPresetBtn').onclick = toggleCreativeCanvasPresets;
-    if ($('creativeCanvasCosBtn')) $('creativeCanvasCosBtn').onclick = toggleCreativeCanvasCos;
-    if ($('creativeCanvasFilePick')) $('creativeCanvasFilePick').onchange = async event => {
-      const file = event.target.files && event.target.files[0];
-      event.target.value = '';
-      if (file) await uploadCreativeCanvasFile(file);
-    };
     if ($('studioFilePick')) $('studioFilePick').onchange = async (ev) => {
       const file = ev.target.files && ev.target.files[0];
       ev.target.value = '';
       if (file) await studioUploadFile(file);
-    };
-    if ($('assetImportFile')) $('assetImportFile').onchange = async (ev) => {
-      const file = ev.target.files && ev.target.files[0];
-      ev.target.value = '';
-      if (file) await importAssetsFile(file);
     };
 
     $('uploadSelfie').onclick = uploadSelfie;
@@ -337,18 +340,9 @@
     ['assetKeyword','assetSource','assetTag'].forEach(id => {
       if ($(id)) $(id).oninput = assetFilterChanged;
     });
-    ['assetModel','assetMedia','assetSuccess','assetMark','assetSort','assetStartTime','assetEndTime'].forEach(id => {
+    ['assetModel','assetSuccess','assetMark','assetSort','assetStartTime','assetEndTime'].forEach(id => {
       if ($(id)) $(id).onchange = assetFilterChanged;
     });
-    if ($('assetStudioPresetSearch')) $('assetStudioPresetSearch').oninput = () => {
-      clearTimeout(ASSET_STUDIO_PRESET_SEARCH_TIMER);
-      ASSET_STUDIO_PRESET_PAGE = 1;
-      ASSET_STUDIO_PRESET_SEARCH_TIMER = setTimeout(() => void loadAssetStudioPresets(1), 250);
-    };
-    if ($('assetStudioPresetPrev')) $('assetStudioPresetPrev').onclick = () =>
-      void loadAssetStudioPresets(ASSET_STUDIO_PRESET_PAGE - 1);
-    if ($('assetStudioPresetNext')) $('assetStudioPresetNext').onclick = () =>
-      void loadAssetStudioPresets(ASSET_STUDIO_PRESET_PAGE + 1);
 
     let EMBEDDED_BOOT_BUSY = false;
     async function initializeEmbeddedDashboard() {

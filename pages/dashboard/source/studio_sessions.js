@@ -73,7 +73,6 @@
       if ($('studioDeleteBtn')) $('studioDeleteBtn').disabled = !hasSession;
     }
     function openStudioCreateModal() {
-      renderStudioTemplateSelect();
       $('studioCreateTitle').value = '';
       $('studioCreateStatus').textContent = '';
       $('studioCreateConfirmBtn').disabled = false;
@@ -101,7 +100,7 @@
         // Must use data-cache-path + loadProtectedImage (auth/token); bare /api/cache-image src is broken.
         card.innerHTML = `
           <div class="slot-label">${escapeHtml(slot.label || slot.role || '参考图')}</div>
-          ${has ? `<img data-cache-path="${escapeHtml(slot.image_path)}" alt="">` : '<div class="status" style="font-size:12px">空</div>'}
+          ${has ? `<img data-cache-path="${escapeHtml(slot.image_path)}" data-cache-variant="thumbnail" alt="">` : '<div class="status" style="font-size:12px">空</div>'}
           <div class="slot-actions">
             <button type="button" class="secondary mini" data-act="upload">上传</button>
             <button type="button" class="secondary mini" data-act="record">图库</button>
@@ -347,14 +346,13 @@
     function renderStudio() {
       syncStudioEditorVisibility();
       renderStudioSessionSelect();
-      renderStudioTemplateSelect();
       fillStudioAspect();
       renderStudioPromptChips();
       const s = STUDIO.current;
       if (!s) {
         $('studioTitle').value = '';
         $('studioPrompt').value = '';
-        $('studioStatus').textContent = '选择模板开始创作，或打开已有画布。';
+        $('studioStatus').textContent = '新建画布，或打开已有画布。';
         renderStudioSlots();
         renderStudioResults();
         return;
@@ -410,7 +408,7 @@
       renderStudio();
     }
     async function studioCreate() {
-      const template = ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
+      const template = 'blank';
       const title = ($('studioCreateTitle').value || '').trim();
       const confirm = $('studioCreateConfirmBtn');
       const status = $('studioCreateStatus');

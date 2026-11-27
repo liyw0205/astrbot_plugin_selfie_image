@@ -58,8 +58,6 @@ def test_gallery_and_catalog_pickers_use_server_pages_and_support_search():
     assert "data-picker-page=\"1\"" in PAGE
     assert "id=\"presetManagerPager\"" in PAGE
     assert "id=\"presetCosManagerPager\"" in PAGE
-    assert 'id="assetStudioPresetSearch"' in PAGE
-    assert "await fetchCatalogPage('image', search, ASSET_STUDIO_PRESET_PAGE)" in PAGE
     assert "api('/api/prompt-presets?kind=" not in PAGE
     assert "api('/api/cos-pools')" not in PAGE
 
@@ -99,24 +97,23 @@ def test_cos_pool_manager_exposes_series_filter_and_keeps_pagination_scoped():
     assert "${normalizedSeries.toLocaleLowerCase()}:${page}" in PAGE
 
 
-def test_creative_canvas_hides_rerun_until_a_successful_result():
-    assert "const hasSuccess = String(last.status || '').toLowerCase() === 'succeeded'" in PAGE
-    assert "$('creativeCanvasRerunBtn').hidden = !hasSuccess;" in PAGE
-    assert "保存后生成" in PAGE
+def test_retired_canvas_and_template_controls_are_removed():
+    assert 'data-tab="creativeCanvas"' not in PAGE
+    assert 'id="creativeCanvas"' not in PAGE
+    assert 'id="studioTemplateSelect"' not in PAGE
+    assert 'id="studioNodeTemplate"' not in PAGE
 
 
-def test_canvas_and_asset_preset_loads_ignore_stale_responses():
+def test_canvas_preset_loads_ignore_stale_responses():
     assert "sessionsVersion: 0" in PAGE
-    assert "const cacheVersion = CREATIVE_CANVAS.sessionsVersion;" in PAGE
     assert "const cacheVersion = STUDIO.sessionsVersion;" in PAGE
-    assert "ASSET_STUDIO_PRESET_LOAD_SEQ" in PAGE
-    assert "requestedSearch !== String($('assetStudioPresetSearch')?.value || '').trim()" in PAGE
 
 
 def test_asset_actions_are_delegated_and_media_loading_is_prioritized():
     assert "function setupAssetGridInteractions()" in PAGE
     assert 'data-asset-action="detail"' in PAGE
-    assert 'data-asset-action="studio"' in PAGE
+    assert 'data-asset-action="download"' in PAGE
+    assert 'data-asset-action="studio"' not in PAGE
     assert "const PROTECTED_MEDIA_LOAD_CONCURRENCY = 2;" in PAGE
     assert "protectedMediaViewportPriority" in PAGE
     assert "正在加载记录详情" in PAGE
@@ -215,7 +212,7 @@ def test_cache_aware_page_loads_wait_for_persistent_hydration():
 def test_cache_refreshes_reject_stale_catalog_pages_tags_prefetch_and_studio_gallery():
     assert "PICKER_PAGE_REQUEST_GENERATIONS" in PAGE
     assert "MANAGED_PAGE_REQUEST_GENERATIONS" in PAGE
-    assert "requestGenerations.get(key) === requestGeneration" in PAGE
+    assert "(requestGenerations.get(key) || 0) === requestGeneration" in PAGE
     assert "requestSeq === RECORD_LOAD_SEQ" in PAGE
     assert "requestSeq === ASSET_LOAD_SEQ" in PAGE
     assert "let ASSET_TAG_LOAD_SEQ = 0;" in PAGE

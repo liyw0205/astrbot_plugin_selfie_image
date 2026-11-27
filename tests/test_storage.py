@@ -25,6 +25,44 @@ class _StorageTaskHarness(GenerationStoreMixin, WebTaskMixin):
 
 
 class TestStorage:
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_image_fingerprint_does_not_hold_record_or_persistence_locks(self, tmp_path, monkeypatch, batch):
+        plugin = self._plugin(str(tmp_path))
+        plugin._persistent_state_lock = threading.RLock()
+        decoding = threading.Event()
+        resume = threading.Event()
+        errors = []
+        plugin._load_cache_image_bytes = lambda _path: (b"fixture", "image/png")
+
+        def fingerprint(_raw):
+            decoding.set()
+            assert resume.wait(3)
+            return {"sha256": "fixture"}
+
+        monkeypatch.setattr("astrbot_plugin_selfie_image.generation.generation_store.image_fingerprint", fingerprint)
+
+        def commit():
+            try:
+                method = plugin._commit_generation_records if batch else plugin._commit_generation_record
+                method({"id": "slow-image", "success": True, "generated_image_paths": ["fixture.png"]})
+            except BaseException as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=commit, daemon=True)
+        worker.start()
+        try:
+            assert decoding.wait(3)
+            for lock in (plugin._records_lock, plugin._persistent_state_lock):
+                acquired = lock.acquire(blocking=False)
+                if acquired:
+                    lock.release()
+                assert acquired, "image decoding must not block task snapshots or the event loop"
+        finally:
+            resume.set()
+            worker.join(3)
+        assert not worker.is_alive()
+        assert not errors
+
     def _plugin(self, root: str) -> GenerationStoreMixin:
         plugin = GenerationStoreMixin()
         plugin.data_dir = root

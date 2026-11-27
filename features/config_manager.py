@@ -316,6 +316,10 @@ def _restore_web_proxy_credentials(
         # without credentials.
         if "username" not in row and old.get("username"):
             row["username"] = copy.deepcopy(old["username"])
+        if "username" in row and not str(row.get("username") or "").strip():
+            row["password"] = ""
+            row["has_auth"] = False
+            continue
         incoming = row.get("password")
         if "password" not in row or _is_web_secret_placeholder(incoming):
             previous = old.get("password")
@@ -1058,7 +1062,17 @@ class ConfigurationMixin:
             patch.pop("revision", None)
             patch = _restore_web_channel_credentials(patch, self.raw_config)
             patch = _restore_web_proxy_credentials(patch, self.raw_config)
+            from ..core.models import normalize_proxies_list
+
+            for row in patch.get("proxies") or []:
+                if isinstance(row, dict) and normalize_proxies_list([row]) == []:
+                    raise ValueError("代理配置无效，请检查地址、端口以及账号密码是否完整")
             merged = deep_merge(self.raw_config, patch)
+            permission_patch = patch.get("permission")
+            if isinstance(permission_patch, dict):
+                for key in ("blocked_user_reasons", "whitelist_user_reasons"):
+                    if key in permission_patch:
+                        merged.setdefault("permission", {})[key] = copy.deepcopy(permission_patch[key])
             from ..core.models import preflight_config_channels, sanitize_channels_for_save
 
             # Soft-fix empty-model channels before merge persist (auto-disable).

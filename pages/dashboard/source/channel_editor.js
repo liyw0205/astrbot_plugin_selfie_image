@@ -356,11 +356,9 @@
               <div class="actions" style="margin-top:6px">
                 <span class="pill gray">缓存 ${cacheCount}</span>
                 <span class="pill green">启用模型 ${enabledCount}</span>
-                ${ch.enabled === false ? '<span class="pill gray">已停用</span>' : '<span class="pill">使用中</span>'}
+                <label class="channel-state-toggle"><span class="pill ${ch.enabled === false ? 'gray' : ''}" data-channel-state>${ch.enabled === false ? '已停用' : '使用中'}</span><input type="checkbox" role="switch" aria-label="渠道开关：${escapeHtml(ch.name || '未命名')}" ${ch.enabled !== false ? 'checked' : ''}></label>
               </div>
             </div>
-            <div class="muted" style="font-size:12px">协议随模型</div>
-            <label class="checkline"><input type="checkbox" ${ch.enabled !== false ? 'checked' : ''}>启用</label>
             <div class="actions" style="margin-top:0">
               <button class="secondary" type="button" data-act="edit">编辑</button>
               <button class="secondary" type="button" data-act="dup">复制</button>
@@ -385,16 +383,8 @@
             return;
           }
           // Only refresh this card status; avoid full list rebuild.
-          const pills = card.querySelector('.actions');
-          if (pills) {
-            const cacheCount = Number((target.models_cache || []).length);
-            const enabledCount = Number((target.enabled_models || []).length);
-            pills.innerHTML = `
-                <span class="pill gray">缓存 ${cacheCount}</span>
-                <span class="pill green">启用模型 ${enabledCount}</span>
-                ${target.enabled === false ? '<span class="pill gray">已停用</span>' : '<span class="pill">使用中</span>'}
-            `;
-          }
+          card.querySelector('[data-channel-state]').textContent = target.enabled === false ? '已停用' : '使用中';
+          card.querySelector('[data-channel-state]').classList.toggle('gray', target.enabled === false);
           refreshModelSelectors();
           const saved = await scheduleChannelListAutoSave();
           if (!saved) {
@@ -435,6 +425,9 @@
       renderModalModels(ch);
       refreshModelSelectors();
     }
+    let CHANNEL_MODAL_SEQ = 0;
+    let CHANNEL_MODAL_SAVING = false;
+    let MODEL_SETTINGS_INDEX = -1;
     function collectModalChannel() {
       const factory = channelFactory(EDITING_CHANNEL_KIND);
       let source;
@@ -464,10 +457,10 @@
         model: (enabled[0] || source.model || ''),
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
-        image_to_text_models: collectModalImageToTextModels(enabled),
-        prompt_en_models: collectModalPromptEnModels(enabled),
-        model_provider_types: collectModalProviderTypes(enabled),
-        model_download_proxy_ids: collectModalDownloadProxyIds(enabled),
+        image_to_text_models: source.image_to_text_models,
+        prompt_en_models: source.prompt_en_models,
+        model_provider_types: source.model_provider_types,
+        model_download_proxy_ids: source.model_download_proxy_ids,
         models_cache: source.models_cache || [],
         extra
       }));
@@ -479,47 +472,6 @@
       if ($('modalEnabled')) $('modalEnabled').checked = ch.enabled !== false;
       return ch;
     }
-    function collectModalDownloadProxyIds(enabled) {
-      const enabledSet = new Set(enabled || []);
-      const out = {};
-      document.querySelectorAll('#enabledModels .model-row').forEach(row => {
-        const model = String(row.querySelector('.name')?.textContent || '').trim();
-        const pid = String(row.querySelector('.model-download-proxy')?.value || '').trim();
-        if (model && enabledSet.has(model) && pid) out[model] = pid;
-      });
-      return out;
-    }
-    function collectModalImageToTextModels(enabled) {
-      const enabledSet = new Set(enabled || []);
-      const out = [];
-      document.querySelectorAll('#enabledModels .model-row').forEach(row => {
-        const model = String(row.querySelector('.name')?.textContent || '').trim();
-        const checkbox = row.querySelector('.model-image-to-text');
-        if (model && enabledSet.has(model) && checkbox?.checked) out.push(model);
-      });
-      return out;
-    }
-    function collectModalPromptEnModels(enabled) {
-      const enabledSet = new Set(enabled || []);
-      const out = [];
-      document.querySelectorAll('#enabledModels .model-row').forEach(row => {
-        const model = String(row.querySelector('.name')?.textContent || '').trim();
-        const checkbox = row.querySelector('.model-prompt-en');
-        if (model && enabledSet.has(model) && checkbox?.checked) out.push(model);
-      });
-      return out;
-    }
-    function collectModalProviderTypes(enabled) {
-      const enabledSet = new Set(enabled || []);
-      const out = {};
-      document.querySelectorAll('#enabledModels .model-row').forEach(row => {
-        const model = String(row.querySelector('.name')?.textContent || '').trim();
-        const raw = row.querySelector('.model-provider')?.value || '';
-        const provider = normalizeProviderType(raw);
-        if (model && enabledSet.has(model) && provider) out[model] = provider;
-      });
-      return out;
-    }
     function storeModalChannel(ch) {
       if (EDITING_CHANNEL_IS_NEW) {
         CHANNEL_DRAFT = ch;
@@ -530,6 +482,9 @@
       }
     }
     function openChannelModal(index, kind = 'image', options = {}) {
+      closeCacheModels();
+      closeModelSettings();
+      CHANNEL_MODAL_SEQ += 1;
       normalizeChannels();
       normalizeAuditChannels();
       const isNew = !!options.isNew || index < 0;
@@ -582,10 +537,11 @@
       $('modalStatus').textContent = isNew ? '填写后点「保存渠道」才会加入列表；关闭则不添加。' : '';
       if ($('modalProviderHint')) {
         $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'image'
-          ? '选择渠道默认类型；模型旁可改协议，下载代理仅影响结果图拉取。'
-          : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
+          ? '模型代理仅用于结果图下载，请求使用渠道代理。'
+          : '渠道默认协议会按模型名自动识别。';
       }
       renderModalModels(ch);
+      setChannelModalSaving(CHANNEL_MODAL_SAVING);
       $('channelModal').classList.add('show');
     }
     function modalProviderChanged() {
@@ -624,6 +580,9 @@
       if ($('modalStatus')) $('modalStatus').textContent = '已恢复为当前类型默认 Base URL';
     }
     function closeChannelModal() {
+      closeCacheModels();
+      closeModelSettings();
+      CHANNEL_MODAL_SEQ += 1;
       $('channelModal').classList.remove('show');
       EDITING_CHANNEL_INDEX = -1;
       EDITING_CHANNEL_KIND = 'image';
@@ -641,38 +600,70 @@
       $('manualFillNai').style.display = EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none';
       $('modalNaiSettings').style.display = EDITING_CHANNEL_KIND === 'image' && ch.provider_type === 'novelai' ? '' : 'none';
       const enabled = ch.enabled_models || [];
-      const search = $('cacheSearch').value.trim().toLowerCase();
-      const cacheItems = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
       $('cacheCount').textContent = String((ch.models_cache || []).length);
       $('enabledCount').textContent = String(enabled.length);
-
-      const cacheModelsEl = $('cacheModels');
-      if ((ch.models_cache || []).length > 10) {
-        cacheModelsEl.classList.add('collapsed');
-      } else {
-        cacheModelsEl.classList.remove('collapsed');
-      }
-
-      cacheModelsEl.innerHTML = cacheItems.map(item => {
-        const active = enabled.includes(item);
-        return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="secondary mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
-      }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
+      if ($('cacheModelsModal').classList.contains('show')) renderCacheModels(ch);
       $('enabledModels').innerHTML = enabled.map((item, i) => `
-        <div class="model-row with-provider with-provider-download">
-          <div class="model-name-stack">
-            <div class="name" title="${escapeHtml(item)}">${escapeHtml(item)}</div>
-            ${EDITING_CHANNEL_KIND === 'image' ? `<label class="model-feature"><input class="model-image-to-text" type="checkbox" ${((ch.image_to_text_models || []).includes(item)) ? 'checked' : ''} onchange="setModelImageToText(${i}, this.checked)">图转文</label><label class="model-feature"><input class="model-prompt-en" type="checkbox" ${((ch.prompt_en_models || []).includes(item)) ? 'checked' : ''} onchange="setModelPromptEn(${i}, this.checked)">词转英</label>` : ''}
-          </div>
-          <div class="model-controls">
-            ${modelProviderSelectHtml(ch, item, i)}
-            ${modelDownloadProxySelectHtml(ch, item, i)}
-          </div>
+        <div class="model-row">
+          <div class="name" title="${escapeHtml(item)}">${escapeHtml(item)}</div>
           <div class="actions">
-            <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, -1)">上移</button>
-            <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, 1)">下移</button>
+            <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, -1)" ${i === 0 ? 'disabled' : ''}>上移</button>
+            <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, 1)" ${i === enabled.length - 1 ? 'disabled' : ''}>下移</button>
+            <button class="secondary mini model-edit" type="button" onclick="openModelSettings(${i})">编辑</button>
             <button class="danger mini" type="button" onclick="removeEnabledModel('${escapeJs(item)}')">移除</button>
           </div>
         </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
+    }
+    function renderCacheModels(ch = currentModalChannel()) {
+      const search = $('cacheSearch').value.trim().toLowerCase();
+      const items = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
+      $('cacheModels').innerHTML = items.map(item => {
+        const active = (ch.enabled_models || []).includes(item);
+        return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="secondary mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
+      }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
+    }
+    function openCacheModels() {
+      if (!isChannelModalOpen()) return;
+      renderCacheModels();
+      $('cacheModelsModal').classList.add('show');
+      $('channelModal').inert = true;
+      $('cacheSearch').focus();
+    }
+    function closeCacheModels() {
+      const wasOpen = $('cacheModelsModal').classList.contains('show');
+      $('cacheModelsModal').classList.remove('show');
+      $('cacheModels').replaceChildren();
+      if (wasOpen) {
+        $('channelModal').inert = false;
+        $('openCacheModels').focus();
+      }
+    }
+    function openModelSettings(index) {
+      if (!isChannelModalOpen()) return;
+      const ch = currentModalChannel();
+      const model = (ch.enabled_models || [])[index];
+      if (!model) return;
+      MODEL_SETTINGS_INDEX = index;
+      $('modelSettingsName').textContent = model;
+      $('modelSettingsBody').innerHTML = `
+        ${EDITING_CHANNEL_KIND === 'image' ? `<div class="actions model-feature-options"><label class="checkline"><input class="model-image-to-text" type="checkbox" ${(ch.image_to_text_models || []).includes(model) ? 'checked' : ''} onchange="setModelImageToText(${index}, this.checked)">图转文</label><label class="checkline"><input class="model-prompt-en" type="checkbox" ${(ch.prompt_en_models || []).includes(model) ? 'checked' : ''} onchange="setModelPromptEn(${index}, this.checked)">词转英</label></div>` : ''}
+        <div class="grid">
+          <label>模型类型${modelProviderSelectHtml(ch, model, index)}</label>
+          <label>模型代理${modelDownloadProxySelectHtml(ch, model, index)}</label>
+        </div>`;
+      $('modelSettingsModal').classList.add('show');
+      $('channelModal').inert = true;
+      $('modelSettingsBody').querySelector('input, select')?.focus();
+    }
+    function closeModelSettings() {
+      const wasOpen = $('modelSettingsModal').classList.contains('show');
+      $('modelSettingsModal').classList.remove('show');
+      $('modelSettingsBody').replaceChildren();
+      if (wasOpen) {
+        $('channelModal').inert = false;
+        $('enabledModels').querySelectorAll('.model-edit')[MODEL_SETTINGS_INDEX]?.focus();
+      }
+      MODEL_SETTINGS_INDEX = -1;
     }
     function setModelImageToText(index, enabled) {
       const ch = currentModalChannel();
@@ -706,7 +697,7 @@
     }
     function modelDownloadProxySelectHtml(ch, model, index) {
       const selected = String(((ch.model_download_proxy_ids || {})[model]) || '').trim();
-      const opts = ['<option value="">下载代理：跟随渠道</option>'];
+      const opts = ['<option value="">跟随渠道</option>'];
       for (const p of enabledProxyOptions()) {
         const label = `${p.name || p.id} · ${(p.protocol || 'http').toUpperCase()}`;
         opts.push(`<option value="${escapeHtml(p.id)}" ${selected === p.id ? 'selected' : ''}>${escapeHtml(label)}</option>`);
@@ -714,7 +705,7 @@
       if (selected && !opts.some(x => x.includes(`value="${escapeHtml(selected)}"`))) {
         opts.push(`<option value="${escapeHtml(selected)}" selected>已选（未启用/已删）</option>`);
       }
-      return `<select class="model-download-proxy" title="仅用于模型返回结果的下载；请求仍走渠道代理" onchange="setModelDownloadProxy(${index}, this.value)">${opts.join('')}</select>`;
+      return `<select class="model-download-proxy" aria-label="模型代理" title="仅用于模型返回结果的下载；请求仍走渠道代理" onchange="setModelDownloadProxy(${index}, this.value)">${opts.join('')}</select>`;
     }
     function setModelDownloadProxy(index, proxyId) {
       const ch = currentModalChannel();
@@ -740,7 +731,7 @@
           const label = IMAGE_PROVIDER_LABELS[provider] || provider;
           return `<option value="${escapeHtml(provider)}" ${manual === provider ? 'selected' : ''}>${escapeHtml(label)}</option>`;
         }));
-      return `<select class="model-provider" title="模型类型：自动按模型名识别，也可手动指定" onchange="setModelProviderType(${index}, this.value)">${options.join('')}</select>`;
+      return `<select class="model-provider" aria-label="模型类型" title="模型类型：自动按模型名识别，也可手动指定" onchange="setModelProviderType(${index}, this.value)">${options.join('')}</select>`;
     }
     function currentModalChannel() {
       const ch = collectModalChannel();
@@ -837,7 +828,14 @@
         $('modalStatus').textContent = `刷新成功：${ch.models_cache.length} 个模型（点「保存渠道」后生效）`;
       } catch (e) { showModelRefreshError(e); }
     }
+    function setChannelModalSaving(saving) {
+      CHANNEL_MODAL_SAVING = saving;
+      $('channelModal').querySelector('.modal-body').inert = saving;
+      for (const id of ['modalSave', 'modalRefreshModels', 'modalEnableAll']) $(id).disabled = saving;
+      $('modalSave').textContent = saving ? '保存中…' : '保存渠道';
+    }
     async function saveChannelModal() {
+      if (CHANNEL_MODAL_SAVING || !isChannelModalOpen()) return;
       const ch = currentModalChannel();
       if (!ch.name) {
         $('modalStatus').textContent = '渠道名不能为空';
@@ -850,8 +848,12 @@
         if ($('modalEnabled')) $('modalEnabled').checked = true;
       }
       softDisableChannelIfNoModels(ch);
-      const list = channelListFor(EDITING_CHANNEL_KIND);
-      if (EDITING_CHANNEL_IS_NEW) {
+      const isNew = EDITING_CHANNEL_IS_NEW;
+      const kind = EDITING_CHANNEL_KIND;
+      const seq = CHANNEL_MODAL_SEQ;
+      const list = channelListFor(kind);
+      const savedIndex = isNew ? list.length : EDITING_CHANNEL_INDEX;
+      if (isNew) {
         list.push(ch);
       } else if (EDITING_CHANNEL_INDEX >= 0) {
         list[EDITING_CHANNEL_INDEX] = ch;
@@ -861,29 +863,40 @@
       }
       renderAllChannelLists();
       refreshModelSelectors();
+      setChannelModalSaving(true);
       $('modalStatus').textContent = '保存中...';
-      const ok = await persistConfig(false, EDITING_CHANNEL_IS_NEW ? '渠道已添加' : '渠道已保存', {
+      const ok = await persistConfig(false, isNew ? '渠道已添加' : '渠道已保存', {
         toast: true,
         patchDomains: [
-          EDITING_CHANNEL_KIND === 'audit' ? 'audit_channels' : 'image_channels',
+          kind === 'audit' ? 'audit_channels' : 'image_channels',
           'enabled_image_model_priority',
           'enabled_audit_model_priority',
           'image_model_call_mode',
         ],
       });
+      setChannelModalSaving(false);
+      if (seq !== CHANNEL_MODAL_SEQ || !isChannelModalOpen()) return;
       $('modalStatus').textContent = ok
         ? (ch.enabled === false && !(ch.enabled_models || []).length
-          ? (EDITING_CHANNEL_IS_NEW ? '已添加（无启用模型，渠道已自动关闭）' : '已保存（无启用模型，渠道已自动关闭）')
-          : (EDITING_CHANNEL_IS_NEW ? '已添加' : '已保存'))
+          ? (isNew ? '已添加（无启用模型，渠道已自动关闭）' : '已保存（无启用模型，渠道已自动关闭）')
+          : (isNew ? '已添加' : '已保存'))
         : '保存失败，请检查上方提示';
       if (ok) {
+        // Subsequent saves update the same persisted channel, including a newly created one.
+        EDITING_CHANNEL_INDEX = ch.id ? channelListFor(kind).findIndex(item => item.id === ch.id) : savedIndex;
+        EDITING_CHANNEL_IS_NEW = false;
+        CHANNEL_DRAFT = null;
         CHANNEL_MODAL_DIRTY = false;
-        closeChannelModal();
-      } else if (EDITING_CHANNEL_IS_NEW) {
-        // 保存失败时撤回本次添加
-        const pos = list.lastIndexOf(ch);
-        if (pos >= 0) list.splice(pos, 1);
-        CHANNEL_DRAFT = ch;
+        $('channelModalTitle').textContent = kind === 'audit' ? '编辑辅助渠道' : '编辑生图渠道';
+        $('modalEnabled').checked = ch.enabled !== false;
+        renderModalModels();
+      } else {
+        if (isNew) {
+          const channels = channelListFor(kind);
+          const pos = channels.findIndex(item => item.id === ch.id);
+          if (pos >= 0) channels.splice(pos, 1);
+        }
+        storeModalChannel(ch);
         renderAllChannelLists();
         refreshModelSelectors();
       }
@@ -954,8 +967,8 @@
       setSelectOptions('testModel', models, models.includes(ch.model) ? ch.model : (models[0] || ''));
     }
     const PRIORITY_UI = {
-      image: {picker:'priorityPicker', list:'priorityList', rows:'priorityRows'},
-      audit: {picker:'auditPriorityPicker', list:'auditPriorityList', rows:'auditPriorityRows'},
+      image: {channel:'priorityChannel', picker:'priorityPicker', list:'priorityList', rows:'priorityRows'},
+      audit: {channel:'auditPriorityChannel', picker:'auditPriorityPicker', list:'auditPriorityList', rows:'auditPriorityRows'},
     };
     function priorityUi(kind = 'image') { return PRIORITY_UI[kind] || PRIORITY_UI.image; }
     function priorityLabels(kind) {
@@ -979,15 +992,16 @@
       const available = uniq(labels || priorityLabels(kind)).filter(label =>
         !selected.some(item => priorityEntryMatchesLabel(item, label))
       );
-      setSelectOptions(ui.picker, available, available[0] || '');
-      if (!available.length) {
-        const empty = document.createElement('option');
-        empty.value = '';
-        empty.textContent = '暂无可加入模型';
-        empty.disabled = true;
-        empty.selected = true;
-        picker.appendChild(empty);
-      }
+      const channel = $(ui.channel);
+      const channelNames = uniq(available.map(label => label.split('/')[0]));
+      const previousChannel = channel?.value || '';
+      setSelectOptions(ui.channel, channelNames, channelNames.includes(previousChannel) ? previousChannel : channelNames[0] || '');
+      if (!channelNames.length && channel) channel.innerHTML = '<option value="">暂无可加入渠道</option>';
+      const models = available.filter(label => label.startsWith((channel?.value || '') + '/'));
+      const previousModel = picker.value;
+      picker.innerHTML = models.map(label => `<option value="${escapeHtml(label)}">${escapeHtml(label.slice(label.indexOf('/') + 1))}</option>`).join('') || '<option value="">暂无可加入模型</option>';
+      if (models.includes(previousModel)) picker.value = previousModel;
+      if (channel) channel.onchange = () => refreshPriorityPicker(kind);
     }
     function addPriority(kind = 'image') {
       const ui = priorityUi(kind), value = $(ui.picker).value;

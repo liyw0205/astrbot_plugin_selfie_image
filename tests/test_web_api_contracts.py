@@ -1639,6 +1639,31 @@ def test_identity_thumbnails_preserve_decodable_image_bytes_on_both_hosts(http, 
         assert thumbnail.format == "JPEG"
 
 
+def test_identity_original_preview_reads_only_selected_managed_slot(http, tmp_path, monkeypatch):
+    import base64
+
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.tests.test_wardrobe import PNG_1X1, PNG_1X1_ALT
+
+    persona = PersonaManager(tmp_path)
+    http.plugin.persona = persona
+    persona.save_reference_image(PNG_1X1)
+    persona.save_reference_image(PNG_1X1_ALT)
+    original_slot = persona.get()["active_image_slot"]
+
+    def no_full_profile():
+        pytest.fail("image preview must not read the full profile")
+
+    monkeypatch.setattr(http.plugin, "get_selfie_reference_payload", no_full_profile, raising=False)
+    result = assert_success(http.call("/api/selfie-reference?view=original&slot=1"))
+    assert base64.b64decode(result["image"].split(",", 1)[1], validate=True) == PNG_1X1
+    assert set(result) == {"has_image", "image"}
+    assert persona.get()["active_image_slot"] == original_slot
+    assert_failure(http.call("/api/selfie-reference?view=original&slot=10"), 404, "不存在")
+    assert_failure(http.call("/api/selfie-reference?view=original&slot=../1"), 400, "整数")
+    assert_failure(http.call("/api/selfie-reference?view=original&slot=11"), 400, "不能大于")
+
+
 def test_identity_pool_routes_reach_real_store_on_both_hosts(http, tmp_path):
     from astrbot_plugin_selfie_image.features.persona import PersonaManager
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin

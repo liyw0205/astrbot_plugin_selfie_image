@@ -1112,6 +1112,27 @@ class SelfieProfileController:
         return SelfieProfileControllerResult(redact_sensitive_data(data), extra)
 
     def get_reference(self, query: Any = None) -> SelfieProfileControllerResult:
+        if (query or {}).get("view") == "original":
+            slot = parse_bounded_int(query or {}, "slot", default=0, minimum=1, maximum=10)
+            persona = getattr(self.plugin, "persona", None)
+            list_images = getattr(persona, "list_image_pool", None)
+            is_managed = getattr(persona, "_managed_image_path", None)
+            if not callable(list_images) or not callable(is_managed):
+                raise WebContractError("当前版本不支持形象图预览", 501)
+            item = next((item for item in list_images() if item.get("slot") == slot), None)
+            path = str((item or {}).get("path") or "")
+            if not path or not is_managed(path) or not os.path.isfile(path):
+                raise WebContractError("形象图不存在", 404)
+            from ..core.utils import detect_mime_by_bytes
+
+            with open(path, "rb") as stream:
+                raw = stream.read(PAGE_PREVIEW_MAX_BYTES + 1)
+            if len(raw) > PAGE_PREVIEW_MAX_BYTES:
+                raise WebContractError("形象图超过预览大小上限", 413)
+            mime = detect_mime_by_bytes(raw) or "image/png"
+            return SelfieProfileControllerResult({
+                "has_image": True, "image": f"data:{mime};base64," + base64.b64encode(raw).decode("ascii"),
+            })
         if (query or {}).get("view") == "preview":
             persona = getattr(self.plugin, "persona", None)
             path_reader = getattr(persona, "get_reference_path", None)

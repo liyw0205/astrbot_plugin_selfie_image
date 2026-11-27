@@ -160,12 +160,14 @@
     }
     let MEDIA_LIGHTBOX_PATH = '';
     let MEDIA_LIGHTBOX_REQUEST_ID = 0;
-    function openMediaLightbox(path, title = '图片预览') {
+    let MEDIA_LIGHTBOX_DOWNLOAD = null;
+    function openMediaLightbox(path, title = '图片预览', options = {}) {
       const modal = $('mediaLightboxModal');
       const image = $('mediaLightboxImage');
       const status = $('mediaLightboxStatus');
       if (!modal || !image || !path) return false;
       MEDIA_LIGHTBOX_PATH = String(path || '').trim();
+      MEDIA_LIGHTBOX_DOWNLOAD = options.download || null;
       const requestId = ++MEDIA_LIGHTBOX_REQUEST_ID;
       const mediaPath = MEDIA_LIGHTBOX_PATH;
       if ($('mediaLightboxTitle')) $('mediaLightboxTitle').textContent = title || '图片预览';
@@ -177,7 +179,7 @@
       image.hidden = true;
       if (status) { status.hidden = false; status.textContent = '正在加载图片…'; }
       modal.classList.add('show');
-      getProtectedMedia(mediaPath).then(media => {
+      Promise.resolve().then(() => options.load ? options.load() : getProtectedMedia(mediaPath)).then(media => {
         if (requestId !== MEDIA_LIGHTBOX_REQUEST_ID || !modal.classList.contains('show')) return;
         const url = protectedMediaUrl(media);
         if (!url) throw new Error('图片已清理');
@@ -201,6 +203,7 @@
     function closeMediaLightbox() {
       MEDIA_LIGHTBOX_REQUEST_ID += 1;
       MEDIA_LIGHTBOX_PATH = '';
+      MEDIA_LIGHTBOX_DOWNLOAD = null;
       const image = $('mediaLightboxImage');
       if (image) { image.onload = null; image.onerror = null; image.removeAttribute('src'); image.hidden = true; }
       $('mediaLightboxModal')?.classList.remove('show');

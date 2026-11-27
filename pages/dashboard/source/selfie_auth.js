@@ -205,6 +205,7 @@
       SELFIE_IDENTITY_THUMBNAILS_LOADED_VERSION = -1;
       SELFIE_IDENTITY_THUMBNAILS.clear();
       SELFIE_IDENTITY_THUMBNAIL_REQUEST = null;
+      SELFIE_ORIGINAL_IMAGES.clear();
     }
     function identityPoolLimit(data) {
       const value = Number(data?.pool_limit);
@@ -243,6 +244,11 @@
         $('selfiePersonaEnabled').disabled = false;
         $('selfiePersonaEnabled').removeAttribute('aria-busy');
       }
+      document.querySelectorAll('[data-identity-mode]').forEach(button => {
+        button.disabled = false;
+        button.setAttribute('aria-pressed', String(button.dataset.identityMode === mode));
+        button.parentElement.dataset.mode = mode;
+      });
       if ($('selfieAppearanceType')) $('selfieAppearanceType').value = data.appearance_type || 'auto';
       if ($('useLogoWhenNoPersona')) $('useLogoWhenNoPersona').disabled = mode === 'persona';
       if (imagePanel) imagePanel.hidden = mode !== 'image';
@@ -307,9 +313,9 @@
       $('selfiePersonaPoolList')?.querySelectorAll('.selfie-persona-remove').forEach(button => {
         button.onclick = () => removeSelfiePersona(Number(button.closest('[data-selfie-persona-slot]').dataset.selfiePersonaSlot));
       });
-      if (String(data.image || '').startsWith('data:image/')) SELFIE_REFERENCE_DATA_URL = String(data.image);
       const image = data.has_image && mode === 'image' ? SELFIE_REFERENCE_DATA_URL : '';
       const preview = $('selfiePreview');
+      if (preview && activeImageSlot) bindSelfieImagePreview(preview, activeImageSlot);
       if (preview && image && mode === 'image') {
         preview.src = image;
         preview.style.display = 'block';
@@ -327,6 +333,36 @@
       if (version !== SELFIE_REFERENCE_VERSION || identityMode(SELFIE_IDENTITY_DATA) !== 'image') return;
       const preview = $('selfiePreview');
       if (preview && image) { preview.src = image; preview.style.display = 'block'; }
+    }
+    const SELFIE_ORIGINAL_IMAGES = new Map();
+    function bindSelfieImagePreview(image, slot) {
+      let button = image.closest('.media-zoom-shell');
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button'; button.className = 'media-zoom-shell';
+        button.title = '查看形象原图'; button.setAttribute('aria-label', '查看形象原图');
+        image.parentNode.insertBefore(button, image); button.appendChild(image);
+      }
+      button.onclick = () => openSelfieIdentityImage(slot);
+    }
+    function openSelfieIdentityImage(slot) {
+      const version = SELFIE_IDENTITY_THUMBNAIL_VERSION;
+      const key = `${version}:${slot}`;
+      const load = () => {
+        if (SELFIE_ORIGINAL_IMAGES.has(key)) return SELFIE_ORIGINAL_IMAGES.get(key);
+        const request = api(`/api/selfie-reference?view=original&slot=${encodeURIComponent(slot)}`).then(res => {
+          const image = String(res.data?.image || '');
+          if (!image.startsWith('data:image/')) throw new Error('形象图不存在');
+          return {dataUrl:image};
+        }).catch(error => { SELFIE_ORIGINAL_IMAGES.delete(key); throw error; });
+        SELFIE_ORIGINAL_IMAGES.set(key, request);
+        while (SELFIE_ORIGINAL_IMAGES.size > 10) SELFIE_ORIGINAL_IMAGES.delete(SELFIE_ORIGINAL_IMAGES.keys().next().value);
+        return request;
+      };
+      openMediaLightbox(`selfie:${key}`, `形象图 ${slot}`, {load, download:async () => {
+        try { triggerProtectedDownload(await load(), `selfie-${slot}`); }
+        catch (error) { showToast(error.message || '下载失败', 'bad'); }
+      }});
     }
     function showSelfieIdentityThumbnailError(slot, message) {
       const frame = $('selfieImagePoolList')?.querySelector(`[data-selfie-identity-thumb="${slot}"]`);
@@ -358,6 +394,7 @@
           showSelfieIdentityThumbnailError(slot, '缩略图无法解码');
         };
         frame.replaceChildren(image);
+        bindSelfieImagePreview(image, slot);
         image.src = dataUrl;
       }
     }
@@ -438,6 +475,7 @@
       const previous = identityMode(SELFIE_IDENTITY_DATA || {});
       const mutationSeq = beginSelfieMutation({daily: false});
       checkbox.disabled = true;
+      document.querySelectorAll('[data-identity-mode]').forEach(button => { button.disabled = true; });
       try {
         const res = await api('/api/selfie-identity', {method:'POST', body: JSON.stringify({action:'mode', identity_mode: requested, view:'summary'})});
         if (mutationSeq !== SELFIE_MUTATION_SEQ) return;
@@ -449,7 +487,10 @@
         checkbox.checked = previous === 'persona';
         renderSelfieIdentity(SELFIE_IDENTITY_DATA || {});
         showToast(e.message || '形象池切换失败', 'bad');
-      } finally { checkbox.disabled = false; }
+      } finally {
+        checkbox.disabled = false;
+        document.querySelectorAll('[data-identity-mode]').forEach(button => { button.disabled = false; });
+      }
     }
     async function refreshSelfieIdentity(force = false) {
       if (!force && SELFIE_IDENTITY_DATA && SELFIE_IDENTITY_LOADED_AT
@@ -873,25 +914,7 @@
       const aspects = ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'];
       setSelectOptions('studioAspect', aspects, (STUDIO.current && STUDIO.current.graph && STUDIO.current.graph.aspect_ratio) || '自动');
     }
-    function renderStudioTemplateSelect() {
-      const el = $('studioTemplateSelect');
-      if (!el) return;
-      const cur = el.value || 'duo';
-      el.innerHTML = '';
-      const list = STUDIO.templates && STUDIO.templates.length ? STUDIO.templates : [
-        {id:'duo', title:'双人合影'}, {id:'group', title:'多人合影'}, {id:'selfie', title:'自拍 / 看看 / 看看腿', description:'看看腿会按姿势搭配光腿神器、白丝、黑丝或连裤袜'},
-        {id:'clothes', title:'换装 / COS'}, {id:'i2i', title:'图生图精修'}, {id:'t2i', title:'文生图'}, {id:'blank', title:'空白'}
-      ];
-      for (const t of list) {
-        const opt = document.createElement('option');
-        opt.value = t.id;
-        opt.textContent = (t.title || t.id) + (t.description ? ' · ' + t.description : '');
-        if (t.id === cur) opt.selected = true;
-        el.appendChild(opt);
-      }
-      if (![...el.options].some(o => o.selected) && el.options.length) el.selectedIndex = 0;
-    }
     function studioActiveTemplateId() {
       if (STUDIO.current && STUDIO.current.template) return String(STUDIO.current.template);
-      return ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
+      return 'blank';
     }

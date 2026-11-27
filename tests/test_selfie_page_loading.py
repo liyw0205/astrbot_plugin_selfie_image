@@ -16,11 +16,15 @@ const first = refreshSelfie();
 assert.equal(requests.length, 2);
 assert.equal(el('selfiePersonaEnabled').disabled, true);
 assert.equal(el('selfiePersonaEnabled').indeterminate, true);
+assert.ok(modeButtons.every(button => button.disabled));
 respond('/api/selfie-identity?view=summary', identity('persona'));
 await flush();
 assert.equal(el('selfiePersonaEnabled').checked, true);
 assert.equal(el('selfiePersonaEnabled').disabled, false);
 assert.equal(el('selfiePersonaPoolPanel').hidden, false);
+assert.ok(modeButtons.every(button => !button.disabled));
+assert.equal(modeButtons[0].attributes['aria-pressed'], 'true');
+assert.equal(modeButtons[1].attributes['aria-pressed'], 'false');
 assert.equal(requests.length, 2, 'persona mode must not fetch images');
 respond('/api/selfie-profile/ensure-today', daily('today'));
 await first;
@@ -109,9 +113,12 @@ assert.equal(hydrationCalls, 0);
 assert.equal(requests.length, 1, 'login must not preload unopened data pages');
 """,
     "external_selection_invalidates_previous_preview": r"""
+context.SELFIE_REFERENCE_DATA_URL = 'data:image/jpeg;base64,thumbnail';
 renderSelfieIdentity({...identity('image'), has_image:true, active_image_slot:1,
   updated_at:'first', image:'data:image/png;base64,original'});
-assert.equal(context.SELFIE_REFERENCE_DATA_URL, 'data:image/png;base64,original');
+assert.equal(context.SELFIE_REFERENCE_DATA_URL, 'data:image/jpeg;base64,thumbnail');
+assert.equal(el('selfiePreview').src, 'data:image/jpeg;base64,thumbnail');
+assert.equal(el('selfiePreview').style.display, 'block');
 renderSelfieIdentity({...identity('image'), has_image:true, active_image_slot:2, updated_at:'second'});
 assert.equal(context.SELFIE_REFERENCE_DATA_URL, '');
 assert.equal(el('selfiePreview').style.display, 'none');
@@ -155,17 +162,25 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const elements = new Map();
+const previewShell = {};
+const modeGroup = {dataset:{}};
+const modeButtons = ['persona', 'image'].map(mode => ({
+  disabled:true, dataset:{identityMode:mode}, parentElement:modeGroup, attributes:{},
+  setAttribute(name, value) { this.attributes[name] = value; },
+}));
 function el(id) {
   if (!elements.has(id)) elements.set(id, {
     checked:false, disabled:false, hidden:true, value:'', textContent:'', innerHTML:'', style:{},
     setAttribute() {}, removeAttribute() {}, querySelectorAll:() => [], querySelector:() => null,
+    closest:selector => selector === '.media-zoom-shell' ? previewShell : null,
   });
   return elements.get(id);
 }
 const requests = [];
 let now = 1000, scope = 'initial-account', hydrationCalls = 0;
 const context = vm.createContext({
-  $, window:{}, document:{body:{classList:{add(){},remove(){}}},querySelector:() => null},
+  $, window:{}, document:{body:{classList:{add(){},remove(){}}},querySelector:() => null,
+    querySelectorAll:selector => selector === '[data-identity-mode]' ? modeButtons : []},
   get now() { return now; }, Date:{now:() => now},
   console, setTimeout:callback => setTimeout(callback, 0),
   protectedMediaScope:() => scope, ensureProtectedMediaScope:() => {},
