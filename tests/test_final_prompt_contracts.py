@@ -1559,7 +1559,6 @@ def test_batch_keeps_user_supplement_without_locking_random_legwear(tmp_path):
                     assert "三人合影，手持同一束花" in call.args[0]
 
 
-@pytest.mark.parametrize("namespace", ["studio", "creative"])
 @pytest.mark.parametrize("english,translation_applied", [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("mode,query", [
     ("group", "三人侧身合影 黑丝"),
@@ -1567,7 +1566,7 @@ def test_batch_keeps_user_supplement_without_locking_random_legwear(tmp_path):
     ("selfie", "看看腿 第一人称 电竞椅 白色短袜"),
     ("selfie", "看看腿 第一人称 落地镜 白色短袜"),
 ])
-def test_canvas_final_requests_use_the_same_mode_contracts(tmp_path, namespace, english, translation_applied, mode, query):
+def test_canvas_final_requests_use_the_same_mode_contracts(tmp_path, english, translation_applied, mode, query):
     plugin = plugin_for_prompts(tmp_path, english)
     if translation_applied:
         plugin._translate_prompt_to_english = AsyncMock(side_effect=lambda text, **_kw: (text, {"applied": True}))
@@ -1580,7 +1579,7 @@ def test_canvas_final_requests_use_the_same_mode_contracts(tmp_path, namespace, 
         "slots": [{"id": "ref", "image_path": "reference.png"}],
     }
     store = SimpleNamespace(get=lambda _: session, attach_run_finish=lambda *_a, **_kw: None)
-    plugin._canvas_store = lambda selected: store if selected == namespace else None
+    plugin.studio = store
     plugin._resolve_studio_refs = lambda *_a, **_kw: ([(b"external", "image/png")], ["ref"])
     plugin._task_cancel_requested = lambda _: False
     plugin._web_task_timestamp = lambda: "now"
@@ -1590,7 +1589,7 @@ def test_canvas_final_requests_use_the_same_mode_contracts(tmp_path, namespace, 
     plugin._wait_for_record_commits = AsyncMock()
     plugin._record_task = lambda _: None
     plugin._run_image_generation = AsyncMock(return_value={"success": True, "image_paths": ["generated.png"]})
-    asyncio.run(plugin._run_studio_task("task", "canvas", canvas_namespace=namespace))
+    asyncio.run(plugin._run_studio_task("task", "canvas"))
     assert state["status"] == "succeeded", state.get("error")
     request = plugin._run_image_generation.call_args.kwargs
     action = request["original_prompt"]

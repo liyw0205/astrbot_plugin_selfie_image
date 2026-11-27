@@ -412,7 +412,7 @@
           // Quiet autosave for form and channel-list changes
           quiet: reason === 'form' || reason === 'channel-list',
           patchDomains: reason === 'form'
-            ? ['permission', 'image', 'enabled_image_model_priority', 'enabled_audit_model_priority', 'image_model_call_mode']
+            ? ['permission', 'image', 'enabled_image_model_priority', 'image_model_call_mode']
             : null,
         });
       }, options.delay != null ? options.delay : (reason === 'form' ? 900 : 650));
@@ -806,7 +806,6 @@
         image_channels: copy(CONFIG.image_channels),
         audit_channels: copy(CONFIG.audit_channels),
         enabled_image_model_priority: $('priorityList') ? textList('priorityList') : copy(CONFIG.enabled_image_model_priority),
-        enabled_audit_model_priority: $('auditPriorityList') ? textList('auditPriorityList') : copy(CONFIG.enabled_audit_model_priority),
         image_model_call_mode: ($('imageModelCallMode') && $('imageModelCallMode').value) || CONFIG.image_model_call_mode || 'sequence',
       };
     }

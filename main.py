@@ -235,6 +235,7 @@ from .core.utils import (
     event_group_id,
     event_user_id,
     extract_command_message,
+    extract_command_mention_ids,
     extract_event_text,
     extract_quote_text,
     extract_image_sources_from_event,
@@ -442,8 +443,8 @@ class SelfieImagePlugin(
 
         self.cos_pool = CosPoolStore(self.data_dir)
         self.studio = StudioStore(self.data_dir)
-        # The legacy creation canvas has its own session namespace and file;
-        # it must never appear in the relationship/infinite canvas list.
+        # Keep legacy sessions readable for backup and cache reference protection.
+        # Their creation, editing and generation endpoints have been retired.
         self.creative_canvas = StudioStore(
             os.path.join(self.data_dir, "creative_canvas"),
             canvas_mode="creative",
@@ -865,6 +866,8 @@ class SelfieImagePlugin(
             r"\[CQ:at,qq=(\d+)(?:,[^\]]*)?\]",
             r"\[At:(\d+)\]",
             r"<at:(\d+)>",
+            r"<@!?(\d+)>",
+            r"<qqbot-at-user\s+id=[\"'](\d+)[\"']\s*/>",
             r"@[^@\r\n()（）]*[（(](\d+)[)）]",
             r"@(\d+)(?=\s|$|[,，:：|])",
         )
@@ -884,26 +887,24 @@ class SelfieImagePlugin(
         get_self_id = getattr(event, "get_self_id", None)
         bot_id = str((get_self_id() if callable(get_self_id) else "")
                      or getattr(message_obj, "self_id", "") or getattr(event, "self_id", "") or "").strip()
-        candidates = []
-        command_index = -1
-        for segment in segments:
-            segment_type = str(segment.get("type", "") if isinstance(segment, Mapping)
-                               else getattr(segment, "type", "") or type(segment).__name__).lower()
-            data = segment.get("data") if isinstance(segment, Mapping) else getattr(segment, "data", None)
-            if not isinstance(data, Mapping):
-                data = {}
-            segment_text = str(getattr(segment, "text", "") or data.get("text") or "")
-            if command_index < 0 and re.search(r"(?:^|\s)[/!！.]?生图(?:加黑|加白|释放)(?=\s|$)", segment_text):
-                command_index = len(candidates)
-            if segment_type in {"at", "messagecomponenttype.at"} or type(segment).__name__.lower() == "at":
-                candidate = getattr(segment, "qq", None) or getattr(segment, "user_id", None) or data.get("qq") or data.get("user_id")
-                if candidate:
-                    candidates.append(str(candidate).strip())
+        candidates = extract_command_mention_ids(event, ("生图加黑", "生图加白", "生图释放"))
+        positioned = candidates is not None
+        if candidates is None:
+            candidates = []
+            for segment in segments:
+                segment_type = str(segment.get("type", "") if isinstance(segment, Mapping)
+                                   else getattr(segment, "type", "") or type(segment).__name__).lower()
+                data = segment.get("data") if isinstance(segment, Mapping) else getattr(segment, "data", None)
+                if not isinstance(data, Mapping):
+                    data = {}
+                if segment_type in {"at", "messagecomponenttype.at", "atsomeone"}:
+                    candidate = getattr(segment, "qq", None) or getattr(segment, "user_id", None) or data.get("qq") or data.get("user_id")
+                    if candidate:
+                        candidates.append(str(candidate).strip())
         if not target:
-            # Some adapters omit At components from message_str. Only fall back
-            # to mentions after the command, excluding the bot used to wake it.
-            for candidate in candidates[max(0, command_index):]:
-                if candidate.isdigit() and candidate != bot_id:
+            # Only an unpositioned legacy mention needs the account-id fallback.
+            for candidate in candidates:
+                if candidate.isdigit() and (positioned or candidate != bot_id):
                     target = candidate
                     break
             for pattern in mention_patterns:
@@ -3666,7 +3667,7 @@ class SelfieImagePlugin(
         source: str,
         fail_label: str,
         message_override: str = "",
-        include_at_avatar: bool = False,
+        include_at_avatar: bool = True,
         allow_context_fallback: bool = True,
         requested_count_override: int = 0,
         preset_aspect: str = "",

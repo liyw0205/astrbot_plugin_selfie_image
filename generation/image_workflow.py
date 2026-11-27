@@ -440,6 +440,60 @@ async def run_image_generation_workflow(
         retry_sources = record_context.get("source_images")
         if isinstance(retry_sources, list):
             source_meta["source_images"] = [dict(item) for item in retry_sources if isinstance(item, Mapping)][:8]
+    if not selected_targets:
+        cooldown_state = {}
+        if cooldown_attempts:
+            remaining = min(item["cooldown_remaining_seconds"] for item in cooldown_attempts)
+            cooldown_state = {
+                "all_targets_cooling_down": True,
+                "cooldown_remaining_seconds": remaining,
+            }
+            error = f"所有可用出图渠道均在冷却中，最早约 {remaining} 秒后恢复，请稍后重试。"
+        else:
+            error = "当前没有可用的出图模型，请先在管理页启用渠道和模型。"
+        request_data = add_selection_metadata({
+            "original_prompt": original_prompt,
+            "request_prompt": request_prompt,
+            "aspect_ratio": aspect_ratio,
+            "resolution": resolution,
+            "reference_image_count": len(refs),
+            "targets": [],
+            "cooldown_skipped_channels": cooldown_attempts,
+        })
+        response_data = {
+            "success": False,
+            "stage": "select_model",
+            "error": error,
+            "attempts": cooldown_attempts,
+            **cooldown_state,
+        }
+        record_task({
+            **source_meta,
+            "success": False,
+            "generation_success": False,
+            "delivery_success": None,
+            "error": error,
+            "prompt": request_prompt,
+            "original_prompt": original_prompt,
+            "request_prompt": request_prompt,
+            "final_prompt": request_prompt,
+            "used_model": "",
+            "elapsed_seconds": 0,
+            "reference_images": len(refs),
+            "request_data": request_data,
+            "response_data": response_data,
+            "retry_count": 0,
+            "retry_exhausted": False,
+            "request_image_paths": [],
+            "generated_image_paths": [],
+        })
+        return {
+            **response_data,
+            "original_prompt": original_prompt,
+            "final_prompt": request_prompt,
+            "request_data": request_data,
+            "response_data": response_data,
+        }
     request_image_paths = await asyncio.to_thread(self._save_reference_images_to_cache, refs)
     task_id = str(record_context.get("task_id") or "").strip() if isinstance(record_context, Mapping) else ""
     if task_id:
@@ -679,43 +733,6 @@ async def run_image_generation_workflow(
             request_data["request_prompt"] = request_prompt
             request_data["request_prompt_en"] = translated
 
-    if not selected_targets:
-        response_data = {
-            "success": False,
-            "stage": "select_model",
-            "error": "当前没有可用的出图模型，请先在管理页启用渠道和模型。",
-        }
-        record_task(
-            {
-                **source_meta,
-                "success": False,
-                "generation_success": False,
-                "delivery_success": None,
-                "error": response_data["error"],
-                "prompt": request_prompt,
-                "original_prompt": original_prompt,
-                "request_prompt": request_prompt,
-                "final_prompt": request_prompt,
-                "used_model": "",
-                "elapsed_seconds": 0,
-                "reference_images": len(refs),
-                "request_data": request_data,
-                "response_data": response_data,
-                "retry_count": 0,
-                "retry_exhausted": False,
-                "request_image_paths": request_image_paths,
-                "generated_image_paths": [],
-            }
-        )
-        return {
-            "success": False,
-            "error": response_data["error"],
-            "original_prompt": original_prompt,
-            "final_prompt": request_prompt,
-            "request_data": request_data,
-            "response_data": response_data,
-        }
-
     if is_leg_focus_request:
         request_prompt = clean_leg_focus_prompt(request_prompt, original_prompt)
         request_data["request_prompt"] = request_prompt
@@ -875,6 +892,15 @@ async def run_image_generation_workflow(
         request_data["final_prompt"] = final_prompt
 
     if result.error or not result.images:
+        cooldown_state = {}
+        healthy_now, cooling_now = self._select_healthy_generation_targets(candidate_targets)
+        if not healthy_now and cooling_now:
+            cooldown_state = {
+                "all_targets_cooling_down": True,
+                "cooldown_remaining_seconds": min(
+                    item["cooldown_remaining_seconds"] for item in cooling_now
+                ),
+            }
         response_data = {
             "success": False,
             "stage": "generate",
@@ -885,6 +911,7 @@ async def run_image_generation_workflow(
             "attempts": result.attempts,
             "retry_count": int(getattr(result, "retry_count", 0) or 0),
             "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
+            **cooldown_state,
         }
         record_task(
             {
@@ -922,6 +949,7 @@ async def run_image_generation_workflow(
             "attempts": result.attempts,
             "retry_count": int(getattr(result, "retry_count", 0) or 0),
             "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
+            **cooldown_state,
         }
 
     generated_images = [image for image in result.images if image]

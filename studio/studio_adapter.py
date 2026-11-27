@@ -235,9 +235,6 @@ class StudioMixin:
             await wait_commits(task_id)
 
     # --- Studio / 画布 ---
-    def _canvas_store(self, namespace: str = "studio"):
-        return self.creative_canvas if str(namespace or "").strip().lower() == "creative" else self.studio
-
     def studio_list(self, store=None, *, include_metadata: bool = True) -> Dict[str, Any]:
         """Return canvas summaries without forcing the large picker catalogs.
 
@@ -628,43 +625,6 @@ class StudioMixin:
             raise ValueError("需要 slot_id 或 role")
         return (store or self.studio).promote_result_to_slot(session_id, result_id, slot_id)
 
-    # Legacy creation canvas API. These wrappers intentionally use a second
-    # store and namespace so its sessions cannot be opened by the infinite
-    # relationship canvas.
-    def creative_canvas_list(self, *, include_metadata: bool = True) -> Dict[str, Any]:
-        return self.studio_list(self.creative_canvas, include_metadata=include_metadata)
-
-    def creative_canvas_get(self, session_id: str) -> Dict[str, Any]:
-        return self.studio_get(session_id, self.creative_canvas)
-
-    def creative_canvas_create(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return self.studio_create(payload, self.creative_canvas)
-
-    def creative_canvas_update(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self.studio_update(session_id, payload, self.creative_canvas)
-
-    def creative_canvas_delete(self, session_id: str) -> Dict[str, Any]:
-        return self.studio_delete(session_id, self.creative_canvas)
-
-    def creative_canvas_set_slot(self, session_id: str, slot_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self.studio_set_slot(session_id, slot_id, payload, self.creative_canvas)
-
-    def creative_canvas_add_slot(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return self.studio_add_slot(session_id, payload, self.creative_canvas)
-
-    def creative_canvas_reorder(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self.studio_reorder(session_id, payload, self.creative_canvas)
-
-    def creative_canvas_promote(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self.studio_promote(session_id, payload, self.creative_canvas)
-
-    def start_creative_canvas_run(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return self.start_studio_run(
-            session_id,
-            payload,
-            store=self.creative_canvas,
-            canvas_namespace="creative",
-        )
 
     def studio_gallery_images(self, limit: int = 24, offset: int = 0) -> Dict[str, Any]:
         """Recent successful generated images from records for 画布「从记录选图」."""
@@ -846,7 +806,6 @@ class StudioMixin:
         payload: Optional[Dict[str, Any]] = None,
         *,
         store=None,
-        canvas_namespace: str = "studio",
     ) -> Dict[str, Any]:
         """Queue a studio generation using current session slots + graph."""
         payload = payload if isinstance(payload, dict) else {}
@@ -886,7 +845,7 @@ class StudioMixin:
         config_node = nodes_by_id.get(target_node_id or parent_node_id or str(canvas_snapshot.get("root_node_id") or "")) or {}
         node_params = payload.get("node_params") if isinstance(payload.get("node_params"), dict) else config_node.get("params")
         node_params = dict(node_params) if isinstance(node_params, dict) else {}
-        raw_canvas = payload.get("raw_canvas") is True and canvas_namespace == "studio"
+        raw_canvas = payload.get("raw_canvas") is True
         template_id = "blank" if raw_canvas else normalize_template_id(
             str(payload.get("template_id") or config_node.get("template_id") or session.get("template") or "")
         )
@@ -959,8 +918,8 @@ class StudioMixin:
             "parent_node_id": parent_node_id or str((canvas_snapshot.get("root_node_id") or "")),
             "target_node_id": target_node_id,
             "reference_node_id": parent_node_id,
-            "canvas_namespace": str(canvas_namespace or "studio"),
-            "canvas_mode": "creative" if str(canvas_namespace or "").strip().lower() == "creative" else "relationship",
+            "canvas_namespace": "studio",
+            "canvas_mode": "relationship",
             "template": template_id,
             "graph_params": {
                 "prompt": str(graph.get("prompt") or ""),
@@ -997,7 +956,7 @@ class StudioMixin:
                 "owner_session": "web",
                 "cancel_requested": False,
                 "studio_session_id": session_id,
-                "canvas_namespace": str(canvas_namespace or "studio"),
+                "canvas_namespace": "studio",
                 **self._task_runtime_defaults(),
                 **self._task_progress_defaults(count),
                 "generation_stage": "preflight",
@@ -1009,12 +968,12 @@ class StudioMixin:
         canvas_store.attach_run_start(session_id, task_id, summary)
         self._start_runtime_generation(
             task_id,
-            self._run_studio_task(task_id, session_id, canvas_namespace=str(canvas_namespace or "studio")),
+            self._run_studio_task(task_id, session_id),
         )
         return self.get_web_image_task(task_id)
 
-    async def _run_studio_task(self, task_id: str, session_id: str, *, canvas_namespace: str = "studio") -> None:
-        canvas_store = self._canvas_store(canvas_namespace)
+    async def _run_studio_task(self, task_id: str, session_id: str) -> None:
+        canvas_store = self.studio
         self._set_web_image_task(
             task_id,
             status="running",
@@ -1044,7 +1003,7 @@ class StudioMixin:
             session = canvas_store.get(session_id)
             last_run = session.get("last_run") if isinstance(session.get("last_run"), dict) else {}
             summary = last_run.get("summary") if isinstance(last_run.get("summary"), dict) else {}
-            raw_canvas = summary.get("raw_canvas") is True and canvas_namespace == "studio"
+            raw_canvas = summary.get("raw_canvas") is True
             target_node_id = str(summary.get("target_node_id") or "").strip()
             canvas = session.get("canvas") if isinstance(session.get("canvas"), dict) else {}
             target_node = next(

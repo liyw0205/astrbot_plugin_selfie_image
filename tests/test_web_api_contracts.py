@@ -290,45 +290,6 @@ class ContractPlugin(ConfigurationMixin, CreativeFeaturesMixin, WebTaskMixin):
         self.canvas_calls.append(("studio_run", session_id, payload))
         return {"task_id": "web-12345678-4", "api_key": "canvas-run-secret"}
 
-    def creative_canvas_list(self, *, include_metadata=False):
-        self.canvas_calls.append(("creative_canvas_list", include_metadata))
-        return {"namespace": "creative", "include_metadata": include_metadata}
-
-    def creative_canvas_create(self, payload):
-        self.canvas_calls.append(("creative_canvas_create", payload))
-        return {"id": "creative-1", "payload": payload}
-
-    def creative_canvas_get(self, session_id):
-        self.canvas_calls.append(("creative_canvas_get", session_id))
-        return {"id": session_id, "namespace": "creative"}
-
-    def creative_canvas_update(self, session_id, payload):
-        self.canvas_calls.append(("creative_canvas_update", session_id, payload))
-        return {"id": session_id, "payload": payload}
-
-    def creative_canvas_delete(self, session_id):
-        self.canvas_calls.append(("creative_canvas_delete", session_id))
-        return {"id": session_id, "deleted": True}
-
-    def creative_canvas_set_slot(self, session_id, slot_id, payload):
-        self.canvas_calls.append(("creative_canvas_set_slot", session_id, slot_id, payload))
-        return {"session_id": session_id, "slot_id": slot_id}
-
-    def creative_canvas_add_slot(self, session_id, payload):
-        self.canvas_calls.append(("creative_canvas_add_slot", session_id, payload))
-        return {"session_id": session_id, "slot": payload}
-
-    def creative_canvas_reorder(self, session_id, payload):
-        self.canvas_calls.append(("creative_canvas_reorder", session_id, payload))
-        return {"session_id": session_id, "order": payload.get("order", [])}
-
-    def creative_canvas_promote(self, session_id, payload):
-        self.canvas_calls.append(("creative_canvas_promote", session_id, payload))
-        return {"session_id": session_id, "result_id": payload.get("result_id")}
-
-    def start_creative_canvas_run(self, session_id, payload):
-        self.canvas_calls.append(("creative_canvas_run", session_id, payload))
-        return {"task_id": "web-12345678-5", "api_key": "creative-run-secret"}
 
     def studio_gallery_images(self, *, limit=24, offset=0):
         self.canvas_calls.append(("gallery", limit, offset))
@@ -511,18 +472,8 @@ PROTECTED_ROUTES = [
     ("/api/studio/sessions/studio-1/reorder", "POST"),
     ("/api/studio/sessions/studio-1/promote", "POST"),
     ("/api/studio/sessions/studio-1/run", "POST"),
-    ("/api/creative-canvas/sessions", "GET"),
-    ("/api/creative-canvas/sessions", "POST"),
-    ("/api/creative-canvas/sessions/creative-1", "GET"),
-    ("/api/creative-canvas/sessions/creative-1", "POST"),
-    ("/api/creative-canvas/sessions/creative-1/delete", "POST"),
-    ("/api/creative-canvas/sessions/creative-1/slots/slot-1", "POST"),
-    ("/api/creative-canvas/sessions/creative-1/slots", "POST"),
-    ("/api/creative-canvas/sessions/creative-1/reorder", "POST"),
-    ("/api/creative-canvas/sessions/creative-1/promote", "POST"),
-    ("/api/creative-canvas/sessions/creative-1/run", "POST"),
     ("/api/studio/tasks/" + TASK_ID, "GET"),
-    ("/api/studio/gallery", "GET"), ("/api/creative-canvas/gallery", "GET"),
+    ("/api/studio/gallery", "GET"),
     ("/api/tasks", "GET"), (f"/api/tasks/{TASK_ID}", "GET"),
     ("/api/tasks/export", "GET"), ("/api/tasks/delete", "POST"), ("/api/tasks/retry", "POST"),
     ("/api/records/consistency", "GET"), ("/api/records/consistency/repair", "POST"),
@@ -684,13 +635,6 @@ OBJECT_BODY_ROUTES = [
     "/api/studio/sessions/studio-1/delete", "/api/studio/sessions/studio-1/slots/slot-1",
     "/api/studio/sessions/studio-1/slots", "/api/studio/sessions/studio-1/reorder",
     "/api/studio/sessions/studio-1/promote", "/api/studio/sessions/studio-1/run",
-    "/api/creative-canvas/sessions", "/api/creative-canvas/sessions/creative-1",
-    "/api/creative-canvas/sessions/creative-1/delete",
-    "/api/creative-canvas/sessions/creative-1/slots/slot-1",
-    "/api/creative-canvas/sessions/creative-1/slots",
-    "/api/creative-canvas/sessions/creative-1/reorder",
-    "/api/creative-canvas/sessions/creative-1/promote",
-    "/api/creative-canvas/sessions/creative-1/run",
 ]
 
 
@@ -2608,6 +2552,7 @@ def test_asset_collection_controller_preserves_operation_error_statuses(
 def test_shared_canvas_route_contract_matches_both_live_registries(tmp_path):
     plugin = ContractPlugin(tmp_path)
     flask_app = FlaskWebServer(plugin)._create_app()
+    assert not any("creative-canvas" in rule.rule for rule in flask_app.url_map.iter_rules())
     expected_flask = {
         (route.flask_path, method, route.endpoint)
         for route in CANVAS_ROUTE_CONTRACTS
@@ -2625,6 +2570,7 @@ def test_shared_canvas_route_contract_matches_both_live_registries(tmp_path):
     plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
     api = dashboard_module.SelfieImageDashboardAPI(plugin)
     api.register()
+    assert not any("creative-canvas" in path for path, *_ in registered)
     expected_paths = {
         f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}"
         for route in CANVAS_ROUTE_CONTRACTS
@@ -3045,7 +2991,7 @@ def test_creative_template_route_forwards_complete_payload(http, monkeypatch):
     assert calls == [("A {scene}", payload)]
 
 
-def test_canvas_controller_preserves_studio_and_creation_canvas_operations(http):
+def test_canvas_controller_preserves_studio_operations(http):
     studio_list = assert_success(http.call("/api/studio/sessions?metadata=true"))
     assert studio_list == {
         "namespace": "studio",
@@ -3104,46 +3050,10 @@ def test_canvas_controller_preserves_studio_and_creation_canvas_operations(http)
     assert assert_success(run)["task_id"] == "web-12345678-4"
     assert "canvas-run-secret" not in json.dumps(run.payload)
 
-    creative_list = assert_success(http.call("/api/creative-canvas/sessions?metadata=true"))
-    assert creative_list == {
-        "namespace": "creative",
-        "include_metadata": http.adapter == "flask",
-    }
-    assert assert_success(http.call(
-        "/api/creative-canvas/sessions", method="POST", body={"title": "Creative"}
-    ))["id"] == "creative-1"
-    assert assert_success(http.call(
-        "/api/creative-canvas/sessions/creative-1"
-    ))["namespace"] == "creative"
-    assert_success(http.call(
-        "/api/creative-canvas/sessions/creative-1", method="POST", body={"title": "Updated"}
-    ))
-    assert_success(http.call(
-        "/api/creative-canvas/sessions/creative-1/delete", method="POST"
-    ))
-    assert_success(http.call(
-        "/api/creative-canvas/sessions/creative-1/slots/slot-1", method="POST", body={"clear": True}
-    ))
-    assert_success(http.call(
-        "/api/creative-canvas/sessions/creative-1/slots", method="POST", body={"role": "extra"}
-    ))
-    assert_success(http.call(
-        "/api/creative-canvas/sessions/creative-1/reorder", method="POST", body={"order": ["slot-1"]}
-    ))
-    assert_success(http.call(
-        "/api/creative-canvas/sessions/creative-1/promote", method="POST", body={"result_id": "r2"}
-    ))
-    creative_run = http.call(
-        "/api/creative-canvas/sessions/creative-1/run", method="POST", body={}
-    )
-    assert assert_success(creative_run)["task_id"] == "web-12345678-5"
-    assert "creative-run-secret" not in json.dumps(creative_run.payload)
     task = assert_success(http.call(f"/api/studio/tasks/{TASK_ID}"))
     assert task["task_id"] == TASK_ID
     gallery = assert_success(http.call("/api/studio/gallery?limit=12&offset=4"))
     assert gallery["limit"] == 12 and gallery["offset"] == 4
-    creative_gallery = assert_success(http.call("/api/creative-canvas/gallery"))
-    assert creative_gallery["limit"] == 24 and creative_gallery["offset"] == 0
     assert http.plugin.canvas_calls[:4] == [
         ("studio_list", http.adapter == "flask"),
         ("studio_create", {"title": "Studio"}),
@@ -3158,7 +3068,6 @@ def test_canvas_controller_preserves_studio_and_creation_canvas_operations(http)
     ("studio_update", "/api/studio/sessions/s1", "POST", {}, 400),
     ("studio_copy", "/api/studio/sessions/s1/copy", "POST", {}, 409),
     ("start_studio_run", "/api/studio/sessions/s1/run", "POST", {}, 500),
-    ("creative_canvas_list", "/api/creative-canvas/sessions", "GET", MISSING_BODY, 500),
     ("studio_gallery_images", "/api/studio/gallery", "GET", MISSING_BODY, 400),
 ])
 def test_canvas_controller_preserves_operation_error_statuses(

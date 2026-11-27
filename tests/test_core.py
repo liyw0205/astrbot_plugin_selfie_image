@@ -347,6 +347,18 @@ class FakeWebPlugin:
 
 
 class ConfigModelTests(unittest.TestCase):
+    def test_retired_audit_priority_is_dropped_and_all_enabled_targets_remain(self) -> None:
+        raw = copy.deepcopy(DEFAULT_CONFIG)
+        raw.update({
+            "enabled_audit_model_priority": ["aux/second"],
+            "enabledAuditModelPriority": ["aux/second"],
+            "audit_channels": [{"name": "aux", "enabled": True, "enabled_models": ["first", "second"], "api_key": "test"}],
+        })
+        config = AICatConfig.from_dict(raw)
+        self.assertEqual([target.model for target in config.get_audit_targets()], ["first", "second"])
+        self.assertNotIn("enabled_audit_model_priority", config.raw)
+        self.assertNotIn("enabledAuditModelPriority", config.raw)
+
     def test_web_config_masks_channel_credentials_and_restores_markers(self) -> None:
         from astrbot_plugin_selfie_image.features.config_manager import (
             _mask_web_channel_credentials,
@@ -654,7 +666,7 @@ class ConfigModelTests(unittest.TestCase):
         for doc in (html, INDEX_HTML):
             self.assertIn("modelDownloadProxySelectHtml", doc)
             self.assertIn("model-download-proxy", doc)
-            self.assertIn("btn.dataset.tab === 'proxies'", doc)
+            self.assertIn("setConfigurationNavigation(true, true)", doc)
             self.assertIn("model-controls", doc)
             self.assertNotIn("minmax(120px, 150px) minmax(120px, 160px)", doc)
             self.assertNotIn("minmax(150px, 190px) auto", doc)
@@ -1257,7 +1269,7 @@ class ConfigModelTests(unittest.TestCase):
         plugin.clear_channel_health("x")
         self.assertNotIn("x", plugin.get_channel_health())
 
-    def test_channel_health_skips_cooling_channels_but_keeps_earliest_fallback(self) -> None:
+    def test_channel_health_skips_all_cooling_channels(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
         plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
@@ -1279,8 +1291,12 @@ class ConfigModelTests(unittest.TestCase):
             ImageModelTarget("also-bad", "openai", "https://also.test", "k", "m2", 30),
         ]
         selected, skipped = plugin._select_healthy_generation_targets(only_cooling)
-        self.assertEqual([item.channel_name for item in selected], ["also-bad"])
-        self.assertEqual([item["channel"] for item in skipped], ["bad"])
+        self.assertEqual(selected, [])
+        self.assertEqual([item["channel"] for item in skipped], ["bad", "also-bad"])
+        with patch("astrbot_plugin_selfie_image.generation.generation_store.time.time", return_value=time.time() + 60):
+            selected, skipped = plugin._select_healthy_generation_targets(only_cooling)
+        self.assertEqual(selected, only_cooling)
+        self.assertEqual(skipped, [])
 
     def test_request_fingerprint_is_stable_and_does_not_include_plain_prompt(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
@@ -1455,7 +1471,7 @@ class ConfigModelTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.webui.web import INDEX_HTML
         html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
         for doc in (html, INDEX_HTML):
-            self.assertIn('data-tab="proxies"', doc)
+            self.assertIn('data-config-tab="proxies"', doc)
             self.assertIn('id="proxies"', doc)
             self.assertIn("modalProxyId", doc)
             self.assertIn("function renderProxyList", doc)
@@ -2401,9 +2417,9 @@ class ImageUtilityTests(unittest.TestCase):
 
     def test_web_prunes_invalid_model_priority_before_save(self) -> None:
         self.assertIn("function prunePriorityList", INDEX_HTML)
-        self.assertIn("for (const kind of ['image','audit']) prunePriorityList(kind);", INDEX_HTML)
+        self.assertIn("prunePriorityList('image');", INDEX_HTML)
         self.assertIn("CONFIG.enabled_image_model_priority = textList('priorityList');", INDEX_HTML)
-        self.assertIn("CONFIG.enabled_audit_model_priority = textList('auditPriorityList');", INDEX_HTML)
+        self.assertNotIn("auditPriorityList", INDEX_HTML)
 
     def test_dashboard_shortcuts_and_priority_pin_use_stable_targets(self) -> None:
         dashboard = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
@@ -9633,7 +9649,6 @@ class StudioStoreTests(unittest.TestCase):
             self.assertEqual(summary["mode"], "t2i")
             self.assertEqual(summary["prompt"], "precise fixture prompt")
             self.assertEqual(summary["extra_refs"][0]["image_path"], "extra.png")
-            plugin._canvas_store = lambda _: plugin.studio
             plugin._task_cancel_requested = lambda _: False
             plugin._web_task_timestamp = lambda: "now"
             state = {}
@@ -9714,7 +9729,7 @@ class StudioStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "生成中的画面"):
                 plugin.studio_canvas_update(sid, {"nodes": [{"id": child["id"], "image_path": "gallery.png"}]})
 
-    def test_both_canvas_namespaces_finalize_pool_negatives_with_actual_refs(self) -> None:
+    def test_studio_finalizes_pool_negatives_with_actual_refs(self) -> None:
         from astrbot_plugin_selfie_image.cos.cos_looks import (
             _COS_ANIME_NEGATIVE_PROMPT,
             _COS_COMMON_NEGATIVE_PROMPT,
@@ -9724,14 +9739,14 @@ class StudioStoreTests(unittest.TestCase):
 
         look = get_cos_look_by_id("ark_ceobe_wilderness")
         special = get_cos_look_by_id("firefly_star_rail_sleeping_cabin")
-        for namespace, template, medium, item in (
-            ("studio", "clothes", "real", look),
-            ("creative", "clothes", "anime", look),
-            ("studio", "t2i", "auto", look),
-            ("creative", "clothes", "auto", look),
-            ("creative", "clothes", "real", special),
+        for template, medium, item in (
+            ("clothes", "real", look),
+            ("clothes", "anime", look),
+            ("t2i", "auto", look),
+            ("clothes", "auto", look),
+            ("clothes", "real", special),
         ):
-            with self.subTest(namespace=namespace, template=template, medium=medium, look=item["id"]), tempfile.TemporaryDirectory() as tmp:
+            with self.subTest(template=template, medium=medium, look=item["id"]), tempfile.TemporaryDirectory() as tmp:
                 plugin = SessionModelAndTaskTests()._plugin_stub()
                 plugin.persona = PersonaManager(tmp)
                 plugin.persona.set_appearance_type(medium)
@@ -9742,8 +9757,7 @@ class StudioStoreTests(unittest.TestCase):
                     "graph": {"mode": mode, "prompt": item["prompt"], "count": 1},
                 }
                 store = types.SimpleNamespace(get=lambda _: session, attach_run_finish=lambda *_args, **_kwargs: None)
-                namespaces = []
-                plugin._canvas_store = lambda value: (namespaces.append(value), store)[1]
+                plugin.studio = store
                 plugin._resolve_studio_refs = lambda *_args, **_kwargs: (
                     ([(b"image", "image/png")] if mode == "selfie" else []), []
                 )
@@ -9762,9 +9776,8 @@ class StudioStoreTests(unittest.TestCase):
                     return {"success": True, "image_paths": ["generated.png"]}
 
                 plugin._run_image_generation = generate
-                asyncio.run(plugin._run_studio_task("cos-task", session["id"], canvas_namespace=namespace))
+                asyncio.run(plugin._run_studio_task("cos-task", session["id"]))
                 self.assertEqual(state["status"], "succeeded", state.get("error"))
-                self.assertEqual(namespaces, [namespace])
                 prompt = calls[0]["prompt"]
                 if item is special:
                     self.assertIn(special["prompt"], prompt)
@@ -10148,8 +10161,9 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(ACTION_PRESET_ALIAS, "动作预设")
         self.assertEqual(UPPER_PRESET_ALIAS, "上身预设")
         self.assertEqual(LOWER_PRESET_ALIAS, "下身预设")
-        self.assertEqual(len(action_prompt_presets()), 26)
+        self.assertEqual(len(action_prompt_presets()), 28)
         action_titles = {item["title"] for item in action_prompt_presets()}
+        self.assertTrue({"章鱼缠绕动作", "章鱼门缝复刻抓拍"}.issubset(action_titles))
         self.assertTrue({"捧脸", "男友视角", "战后力竭", "臣服怯态"}.issubset(action_titles))
         self.assertTrue({"夜窗近摄", "门后独照", "独唱之后"}.issubset(action_titles))
         self.assertTrue({"暗室祈祷", "床上应援", "健身后镜前检查", "豆浆恶作剧抓拍"}.issubset(action_titles))
@@ -10181,8 +10195,8 @@ class StudioStoreTests(unittest.TestCase):
             self.assertNotIn("大汗淋漓", action_prompts[title])
         self.assertEqual(len(upper_prompt_presets()), 20)
         self.assertEqual(len(lower_prompt_presets()), 13)
-        self.assertEqual(len(special_prompt_presets()), 59)
-        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 59)
+        self.assertEqual(len(special_prompt_presets()), 61)
+        self.assertEqual(len({item["title"] for item in special_prompt_presets()}), 61)
         self.assertIn("张开嘴并伸出舌尖", action_prompts["暗室祈祷"])
         self.assertIn("仰躺者眼睛的位置", action_prompts["床上应援"])
         self.assertIn("不是从上方俯拍", action_prompts["床上应援"])
@@ -10236,6 +10250,10 @@ class StudioStoreTests(unittest.TestCase):
             self.assertIn(shy["prompt"], [item["prompt"] for item in special_prompt_presets()])
             self.assertEqual(manager.resolve("臣服怯态").get("preset_name"), "臣服怯态")
             rows = manager.list_public()
+            self.assertEqual(
+                {row["name"]: row["preset_group"] for row in rows if row["name"] in {"章鱼缠绕动作", "章鱼门缝复刻抓拍"}},
+                {"章鱼缠绕动作": "action", "章鱼门缝复刻抓拍": "action"},
+            )
             groups = [str(row.get("preset_group") or "") for row in rows]
             first_structure = next(index for index, group in enumerate(groups) if group)
             self.assertTrue(all(not group for group in groups[:first_structure]))
@@ -12151,15 +12169,15 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn('data-tab="studio"', INDEX_HTML)
         self.assertTrue('id="studioTemplateSelect"' not in INDEX_HTML)
         self.assertIn('raw_canvas:true', INDEX_HTML)
-        self.assertIn("studioPresetBtn", INDEX_HTML)
+        self.assertIn("studioNodePresetBtn", INDEX_HTML)
         self.assertIn("testPresetBtn", INDEX_HTML)
-        self.assertIn("studioCosBtn", INDEX_HTML)
+        self.assertIn("studioNodeCosBtn", INDEX_HTML)
         self.assertIn("testCosBtn", INDEX_HTML)
         self.assertIn("renderCosPanel", INDEX_HTML)
         self.assertIn("/api/cos-pools?", INDEX_HTML)
-        self.assertIn("syncPresetToggleButton", INDEX_HTML)
+        self.assertIn("openCatalogPicker", INDEX_HTML)
         self.assertIn("preset-chip", INDEX_HTML)
-        self.assertIn("'收回'", INDEX_HTML)
+        self.assertNotIn("syncPresetToggleButton", INDEX_HTML)
         self.assertNotIn("上方芯片随模板变化", INDEX_HTML)
         # click-to-use should not auto collapse panel
         panel_fn = INDEX_HTML.split("function renderPresetPanel", 1)[1].split("function presetManagerStatus", 1)[0]
@@ -12183,7 +12201,7 @@ class StudioStoreTests(unittest.TestCase):
         dashboard_html = (
             Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
         ).read_text(encoding="utf-8")
-        for marker in ("studioCosBtn", "testCosBtn", "renderCosPanel", "/api/cos-pools?"):
+        for marker in ("studioNodeCosBtn", "testCosBtn", "renderCosPanel", "/api/cos-pools?"):
             self.assertIn(marker, dashboard_html)
 
     def test_standalone_destructive_actions_use_shared_confirmation(self) -> None:

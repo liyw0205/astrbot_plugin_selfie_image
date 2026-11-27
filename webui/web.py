@@ -1435,109 +1435,6 @@ class FlaskWebServer:
                 return fail("Unauthorized: Token 不正确", 401)
             return gallery_payload()
 
-        def creative_canvas_sessions_list() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            include_metadata = str(request.args.get("metadata") or "").strip().lower() in {"1", "true", "yes", "all"}
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_list(
-                    include_metadata=include_metadata
-                )
-            )
-
-        def creative_canvas_sessions_create() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_create(payload)
-            )
-
-        def creative_canvas_session_get(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_get(session_id)
-            )
-
-        def creative_canvas_session_update(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_update(session_id, payload)
-            )
-
-        def creative_canvas_session_delete(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            _, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_delete(session_id)
-            )
-
-        def creative_canvas_slot(session_id: str, slot_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_set_slot(
-                    session_id, slot_id, payload
-                )
-            )
-
-        def creative_canvas_add_slot(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_add_slot(session_id, payload)
-            )
-
-        def creative_canvas_reorder(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_reorder(session_id, payload)
-            )
-
-        def creative_canvas_promote(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_promote(session_id, payload)
-            )
-
-        def creative_canvas_run(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return canvas_result(
-                lambda: canvas_controller.creative_canvas_run(session_id, payload)
-            )
-
-        def creative_canvas_gallery() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            return gallery_payload()
 
         canvas_handlers = {
             "studio_sessions_list": studio_sessions_list,
@@ -1556,18 +1453,7 @@ class FlaskWebServer:
             "studio_session_reorder": studio_session_reorder,
             "studio_session_promote": studio_session_promote,
             "studio_session_run": studio_session_run,
-            "creative_canvas_sessions_list": creative_canvas_sessions_list,
-            "creative_canvas_sessions_create": creative_canvas_sessions_create,
-            "creative_canvas_session_get": creative_canvas_session_get,
-            "creative_canvas_session_update": creative_canvas_session_update,
-            "creative_canvas_session_delete": creative_canvas_session_delete,
-            "creative_canvas_session_slot": creative_canvas_slot,
-            "creative_canvas_session_add_slot": creative_canvas_add_slot,
-            "creative_canvas_session_reorder": creative_canvas_reorder,
-            "creative_canvas_session_promote": creative_canvas_promote,
-            "creative_canvas_session_run": creative_canvas_run,
             "studio_gallery": studio_gallery,
-            "creative_canvas_gallery": creative_canvas_gallery,
         }
         for route in CANVAS_ROUTE_CONTRACTS:
             app.add_url_rule(

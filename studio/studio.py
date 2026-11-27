@@ -119,6 +119,8 @@ ACTION_PROMPT_PRESET_IDS = frozenset(
         "preset_confessional_window_prayer",
         "preset_screen_crawl_pov",
         "preset_social_bed_stop_camera",
+        "preset_octopus_wrap_action",
+        "preset_octopus_doorway_recreation",
     }
 )
 UPPER_PROMPT_PRESET_IDS = frozenset(

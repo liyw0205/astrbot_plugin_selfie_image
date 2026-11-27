@@ -36,7 +36,7 @@ def test_cos_command_only_action_presets_take_over_pose(preset_name, suppressed)
         _natural_fail_fallback=lambda *a: "failed",
         _handle_selfie_command=handle,
     )
-    service = SelfieWorkflowService(plugin, lambda *a, **kw: "fixture", lambda *a: [])
+    service = SelfieWorkflowService(plugin, lambda *a, **kw: "fixture", lambda *a, **kw: [])
 
     async def run():
         return [item async for item in service.look_cos(object())]

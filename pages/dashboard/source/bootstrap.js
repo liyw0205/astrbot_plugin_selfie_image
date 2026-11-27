@@ -1,10 +1,44 @@
+    function scrollTabIntoView(button) {
+      if (!button) return;
+      const tablist = button.closest('.tabs-inline');
+      if (!tablist) return;
+      const bounds = tablist.getBoundingClientRect(), tabBounds = button.getBoundingClientRect();
+      if (tabBounds.left < bounds.left) tablist.scrollLeft += tabBounds.left - bounds.left;
+      else if (tabBounds.right > bounds.right) tablist.scrollLeft += tabBounds.right - bounds.right;
+    }
+    function setConfigurationNavigation(collapsed, restoreFocus = false) {
+      $('configurationNav').hidden = collapsed;
+      const toggle = $('configurationToggle');
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+      toggle.title = collapsed ? '展开配置导航' : '收起配置导航';
+      toggle.setAttribute('aria-label', toggle.title);
+      if (restoreFocus) toggle.focus({preventScroll: true});
+    }
+    $('configurationToggle').onclick = () => {
+      setConfigurationNavigation(!$('configurationNav').hidden);
+    };
+    document.addEventListener('pointerdown', event => {
+      if (!$('configurationNav').hidden && !$('configurationHeader').contains(event.target)) setConfigurationNavigation(true);
+    });
+    $('configurationHeader').addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !$('configurationNav').hidden) {
+        event.preventDefault(); event.stopPropagation(); setConfigurationNavigation(true, true);
+      }
+    });
     function navigateToTab(tab, options = {}) {
-      const target = String(tab || '').trim();
-      const button = [...document.querySelectorAll('nav.page-nav button[data-tab]')].find(item => item.dataset.tab === target);
+      let target = String(tab || '').trim();
+      if (target === 'configuration') {
+        target = document.querySelector('#configurationNav button.active')?.dataset.configTab || 'channels';
+      }
+      const configButtons = [...document.querySelectorAll('[data-config-tab]')];
+      const configButton = configButtons.find(item => item.dataset.configTab === target);
+      const navTarget = configButton ? 'configuration' : target;
+      const button = [...document.querySelectorAll('nav.page-nav button[data-tab]')].find(item => item.dataset.tab === navTarget);
       const section = target ? $(target) : null;
       if (!button || !section) return false;
       DASHBOARD_VISITED_TABS.add(target);
-      const current = document.querySelector('nav.page-nav button.active')?.dataset.tab || '';
+      const current = document.querySelector('main.app-shell > section.active')?.id || '';
+      const currentNav = document.querySelector('nav.page-nav button.active')?.dataset.tab || '';
       if (current === target && options.force !== true) return false;
       document.querySelectorAll('nav.page-nav button').forEach(item => {
         item.classList.toggle('active', item === button);
@@ -12,8 +46,18 @@
         if (item === button) item.setAttribute('aria-current', 'page');
         else item.removeAttribute('aria-current');
       });
-      if (current !== target && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) button.classList.add('nav-switching');
+      if (currentNav !== navTarget && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) button.classList.add('nav-switching');
+      $('configurationHeader').hidden = !configButton;
+      if (!configButton) setConfigurationNavigation(true);
+      if (configButton) configButtons.forEach(item => {
+        const active = item === configButton;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-selected', String(active));
+        item.tabIndex = active ? 0 : -1;
+      });
       document.querySelectorAll('main.app-shell > section').forEach(item => item.classList.toggle('active', item === section));
+      scrollTabIntoView(configButton);
+      if (configButton && currentNav !== navTarget) window.scrollTo(0, 0);
       if (target === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
       if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetCollections(); }
       if (target === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
@@ -22,14 +66,32 @@
       if (target === 'backup') loadBackupManager();
       if (target === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
       if (target === 'groups') { loadQQGroups(); }
-      if (options.focus === true) button.focus();
+      if (options.focus === true) (configButton || button).focus({preventScroll: true});
       return true;
     }
     document.querySelectorAll('nav.page-nav button[data-tab]').forEach(btn => {
       btn.addEventListener('click', () => {
-        // Keep the proxy tab check explicit for embedded-page integrations.
-        const isProxyTab = btn.dataset.tab === 'proxies';
-        navigateToTab(btn.dataset.tab, { focus: isProxyTab });
+        navigateToTab(btn.dataset.tab);
+      });
+    });
+    document.querySelectorAll('[data-config-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        navigateToTab(btn.dataset.configTab);
+        setConfigurationNavigation(true, true);
+      });
+    });
+    document.querySelectorAll('.tabs-inline[role="tablist"]').forEach(tablist => {
+      tablist.addEventListener('keydown', event => {
+        if (event.defaultPrevented) return;
+        const buttons = [...tablist.querySelectorAll(':scope > button[role="tab"]')];
+        const index = buttons.indexOf(event.target);
+        if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+        if (tablist !== $('configurationNav')) buttons[next].click();
+        buttons[next].focus({preventScroll: true});
+        scrollTabIntoView(buttons[next]);
       });
     });
     document.querySelectorAll('[data-nav-target]').forEach(card => {
@@ -158,7 +220,7 @@
     $('modalRefreshModels').onclick = () => refreshChannelModels();
     $('modalEnableAll').onclick = () => { removeAllEnabledModels(); };
     $('openCacheModels').onclick = openCacheModels;
-    $('cacheSearch').oninput = () => renderCacheModels();
+    $('cacheSearch').oninput = () => { CACHE_MODELS_PAGE = 1; renderCacheModels(); $('cacheModels').scrollTop = 0; };
     $('manualAdd').onclick = () => {
       const value = $('manualModel').value.trim();
       if (!value) return;
@@ -192,8 +254,6 @@
     if ($('studioCreateModal')) $('studioCreateModal').addEventListener('click', event => {
       if (event.target === $('studioCreateModal')) closeStudioCreateModal();
     });
-    if ($('studioPresetBtn')) $('studioPresetBtn').onclick = toggleStudioPresets;
-    if ($('studioCosBtn')) $('studioCosBtn').onclick = toggleStudioCos;
     if ($('testPresetBtn')) $('testPresetBtn').onclick = toggleTestPresets;
     if ($('testCosBtn')) $('testCosBtn').onclick = toggleTestCos;
     if ($('cosPoolModal')) $('cosPoolModal').addEventListener('click', event => { if (event.target === $('cosPoolModal')) closeCosPoolModal(); });

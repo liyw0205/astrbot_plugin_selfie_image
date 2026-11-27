@@ -108,7 +108,9 @@
         if (requestSeq !== METRICS_LOAD_SEQ || windowKey !== String($('monitorMetricsWindow')?.value || 'all')) return;
         const d = res.data || {};
         syncMetricAlertForm();
-        const windowLabel = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部保留记录';
+        const cumulative = d.statistics_scope === 'cumulative';
+        const selectedWindow = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部累计统计';
+        const windowLabel = cumulative ? selectedWindow : `${selectedWindow}（当前保留记录）`;
         const statusLabels = {succeeded:'成功', failed:'失败', partial_success:'部分成功', cancelled:'已取消', delivery_failed:'发送失败', queued:'排队中', running:'进行中', expired:'已过期'};
         const errorLabels = {auth:'鉴权失败', not_found:'接口或模型不存在', safety:'审核拦截', quota:'额度不足', param:'参数不兼容', timeout:'超时', network:'网络错误', server:'上游服务错误', rate_limit:'请求限流', unknown:'无法分类', fatal:'不可重试'};
         const renderCountChips = (entries, labels = {}) => {
@@ -132,13 +134,13 @@
         const recommendations = Array.isArray(d.recommendations) ? d.recommendations : [];
         const metric = (label, value, note = '') => `<div class="metrics-kpi"><span class="metrics-kpi-label">${label}</span><strong class="metrics-kpi-value">${value}</strong>${note ? `<span class="metrics-kpi-note">${note}</span>` : ''}</div>`;
         const percent = value => `${(Number(value || 0) * 100).toFixed(1)}%`;
-        const recordCount = escapeHtml(String(d.retained_records ?? 0));
-        const totalRecordCount = escapeHtml(String(d.total_retained_records ?? d.retained_records ?? 0));
+        const recordCount = escapeHtml(String(d.records ?? d.retained_records ?? 0));
+        const totalRecordCount = escapeHtml(String(d.total_records ?? d.total_retained_records ?? d.retained_records ?? 0));
         const categories = [
           {
             key: 'output', title: '产出统计', summary: `${escapeHtml(String(d.requested_images ?? 0))} 张请求`,
             html: `<div class="metrics-section"><h3 class="metrics-section-title">窗口与产出</h3><div class="metrics-kpi-grid">
-              ${metric('纳入记录', `${recordCount} / ${totalRecordCount}`, '当前窗口 / 全部保留')}
+              ${metric('统计记录', `${recordCount} / ${totalRecordCount}`, cumulative ? '当前窗口 / 累计记录' : '当前窗口 / 保留记录')}
               ${metric('图片请求', escapeHtml(String(d.requested_images ?? 0)), '总请求数')}
               ${metric('成功图片', escapeHtml(String(d.succeeded_images ?? 0)), '已生成')}
               ${metric('失败图片', escapeHtml(String(d.failed_images ?? 0)), '未成功生成')}
@@ -198,7 +200,7 @@
           },
         ];
         METRICS_CONTENTS = Object.fromEntries(categories.map(category => [category.key, category]));
-        $('monitorMetricsWindowLabel').textContent = `统计范围：${windowLabel}`;
+        $('monitorMetricsWindowLabel').textContent = `统计范围：${windowLabel}${cumulative && d.statistics_started_at ? ` · 起始 ${d.statistics_started_at}` : ''}`;
         root.classList.remove('metrics-error');
         root.innerHTML = categories.map(category => `<button class="secondary metrics-launcher" type="button" data-metrics-category="${category.key}"><strong>${category.title}</strong><span>${category.summary}</span></button>`).join('');
         if (ACTIVE_METRICS_CATEGORY && $('metricsModal')?.classList.contains('show')) renderMetricsCategory(ACTIVE_METRICS_CATEGORY);

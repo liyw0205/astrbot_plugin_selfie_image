@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .generation_records import _record_timestamp, generation_metric_record
+
 
 class RecordStorageUnavailableError(RuntimeError):
     """A record write was rejected because schema initialization failed."""
@@ -234,6 +236,75 @@ class RecordDatabase:
                 self._ensure_prompt_prefix_projection(connection) or self._schema_migration_applied
             )
             self._initialize_fts(connection, force_rebuild=added_columns)
+            self._schema_migration_applied = (
+                self._initialize_metric_records(connection) or self._schema_migration_applied
+            )
+
+    @classmethod
+    def _initialize_metric_records(cls, connection: sqlite3.Connection) -> bool:
+        connection.execute("SAVEPOINT generation_metric_records_init")
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'generation_metric_records'"
+        ).fetchone() is not None
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS generation_metric_records ("
+            "id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_generation_metric_records_timestamp "
+            "ON generation_metric_records(timestamp)"
+        )
+        if not exists:
+            # Seed before startup applies a possibly smaller retention limit.
+            for row in connection.execute(
+                "SELECT id, time, created_ts, payload FROM generation_records ORDER BY time ASC, seq ASC, id ASC"
+            ):
+                try:
+                    record = json.loads(row["payload"])
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(record, Mapping):
+                    record.setdefault("time", row["time"])
+                    record.setdefault("created_ts", row["created_ts"])
+                    cls._upsert_metric_record(connection, str(row["id"]), record)
+        connection.execute("RELEASE SAVEPOINT generation_metric_records_init")
+        return not exists
+
+    @staticmethod
+    def _upsert_metric_record(
+        connection: sqlite3.Connection, record_id: str, record: Mapping[str, Any],
+    ) -> None:
+        projected = generation_metric_record(record)
+        connection.execute(
+            "INSERT INTO generation_metric_records (id, timestamp, payload) VALUES (?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, payload = excluded.payload",
+            (record_id, _record_timestamp(projected), json.dumps(projected, ensure_ascii=False, separators=(",", ":"))),
+        )
+
+    def seed_metric_records(self, records: Iterable[Mapping[str, Any]]) -> None:
+        """Import legacy statistical history without retaining its full payloads."""
+        with self._lock, self._connection() as connection:
+            for record in reversed(list(records)):
+                record_id = str(record.get("id") or "").strip()
+                if record_id:
+                    self._upsert_metric_record(connection, record_id, record)
+
+    def load_metric_records(
+        self, *, window_seconds: Optional[int] = None, now: Optional[float] = None,
+    ) -> tuple[List[Dict[str, Any]], int, float]:
+        with self._lock, self._connection() as connection:
+            connection.execute("BEGIN")
+            scope = connection.execute(
+                "SELECT COUNT(*) AS total, MIN(NULLIF(timestamp, 0)) AS started "
+                "FROM generation_metric_records"
+            ).fetchone()
+            sql = "SELECT payload FROM generation_metric_records"
+            params = ()
+            if window_seconds is not None:
+                sql += " WHERE timestamp >= ?"
+                params = (float(now if now is not None else time.time()) - max(1, int(window_seconds)),)
+            rows = connection.execute(sql + " ORDER BY timestamp DESC, rowid DESC", params).fetchall()
+        return [json.loads(row["payload"]) for row in rows], int(scope["total"]), float(scope["started"] or 0)
 
     @staticmethod
     def _keyword_search_expression() -> str:
@@ -907,6 +978,10 @@ class RecordDatabase:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+            for record in reversed(incoming):
+                record_id = str(record.get("id") or "").strip()
+                if record_id:
+                    self._upsert_metric_record(connection, record_id, record)
             self._rebuild_prompt_prefix_projection(connection)
             if self._fts5_enabled:
                 try:
@@ -978,6 +1053,7 @@ class RecordDatabase:
             )
             self._sync_prompt_prefix_record(connection, record_id)
             self._sync_fts_record(connection, record_id)
+            self._upsert_metric_record(connection, record_id, record)
 
     def prune_to_limit(self, limit: int) -> List[str]:
         """Drop the oldest unpinned records beyond ``limit``.

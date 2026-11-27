@@ -58,6 +58,7 @@
     nav.page-nav button[data-tab="studio"]::before { content: "✦"; }
     nav.page-nav button[data-tab="presets"]::before { content: "▤"; }
     nav.page-nav button[data-tab="test"]::before { content: "◎"; }
+    nav.page-nav button[data-tab="configuration"]::before { content: "⚙"; }
     nav.page-nav button[data-tab="image"]::before { content: "▧"; }
     nav.page-nav button[data-tab="selfie"]::before { content: "◉"; }
     nav.page-nav button[data-tab="audit"]::before { content: "✓"; }
@@ -222,6 +223,19 @@
       border-color: #c7cdfc !important;
       color: #3730a3 !important;
       box-shadow: 0 3px 10px rgba(89, 100, 242, .12) !important;
+    }
+    body.authed .tabs-inline > button.secondary:not(.active),
+    body.authed .tabs-inline > button.secondary:not(.active):hover {
+      background: #fff !important; border-color: var(--line-strong) !important;
+      color: var(--text) !important; box-shadow: none !important;
+    }
+    body.authed .tabs-inline > button.secondary.active,
+    body.authed .tabs-inline > button.secondary.active:hover {
+      background: #fff !important; border-color: #2563eb !important;
+      color: #2563eb !important; box-shadow: none !important;
+    }
+    body.authed .tabs-inline > button.secondary:focus-visible {
+      outline: 2px solid #2563eb; outline-offset: 2px;
     }
     body.authed #pageNav button {
       position: relative; isolation: isolate; z-index: 0; min-height: 44px;

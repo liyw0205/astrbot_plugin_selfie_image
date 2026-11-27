@@ -23,6 +23,7 @@ from ..core.constants import IMAGE_DOWNLOAD_CONCURRENCY
 from ..core.providers import ImageReference
 from ..core.utils import (
     detect_mime_by_bytes,
+    extract_command_mention_ids,
     extract_image_sources_from_event,
     extract_image_urls,
     fetch_image_source,
@@ -445,6 +446,7 @@ def extract_structured_image_sources(
     }
     visited: Set[int] = set()
     avatar_sources: Dict[str, str] = {}
+    command_mentions = extract_command_mention_ids(event) if include_at_avatar else None
     filter_avatars = at_avatar_filter_ids is not None
     blocked_avatar_ids = {str(value).strip() for value in (at_avatar_filter_ids or [])}
     if filter_avatars:
@@ -465,7 +467,7 @@ def extract_structured_image_sources(
         ids = _mention_ids(mention)
         if not ids or "all" in ids:
             return
-        if filter_avatars and (
+        if command_mentions is None and filter_avatars and (
             _message_field(mention, "is_you") is True
             or any(value in blocked_avatar_ids for value in ids)
         ):
@@ -479,8 +481,9 @@ def extract_structured_image_sources(
     def search_field(key: Any, value: Any, role: str, depth: int) -> None:
         key_l = str(key).lower()
         if key_l == "mentions":
-            for mention in value if isinstance(value, (list, tuple)) else []:
-                add_at_avatar(mention)
+            if role == "message" or command_mentions is None:
+                for mention in value if isinstance(value, (list, tuple)) else []:
+                    add_at_avatar(mention)
             return
         if key_l in IMAGE_SOURCE_METADATA_FIELDS:
             return
@@ -502,6 +505,10 @@ def extract_structured_image_sources(
         # it into components, but older/failing reply conversions can leave
         # only these protocol dictionaries available.
         if isinstance(obj, Mapping):
+            if str(obj.get("type") or "").lower() in {"at", "atsomeone"}:
+                if role == "message" or command_mentions is None:
+                    add_at_avatar(obj.get("data") if isinstance(obj.get("data"), Mapping) else obj)
+                return
             if str(obj.get("type") or "").lower() == "image":
                 data = obj.get("data") if isinstance(obj.get("data"), Mapping) else obj
                 raw_candidates = [data.get(key) for key in ("path", "file", "file_path", "url")]
@@ -559,7 +566,8 @@ def extract_structured_image_sources(
             return
 
         if obj_type in {"At", "AtSomeone"}:
-            add_at_avatar(obj)
+            if role == "message" or command_mentions is None:
+                add_at_avatar(obj)
             return
 
         if isinstance(obj, str):
@@ -596,10 +604,19 @@ def extract_structured_image_sources(
         search(quote_obj, "quote")
     search(getattr(event, "message", None), "message")
     search(getattr(event, "raw_message", None), "message")
-    buckets["at_avatar"] = unique([
-        source for identity, source in avatar_sources.items()
-        if not filter_avatars or identity not in blocked_avatar_ids
-    ])
+    if command_mentions is not None:
+        buckets["at_avatar"] = unique([
+            avatar_sources.get(identity) or f"https://q4.qlogo.cn/headimg_dl?dst_uin={identity}&spec=640"
+            for identity in command_mentions
+            if identity not in {"all", "qq_official", "unknown_selfid"}
+        ])
+    else:
+        buckets["at_avatar"] = unique([
+            source for identity, source in avatar_sources.items()
+            if not filter_avatars or identity not in blocked_avatar_ids
+        ])
+        if filter_avatars:
+            buckets["at_avatar"] = filter_bot_avatar_sources(buckets["at_avatar"], list(blocked_avatar_ids))
 
     # Legacy results have no mention provenance and must not reintroduce a
     # filtered or replaced avatar as an ordinary message image.
@@ -798,15 +815,6 @@ class ReferenceCollector:
             include_image_alternates=self.include_image_alternates,
             at_avatar_filter_ids=[*self.bot_ids, *self.at_avatar_filter_ids] if self.filter_at_avatars else None,
         )
-        for key, values in list(buckets.items()):
-            if key == "at_avatar":
-                if self.filter_at_avatars:
-                    buckets[key] = filter_bot_avatar_sources(
-                        values, [*self.bot_ids, *self.at_avatar_filter_ids]
-                    )
-                continue
-            buckets[key] = list(values)
-
         total = sum(len(values) for values in buckets.values())
         if (
             total == 0

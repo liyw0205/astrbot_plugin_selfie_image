@@ -541,9 +541,7 @@
     const PICKER_CATALOG_CACHE_TTL_MS = 30000;
     const PICKER_PAGE_SIZE = 30;
     const PAGE_PREFETCH_AHEAD = 3;
-    const PICKER_PAGE_CACHE = new Map();
     const MANAGED_PAGE_CACHE = new Map();
-    const PICKER_PAGE_REQUEST_GENERATIONS = new Map();
     const MANAGED_PAGE_REQUEST_GENERATIONS = new Map();
     let PICKER_CATALOG_CACHE_VERSION = 0;
     const PICKER_PANEL_STATES = new Map();
@@ -578,7 +576,7 @@
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
     let SELFIE_REFERENCE_VERSION = 0;
-    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", galleryRequestSeq: 0, nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
+    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", running: false, galleryTargetSlotId: "", galleryRequestSeq: 0, nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
     const PICKER_CACHE = {
       tags: {data: [], loadedAt: 0, request: null, version: 0},
     };
@@ -694,7 +692,6 @@
         RECORD_LOAD_SEQ += 1;
         ASSET_LOAD_SEQ += 1;
         ASSET_TAG_LOAD_SEQ += 1;
-        PICKER_PAGE_REQUEST_GENERATIONS.clear();
         MANAGED_PAGE_REQUEST_GENERATIONS.clear();
         PICKER_CACHE.tags.version += 1;
         GALLERY_PICKER_CACHE.version += 1;
@@ -704,7 +701,6 @@
         }
         RECORD_PAGE_REQUESTS.clear();
         ASSET_PAGE_REQUESTS.clear();
-        PICKER_PAGE_CACHE.clear();
         MANAGED_PAGE_CACHE.clear();
         RECORD_PAGE_CACHE.clear();
         ASSET_PAGE_CACHE.clear();
@@ -717,9 +713,6 @@
       const persistedIndex = pruneDashboardPersistCache();
       const persistedWindowName = pruneDashboardWindowNameCache();
       const listOptions = {index: persistedIndex, windowCache: persistedWindowName};
-      for (const entry of listDashboardPersistCache('picker-page', listOptions)) {
-        if (entry.key) PICKER_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
-      }
       for (const entry of listDashboardPersistCache('managed-page', listOptions)) {
         if (entry.key) MANAGED_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
       }
@@ -856,7 +849,7 @@
       const method = String(options.method || 'GET').toUpperCase();
       const endpoint = bridgeEndpoint(path);
       const trace = traceRequest({
-        page: document.querySelector('nav.page-nav button.active')?.dataset.tab || 'base',
+        page: document.querySelector('main.app-shell > section.active')?.id || 'base',
         requestKey: `${method} ${endpoint}`,
         sessionId: STUDIO?.current?.id || '',
         startedAt: Date.now(), status: 'pending'
@@ -1000,7 +993,12 @@
       for (const key of Object.keys(map)) {
         const tab = $(map[key]);
         const pane = $(panes[key]);
-        if (tab) tab.classList.toggle('active', ACTIVE_CHANNEL_PANE === key);
+        if (tab) {
+          const active = ACTIVE_CHANNEL_PANE === key;
+          tab.classList.toggle('active', active);
+          tab.setAttribute('aria-selected', String(active));
+          tab.tabIndex = active ? 0 : -1;
+        }
         if (pane) pane.classList.toggle('active', ACTIVE_CHANNEL_PANE === key);
       }
       document.querySelectorAll('[data-priority-kind]').forEach(block => {
@@ -1041,7 +1039,8 @@ Source prompt:
       CONFIG.image_channels ??= [];
       CONFIG.audit_channels ??= [];
       CONFIG.enabled_image_model_priority ??= [];
-      CONFIG.enabled_audit_model_priority ??= [];
+      delete CONFIG.enabled_audit_model_priority;
+      delete CONFIG.enabledAuditModelPriority;
       CONFIG.image_model_call_mode ??= CONFIG.random_image_model ? 'random' : 'sequence';
       delete CONFIG.random_image_model;
       const img = CONFIG.image;
@@ -1161,7 +1160,6 @@ Source prompt:
         if ($('imagePromptEnTemplate')) $('imagePromptEnTemplate').value = String(img.image_prompt_en_template || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
 
         $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
-        $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
         if ($('imageModelCallMode')) $('imageModelCallMode').value = ['sequence','random','fixed'].includes(CONFIG.image_model_call_mode) ? CONFIG.image_model_call_mode : 'sequence';
         renderAllChannelLists();
         refreshModelSelectors();
@@ -1220,9 +1218,8 @@ Source prompt:
        CONFIG.image.prompt_en_model = ($('promptEnModel') && $('promptEnModel').value) || '';
        CONFIG.image.image_prompt_en_template = String(($('imagePromptEnTemplate') && $('imagePromptEnTemplate').value) || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
       collectChannels();
-      for (const kind of ['image','audit']) prunePriorityList(kind);
+      prunePriorityList('image');
       CONFIG.enabled_image_model_priority = textList('priorityList');
-      CONFIG.enabled_audit_model_priority = textList('auditPriorityList');
       CONFIG.image_model_call_mode = ($('imageModelCallMode') && $('imageModelCallMode').value) || 'sequence';
       return CONFIG;
     }

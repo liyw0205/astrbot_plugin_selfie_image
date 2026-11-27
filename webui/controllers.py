@@ -585,56 +585,6 @@ class CanvasController:
         )
         return CanvasControllerResult(redact_sensitive_data(result.data))
 
-    def creative_canvas_list(
-        self, *, include_metadata: bool = False
-    ) -> CanvasControllerResult:
-        return self._call(
-            "creative_canvas_list", include_metadata=include_metadata, status=500
-        )
-
-    def creative_canvas_create(self, payload: Any) -> CanvasControllerResult:
-        return self._call("creative_canvas_create", payload)
-
-    def creative_canvas_get(self, session_id: Any) -> CanvasControllerResult:
-        return self._call("creative_canvas_get", str(session_id or ""), status=404)
-
-    def creative_canvas_update(
-        self, session_id: Any, payload: Any
-    ) -> CanvasControllerResult:
-        return self._call("creative_canvas_update", str(session_id or ""), payload)
-
-    def creative_canvas_delete(self, session_id: Any) -> CanvasControllerResult:
-        return self._call("creative_canvas_delete", str(session_id or ""), status=404)
-
-    def creative_canvas_set_slot(
-        self, session_id: Any, slot_id: Any, payload: Any
-    ) -> CanvasControllerResult:
-        return self._call(
-            "creative_canvas_set_slot", str(session_id or ""), str(slot_id or ""), payload
-        )
-
-    def creative_canvas_add_slot(
-        self, session_id: Any, payload: Any
-    ) -> CanvasControllerResult:
-        return self._call("creative_canvas_add_slot", str(session_id or ""), payload)
-
-    def creative_canvas_reorder(
-        self, session_id: Any, payload: Any
-    ) -> CanvasControllerResult:
-        return self._call("creative_canvas_reorder", str(session_id or ""), payload)
-
-    def creative_canvas_promote(
-        self, session_id: Any, payload: Any
-    ) -> CanvasControllerResult:
-        return self._call("creative_canvas_promote", str(session_id or ""), payload)
-
-    def creative_canvas_run(
-        self, session_id: Any, payload: Any
-    ) -> CanvasControllerResult:
-        result = self._call(
-            "start_creative_canvas_run", str(session_id or ""), payload, status=500
-        )
-        return CanvasControllerResult(redact_sensitive_data(result.data))
 
     def gallery(self, limit: Any, offset: Any) -> CanvasControllerResult:
         return self._call(

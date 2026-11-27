@@ -1711,19 +1711,106 @@ def extract_command_message(
     return quoted or fallback.strip()
 
 
+REFERENCE_IMAGE_COMMANDS = (
+    "看看COS", "看看腿", "看看你", "看看", "自拍", "合影", "合照",
+    "图生图", "文生图", "生图", "画", "nai5", "nai",
+)
+_COMMAND_MENTION_RE = re.compile(
+    r"\[CQ:at,qq=([^,\]\s]+)(?:,[^\]]*)?\]|\[At:([^\]\s]+)\]"
+    r"|<@!?([^>\s]+)>|<at:([^>\s]+)>"
+    r"|<qqbot-at-user\s+id=[\"']([^\"']+)[\"']\s*/>"
+    r"|@[^@\s()（）]+[（(]([^\s)）]+)[)）]"
+    r"|@([\w-]+)(?=\s|$|[,，:：|])",
+    re.IGNORECASE,
+)
+
+
+def _command_text_match(text: str, command: Any) -> Optional[re.Match]:
+    commands = [command] if isinstance(command, str) else list(command)
+    names = "|".join(re.escape(str(item)) for item in sorted(commands, key=lambda item: len(str(item)), reverse=True))
+    if not names:
+        return None
+    text = str(text or "").lstrip()
+    while text:
+        mention = _COMMAND_MENTION_RE.match(text) or re.match(r"@[^\s@]+", text)
+        if not mention:
+            break
+        text = text[mention.end():].lstrip()
+    return re.match(
+        rf"^[/!！.]?(?:{names})(?=\s|$|@|\[CQ:at,|\[At:|<@|<at:|<qqbot-at-user)"
+        rf"\s*(?P<arguments>[\s\S]*)$",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def _message_field(obj: Any, key: str) -> Any:
+    return obj.get(key) if isinstance(obj, Mapping) else getattr(obj, key, None)
+
+
+def _message_chain_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, (list, tuple)):
+        return ""
+    parts = []
+    for component in value:
+        kind = str(_message_field(component, "type") or type(component).__name__).lower().split(".")[-1]
+        data = _message_field(component, "data")
+        data = data if isinstance(data, Mapping) else {}
+        if kind in {"at", "atsomeone"}:
+            identity = (_message_field(component, "qq") or _message_field(component, "id")
+                        or _message_field(component, "user_id") or data.get("qq") or data.get("id")
+                        or data.get("user_id"))
+            parts.append(f" [CQ:at,qq={identity}] " if identity else " ")
+        elif kind in {"plain", "text"}:
+            parts.append(str(_message_field(component, "text") or data.get("text") or ""))
+        else:
+            # Reply/forward bodies do not belong to the current command.
+            parts.append(" ")
+    return "".join(parts)
+
+
+def _current_message_texts(event: Any) -> List[str]:
+    message_obj = _message_field(event, "message_obj")
+    texts = []
+    # Official QQ may remove every bot mention from the normalized chain.
+    # The current raw content retains the position of a second explicit @bot.
+    for raw in (_message_field(message_obj, "raw_message"), _message_field(event, "raw_message")):
+        text = _message_chain_text(raw)
+        if text:
+            texts.append(text)
+        for owner in (_message_field(raw, "raw_data"), raw):
+            for key in ("message", "content", "raw_message"):
+                text = _message_chain_text(_message_field(owner, key))
+                if text:
+                    texts.append(text)
+    for owner in (message_obj, event):
+        text = _message_chain_text(_message_field(owner, "message"))
+        if text:
+            texts.append(text)
+    texts.append(extract_event_text(event))
+    return unique(texts)
+
+
+def extract_command_mention_ids(event: Any, command: Any = REFERENCE_IMAGE_COMMANDS) -> Optional[List[str]]:
+    """Return mentions after the current command, or None without a command boundary."""
+    for text in _current_message_texts(event):
+        match = _command_text_match(text, command)
+        if match:
+            return [
+                next(value for value in mention.groups() if value is not None)
+                for mention in _COMMAND_MENTION_RE.finditer(match.group("arguments"))
+            ]
+    return None
+
+
 def _command_inline_text(event: Any, command: Any, fallback: str = "") -> str:
     """Command arguments that the user typed in this message."""
-    text = extract_event_text(event)
-    if not text:
-        return ""
-    commands = [command] if isinstance(command, str) else [str(item) for item in command if str(item).strip()]
-    for item in commands:
-        # Some adapters retain the bot @mention in message_str even though the
-        # command dispatcher has already selected this handler.
-        pattern = rf"^\s*(?:@\S+\s+)?[/!！.]?{re.escape(item)}(?:\s+([\s\S]*))?$"
-        match = re.match(pattern, text)
+    for text in unique([extract_event_text(event), *_current_message_texts(event)]):
+        match = _command_text_match(text, command)
         if match:
-            return (match.group(1) or "").strip()
+            return match.group("arguments").strip()
     return ""
 
 
@@ -1867,6 +1954,8 @@ IMAGE_SOURCE_METADATA_FIELDS = frozenset({
 def extract_image_sources_from_event(event: Any, include_at_avatar: bool = False) -> List[str]:
     images: List[str] = []
     visited = set()
+    command_mentions = extract_command_mention_ids(event) if include_at_avatar else None
+    avatar_sources: Dict[str, str] = {}
 
     def search(obj: Any) -> None:
         if obj is None or id(obj) in visited:
@@ -1905,8 +1994,9 @@ def extract_image_sources_from_event(event: Any, include_at_avatar: bool = False
         if obj_type in {"At", "AtSomeone"}:
             if include_at_avatar:
                 qq = str(getattr(obj, "qq", getattr(obj, "id", "")) or "").strip()
-                if qq and qq != "all":
-                    images.append(f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640")
+                if qq and qq != "all" and (command_mentions is None or qq in command_mentions):
+                    avatar = str(getattr(obj, "avatar", "") or getattr(obj, "avatar_url", "") or "").strip()
+                    avatar_sources[qq] = avatar or f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq}&spec=640"
             return
 
         if isinstance(obj, str):
@@ -1939,6 +2029,14 @@ def extract_image_sources_from_event(event: Any, include_at_avatar: bool = False
         search(quote_obj)
     search(getattr(event, "message", None))
     search(getattr(event, "raw_message", None))
+
+    if command_mentions is not None:
+        images.extend(
+            avatar_sources.get(identity) or f"https://q4.qlogo.cn/headimg_dl?dst_uin={identity}&spec=640"
+            for identity in command_mentions if identity not in {"all", "qq_official", "unknown_selfid"}
+        )
+    else:
+        images.extend(avatar_sources.values())
 
     return unique(images)
 

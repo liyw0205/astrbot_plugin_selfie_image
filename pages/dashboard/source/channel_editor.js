@@ -1,3 +1,4 @@
+    let CACHE_MODELS_PAGE = 1;
     function uniq(values) {
       const out = [], seen = new Set();
       for (const value of values || []) {
@@ -615,19 +616,38 @@
         </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
     }
     function renderCacheModels(ch = currentModalChannel()) {
+      const cache = ch.models_cache || [];
+      $('cacheModelsSearch').hidden = cache.length <= SELECT_PICKER_SEARCH_THRESHOLD;
+      if ($('cacheModelsSearch').hidden) $('cacheSearch').value = '';
       const search = $('cacheSearch').value.trim().toLowerCase();
-      const items = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
-      $('cacheModels').innerHTML = items.map(item => {
-        const active = (ch.enabled_models || []).includes(item);
+      const enabled = new Set(ch.enabled_models || []);
+      const items = cache.filter(item => !search || item.toLowerCase().includes(search))
+        .sort((a, b) => Number(enabled.has(b)) - Number(enabled.has(a)));
+      const pages = Math.max(1, Math.ceil(items.length / PICKER_PAGE_SIZE));
+      CACHE_MODELS_PAGE = Math.max(1, Math.min(CACHE_MODELS_PAGE, pages));
+      const offset = (CACHE_MODELS_PAGE - 1) * PICKER_PAGE_SIZE;
+      const rows = items.slice(offset, offset + PICKER_PAGE_SIZE);
+      $('cacheModelsSummary').textContent = `第 ${CACHE_MODELS_PAGE}/${pages} 页 · ${search ? `匹配 ${items.length} / ` : '共 '}${cache.length} 个模型`;
+      $('cacheModels').innerHTML = rows.map(item => {
+        const active = enabled.has(item);
         return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="secondary mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
       }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
+      $('cacheModelsPager').innerHTML = pages > 1 ? `<span class="muted">${offset + 1}-${offset + rows.length} / ${items.length}</span><button class="secondary mini" type="button" data-cache-page="-1" ${CACHE_MODELS_PAGE === 1 ? 'disabled' : ''}>上一页</button><button class="secondary mini" type="button" data-cache-page="1" ${CACHE_MODELS_PAGE === pages ? 'disabled' : ''}>下一页</button>` : '';
+      $('cacheModelsPager').querySelectorAll('[data-cache-page]').forEach(button => button.onclick = () => {
+        CACHE_MODELS_PAGE += Number(button.dataset.cachePage);
+        renderCacheModels();
+        $('cacheModels').scrollTop = 0;
+      });
     }
     function openCacheModels() {
       if (!isChannelModalOpen()) return;
+      CACHE_MODELS_PAGE = 1;
+      $('cacheSearch').value = '';
       renderCacheModels();
       $('cacheModelsModal').classList.add('show');
       $('channelModal').inert = true;
-      $('cacheSearch').focus();
+      $('cacheModels').scrollTop = 0;
+      $('cacheModelsClose').focus({preventScroll: true});
     }
     function closeCacheModels() {
       const wasOpen = $('cacheModelsModal').classList.contains('show');
@@ -870,7 +890,6 @@
         patchDomains: [
           kind === 'audit' ? 'audit_channels' : 'image_channels',
           'enabled_image_model_priority',
-          'enabled_audit_model_priority',
           'image_model_call_mode',
         ],
       });
@@ -947,7 +966,6 @@
         setSelectOptions(id, values, values.includes(previous) ? previous : fallback);
       };
       prunePriorityList('image', labels);
-      prunePriorityList('audit', audits);
       const auditLabels = [''].concat(audits);
       preserveSelection('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       preserveSelection('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
@@ -968,11 +986,10 @@
     }
     const PRIORITY_UI = {
       image: {channel:'priorityChannel', picker:'priorityPicker', list:'priorityList', rows:'priorityRows'},
-      audit: {channel:'auditPriorityChannel', picker:'auditPriorityPicker', list:'auditPriorityList', rows:'auditPriorityRows'},
     };
     function priorityUi(kind = 'image') { return PRIORITY_UI[kind] || PRIORITY_UI.image; }
     function priorityLabels(kind) {
-      return kind === 'audit' ? auditModelLabels() : allModelLabels();
+      return allModelLabels();
     }
     function priorityEntryMatchesLabel(entry, label) {
       const item = String(entry || '').trim();
@@ -1076,10 +1093,8 @@
         </div></div>`).join('') || `<div class="muted">未设置${kind === 'image' ? '生图' : '辅助'}优先级时按启用顺序尝试。</div>`;
     }
     function renderAllPriorityRows() {
-      for (const kind of ['image','audit']) {
-        prunePriorityList(kind);
-        renderPriorityRows(kind);
-      }
+      prunePriorityList('image');
+      renderPriorityRows('image');
     }
 
     let QQ_GROUP_ROWS = [];

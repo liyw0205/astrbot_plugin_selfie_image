@@ -501,7 +501,7 @@
       const averageLabel = sampleCount ? `${avg.toFixed(2)}s` : '暂无样本';
       $('monitorStats').innerHTML = [
         ['筛选', String(filteredCount)],
-        ['总计', String(totalCount)],
+        ['保留记录', String(totalCount)],
         ['统计范围', sampleCount ? `${scopeLabel}（${sampleCount} 条）` : '暂无样本'],
         ['成功', successLabel],
         ['失败', failureLabel],

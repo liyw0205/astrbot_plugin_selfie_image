@@ -47,10 +47,6 @@
       setSelectOptions('testAspect', ASPECTS, CONFIG.image?.default_aspect_ratio || '9:16');
       refreshModelSelectors();
       clearTestData(false);
-      if (window.__TEST_PRESET_OPEN) {
-        const state = catalogPickerState('testPresetPanel');
-        void loadCatalogPickerPage('testPresetPanel', 'image', state.page);
-      }
     }
     function setTestBusy(busy) {
       $('testImageBtn').disabled = !!busy;

@@ -366,7 +366,12 @@
     .channel-models > .between { flex-wrap: wrap; gap: 8px; }
     .channel-models > .between .actions { margin-top: 0; }
     #cacheModelsModal, #modelSettingsModal { z-index: 60; }
-    #cacheModelsModal .modal { width: min(720px, 100%); }
+    #cacheModelsModal .modal { width: min(720px, 100%); height: min(640px, calc(100vh - 28px)); height: min(640px, calc(100dvh - 28px)); }
+    #cacheModelsModal .modal-body { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; overflow: hidden; }
+    #cacheModelsSearch, #cacheModelsSummary, #cacheModelsPager { flex: 0 0 auto; }
+    #cacheModelsSearch[hidden] { display: none; }
+    #cacheModels { flex: 1 1 auto; min-height: 0; overflow: auto; align-content: start; margin: 0; overscroll-behavior: contain; }
+    #cacheModelsPager { margin: 0; flex-wrap: wrap; }
     #modelSettingsModal .modal { width: min(560px, 100%); }
     #cacheModelsModal .between, #modelSettingsModal .between { flex: 0 0 auto; gap: 8px; }
     #cacheModelsModal h2, #modelSettingsModal h2 { min-width: 0; margin: 0; }
@@ -420,17 +425,36 @@
     .copy-btn svg { width: 15px; height: 15px; display: block; }
     .tabs-inline { display: flex; gap: 8px; margin: 10px 0 14px; flex-wrap: wrap; }
     .tabs-inline button {
-      background: #fff; border-color: var(--line-strong); color: var(--text);
+      background: #fff; border-color: var(--line-strong); color: var(--text); border-radius: 8px;
       box-shadow: none;
     }
     .tabs-inline button:hover { background: var(--panel-soft); border-color: var(--line-strong); color: var(--text); }
     .tabs-inline button.active,
     .tabs-inline button.active:hover {
-      background: linear-gradient(180deg, #eef7fc, #e3f2fa);
-      border-color: color-mix(in srgb, var(--primary) 35%, var(--line-strong));
-      color: var(--primary-strong);
-      box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset;
+      background: #fff; border-color: #2563eb; color: #2563eb; box-shadow: none;
     }
+    .configuration-header[hidden] { display: none !important; }
+    .configuration-header { position: relative; z-index: 14; min-width: 0; margin-bottom: 16px; border: 1px solid #cdd7df; border-radius: 8px; background: #e8eef2; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: inset 0 1px 0 #f7fafc, 0 4px 16px rgba(30,55,90,.07); }
+    .configuration-heading { margin: 0; }
+    body.authed #configurationToggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; min-height: 68px; padding: 16px; text-align: left; font: inherit; border: 0 !important; background: transparent !important; color: var(--text) !important; box-shadow: none !important; }
+    .configuration-heading svg { flex: 0 0 20px; width: 20px; height: 20px; transition: transform 160ms ease; }
+    .configuration-heading [aria-expanded="false"] svg { transform: rotate(180deg); }
+    .configuration-nav { position: absolute; top: calc(100% + 8px); left: 0; right: 0; display: grid; grid-template-columns: repeat(auto-fit,minmax(112px,1fr)); gap: 8px; margin: 0; padding: 16px; max-height: min(360px, 60vh); overflow: auto; overscroll-behavior: contain; border: 1px solid #cdd7df; border-radius: 8px; background: #e8eef2; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: inset 0 1px 0 #f7fafc, 0 12px 28px rgba(30,55,90,.16); }
+    .configuration-nav[hidden] { display: none; }
+    .configuration-nav > button { min-width: 0; min-height: 40px; white-space: normal; }
+    #selectPickerModal { z-index: 2100; }
+    #selectPickerModal .select-picker-modal { width: min(480px, 100%); height: min(520px, calc(100vh - 28px)); height: min(520px, calc(100dvh - 28px)); }
+    .select-picker-modal .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 0 0 auto; margin-bottom: 12px; }
+    .select-picker-modal .modal-head h3 { margin: 0; overflow-wrap: anywhere; }
+    .select-picker-modal .modal-head button { flex: 0 0 36px; height: 36px; padding: 4px; font-size: 20px; }
+    .select-picker-modal .modal-body { flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
+    #selectPickerSearch[hidden] { display: none; }
+    .select-picker-options { display: grid; gap: 6px; margin-top: 12px; }
+    #selectPickerOptions button.secondary { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; font-weight: 500; text-align: left; white-space: normal; overflow-wrap: anywhere; background: #fff !important; color: var(--text) !important; border-color: var(--line) !important; box-shadow: none !important; }
+    #selectPickerOptions button.secondary[aria-pressed="true"] { border-color: #2563eb !important; color: #2563eb !important; }
+    .select-picker-options button:disabled { opacity: .45; }
+    .select-picker-group { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+    body.authed select:not([multiple]) { appearance: none; -webkit-appearance: none; -webkit-tap-highlight-color: transparent; padding-right: 32px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
     .preset-manager-views { margin-top: 0; }
     .preset-manager-view[hidden] { display: none !important; }
     .channel-pane { display: none; }
@@ -587,7 +611,17 @@
     .studio-chiprow { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
     .preset-panel { display:none; margin-top:8px; border:1px solid var(--line); border-radius:var(--radius-md); background:#fff; max-height:260px; overflow:auto; padding:8px; }
     .preset-panel.open { display:flex; flex-wrap:wrap; gap:8px; }
-    .catalog-picker-panel { margin:0; border:0; padding:0; max-height:none; overflow:visible; }
+    .catalog-picker-panel { margin:0; border:0; padding:0; max-height:none; overflow:hidden; }
+    .catalog-picker-panel.open { height: 100%; min-height: 0; flex-direction: column; flex-wrap: nowrap; gap: 12px; }
+    #catalogPickerModal > .modal { width: min(900px, 100%); height: min(680px, calc(100vh - 28px)); height: min(680px, calc(100dvh - 28px)); }
+    #catalogPickerModal .modal > .between { flex: 0 0 auto; }
+    #catalogPickerModal .modal-body { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+    .catalog-picker-controls { display: grid; gap: 12px; flex: 0 0 auto; min-width: 0; }
+    .catalog-picker-controls > label { display: grid; gap: 4px; margin: 0; }
+    .catalog-picker-controls select { width: 100%; min-width: 0; }
+    .catalog-picker-items { display: flex; flex-wrap: wrap; align-content: flex-start; align-items: flex-start; gap: 8px; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 2px; }
+    .catalog-picker-items > .preset-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    .catalog-picker-panel > .catalog-pager { flex: 0 0 auto; flex-wrap: wrap; margin: 0; padding-top: 8px; border-top: 1px solid var(--line); }
     .catalog-picker-panel .studio-node-search { margin:0; width:100%; }
     .selfie-identity-thumb .media-zoom-shell { height:100%; }
     .preset-group-heading { flex: 0 0 100%; width:100%; margin:5px 0 0; padding:5px 2px 2px; color:var(--muted); font-size:11px; font-weight:700; }
@@ -995,6 +1029,7 @@
     nav.page-nav button[data-tab="studio"]::before { content: "✦"; }
     nav.page-nav button[data-tab="presets"]::before { content: "▤"; }
     nav.page-nav button[data-tab="test"]::before { content: "◎"; }
+    nav.page-nav button[data-tab="configuration"]::before { content: "⚙"; }
     nav.page-nav button[data-tab="image"]::before { content: "▧"; }
     nav.page-nav button[data-tab="selfie"]::before { content: "◉"; }
     nav.page-nav button[data-tab="audit"]::before { content: "✓"; }
@@ -1160,6 +1195,19 @@
       color: #3730a3 !important;
       box-shadow: 0 3px 10px rgba(89, 100, 242, .12) !important;
     }
+    body.authed .tabs-inline > button.secondary:not(.active),
+    body.authed .tabs-inline > button.secondary:not(.active):hover {
+      background: #fff !important; border-color: var(--line-strong) !important;
+      color: var(--text) !important; box-shadow: none !important;
+    }
+    body.authed .tabs-inline > button.secondary.active,
+    body.authed .tabs-inline > button.secondary.active:hover {
+      background: #fff !important; border-color: #2563eb !important;
+      color: #2563eb !important; box-shadow: none !important;
+    }
+    body.authed .tabs-inline > button.secondary:focus-visible {
+      outline: 2px solid #2563eb; outline-offset: 2px;
+    }
     body.authed #pageNav button {
       position: relative; isolation: isolate; z-index: 0; min-height: 44px;
       border: 1px solid #e1e3ed; border-radius: 8px; color: var(--text) !important;
@@ -1308,19 +1356,12 @@
     </div>
     <nav id="pageNav" class="page-nav" aria-label="功能分区">
       <button data-tab="base" class="active" type="button" aria-current="page">工作台</button>
-      <button data-tab="channels" type="button">模型渠道</button>
-      <button data-tab="groups" type="button">群聊配置</button>
-      <button data-tab="proxies" type="button">代理设置</button>
+      <button data-tab="test" type="button">快速试画</button>
       <button data-tab="monitor" type="button">生成记录</button>
       <button data-tab="assets" type="button">资产库</button>
       <button data-tab="studio" type="button">无限画布</button>
       <button data-tab="presets" type="button">预设管理</button>
-      <button data-tab="test" type="button">快速试画</button>
-      <button data-tab="image" type="button">出图设置</button>
-      <button data-tab="selfie" type="button">形象参考</button>
-      <button data-tab="audit" type="button">辅助功能</button>
-      <button data-tab="raw" type="button">高级配置</button>
-      <button data-tab="backup" type="button">备份管理</button>
+      <button data-tab="configuration" type="button">配置管理</button>
     </nav>
     <div class="topline">
       <button id="reloadAll" class="secondary">刷新全部</button>
@@ -1333,6 +1374,20 @@
   </button>
   <main class="app-shell">
     <button id="bentoMobileMenu" class="bento-mobile-menu" type="button" aria-controls="dashboardSidebar" aria-expanded="false" style="display:none;margin:0 0 16px;background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:var(--shadow-soft)">☰　Selfie Image</button>
+
+    <div id="configurationHeader" class="configuration-header" hidden>
+      <h2 id="configurationTitle" class="configuration-heading"><button id="configurationToggle" class="secondary configuration-toggle" type="button" aria-controls="configurationNav" aria-expanded="true" aria-label="收起配置导航" title="收起配置导航"><span>配置管理</span><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"></path></svg></button></h2>
+      <nav id="configurationNav" class="tabs-inline configuration-nav" role="tablist" aria-labelledby="configurationTitle">
+        <button id="configurationChannels" class="secondary" type="button" role="tab" data-config-tab="channels" aria-controls="channels" aria-selected="false" tabindex="-1">模型渠道</button>
+        <button id="configurationGroups" class="secondary" type="button" role="tab" data-config-tab="groups" aria-controls="groups" aria-selected="false" tabindex="-1">群聊配置</button>
+        <button id="configurationProxies" class="secondary" type="button" role="tab" data-config-tab="proxies" aria-controls="proxies" aria-selected="false" tabindex="-1">代理设置</button>
+        <button id="configurationImage" class="secondary" type="button" role="tab" data-config-tab="image" aria-controls="image" aria-selected="false" tabindex="-1">出图设置</button>
+        <button id="configurationSelfie" class="secondary" type="button" role="tab" data-config-tab="selfie" aria-controls="selfie" aria-selected="false" tabindex="-1">形象参考</button>
+        <button id="configurationAudit" class="secondary" type="button" role="tab" data-config-tab="audit" aria-controls="audit" aria-selected="false" tabindex="-1">辅助功能</button>
+        <button id="configurationRaw" class="secondary" type="button" role="tab" data-config-tab="raw" aria-controls="raw" aria-selected="false" tabindex="-1">高级配置</button>
+        <button id="configurationBackup" class="secondary" type="button" role="tab" data-config-tab="backup" aria-controls="backup" aria-selected="false" tabindex="-1">备份管理</button>
+      </nav>
+    </div>
 
     <section id="base" class="active floating-action-section">
       <div class="floating-actions" aria-label="工作台操作">
@@ -1373,7 +1428,7 @@
       </div>
     </section>
 
-    <section id="channels">
+    <section id="channels" role="tabpanel" aria-labelledby="configurationChannels">
       <div class="between">
         <h2>渠道</h2>
         <div class="floating-actions" aria-label="添加渠道">
@@ -1382,8 +1437,8 @@
         </div>
       </div>
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
-        <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
-        <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">辅助渠道</button>
+        <button id="channelTabImage" class="secondary active" type="button" role="tab" aria-controls="channelPaneImage" aria-selected="true" onclick="switchChannelPane('image')">生图渠道</button>
+        <button id="channelTabAudit" class="secondary" type="button" role="tab" aria-controls="channelPaneAudit" aria-selected="false" tabindex="-1" onclick="switchChannelPane('audit')">辅助渠道</button>
       </div>
       <div id="channelPaneImage" class="channel-pane active"><div id="channelList"></div></div>
       <div id="channelPaneAudit" class="channel-pane"><div id="auditChannelList"></div></div>
@@ -1398,20 +1453,10 @@
         <textarea id="priorityList" style="display:none"></textarea>
         <div id="priorityRows" class="model-list"></div>
       </div>
-      <div class="priority-block" data-priority-kind="audit">
-        <h3>辅助模型优先级</h3>
-        <p class="muted">只控制辅助渠道；文字审核、成品审核、图转文和翻译按此顺序寻找可用模型。</p>
-        <div class="grid">
-          <div class="priority-model-picker"><div><label>渠道选择</label><select id="auditPriorityChannel"></select></div><div><label>模型选择</label><select id="auditPriorityPicker"></select></div></div>
-          <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority('audit')">加入</button><button class="secondary" type="button" onclick="clearPriority('audit')">清空</button></div></div>
-        </div>
-        <textarea id="auditPriorityList" style="display:none"></textarea>
-        <div id="auditPriorityRows" class="model-list"></div>
-      </div>
       <div id="channelStatus" class="status" style="margin-top:12px"></div>
     </section>
 
-    <section id="groups" class="floating-action-section">
+    <section id="groups" class="floating-action-section" role="tabpanel" aria-labelledby="configurationGroups">
       <h2>群聊配置</h2>
       <div class="floating-actions" aria-label="群聊配置操作">
         <button id="refreshGroupsBtn" class="secondary" type="button" data-tooltip="刷新群聊和名单" aria-label="刷新群聊和名单" title="刷新群聊和名单"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
@@ -1445,7 +1490,7 @@
     </section>
 
 
-    <section id="proxies" class="floating-action-section">
+    <section id="proxies" class="floating-action-section" role="tabpanel" aria-labelledby="configurationProxies">
       <div class="between">
         <h2>代理</h2>
       </div>
@@ -1469,7 +1514,7 @@
         <div><label for="monitorMedia">记录类型</label><select id="monitorMedia"><option value="">全部</option><option value="image">图片</option></select></div>
         <div><label for="monitorModel">模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
         <div><label for="monitorSuccess">状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
-        <div><label for="monitorMetricsWindow">指标窗口</label><select id="monitorMetricsWindow"><option value="all">全部保留记录</option><option value="1h">最近 1 小时</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></div>
+        <div><label for="monitorMetricsWindow">指标窗口</label><select id="monitorMetricsWindow"><option value="all">全部累计统计</option><option value="1h">最近 1 小时</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></div>
         <div class="filter-full"><label for="monitorAsset">资产标记</label><select id="monitorAsset"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
         <div class="filter-full"><label for="monitorSource">来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="来源关键词"><datalist id="monitorSourceList"></datalist></div>
         <div class="filter-full"><label for="monitorTag">标签</label><input id="monitorTag" placeholder="输入标签"></div>
@@ -1479,7 +1524,7 @@
       <div class="metrics-launcher-header">
         <strong>运行概览</strong>
         <div class="metrics-launcher-actions">
-          <span id="monitorMetricsWindowLabel" class="muted">统计范围：全部保留记录</span>
+          <span id="monitorMetricsWindowLabel" class="muted">统计范围：全部累计统计</span>
           <button id="openMetricAlertSettings" class="secondary mini" type="button" aria-haspopup="dialog" aria-controls="metricAlertSettingsModal">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg>
             设置阈值
@@ -1697,9 +1742,9 @@
         </div>
       </div>
       <div class="tabs-inline" style="margin-top:12px" role="tablist" aria-label="预设类型">
-        <button id="presetKindImage" class="active" type="button" role="tab">生图预设</button>
-        <button id="presetKindCos" type="button" role="tab">COS 池</button>
-        <button id="presetKindNai" type="button" role="tab">NAI 画师串</button>
+        <button id="presetKindImage" class="secondary active" type="button" role="tab" aria-selected="true">生图预设</button>
+        <button id="presetKindCos" class="secondary" type="button" role="tab" aria-selected="false" tabindex="-1">COS 池</button>
+        <button id="presetKindNai" class="secondary" type="button" role="tab" aria-selected="false" tabindex="-1">NAI 画师串</button>
       </div>
       <div class="between" style="margin-top:12px">
         <span id="presetManagerStatus" class="status">正在读取预设…</span>
@@ -1782,7 +1827,7 @@
       <div id="testStatus" class="status"></div>
     </section>
 
-    <section id="image">
+    <section id="image" role="tabpanel" aria-labelledby="configurationImage">
       <h2>出图习惯</h2>
       <div class="dashboard-filter-grid">
         <div><label>默认比例</label><select id="defaultAspect"></select></div>
@@ -1815,15 +1860,15 @@
       <div id="imageStatus" class="status"></div>
     </section>
 
-    <section id="selfie">
+    <section id="selfie" role="tabpanel" aria-labelledby="configurationSelfie">
       <div class="between">
         <h2>形象</h2>
         <button class="secondary" id="refreshSelfieBtn" type="button">刷新</button>
       </div>
       <div id="selfieViewTabs" class="tabs-inline" role="tablist" aria-label="形象管理分类">
-        <button id="selfieViewTabAppearance" class="active" type="button" role="tab" aria-selected="true" aria-controls="selfieViewAppearance" data-selfie-view="appearance">形象</button>
-        <button id="selfieViewTabSchedule" type="button" role="tab" aria-selected="false" aria-controls="selfieViewSchedule" data-selfie-view="schedule" tabindex="-1">日程</button>
-        <button id="selfieViewTabWardrobe" type="button" role="tab" aria-selected="false" aria-controls="selfieViewWardrobe" data-selfie-view="wardrobe" tabindex="-1">衣橱</button>
+        <button id="selfieViewTabAppearance" class="secondary active" type="button" role="tab" aria-selected="true" aria-controls="selfieViewAppearance" data-selfie-view="appearance">形象</button>
+        <button id="selfieViewTabSchedule" class="secondary" type="button" role="tab" aria-selected="false" aria-controls="selfieViewSchedule" data-selfie-view="schedule" tabindex="-1">日程</button>
+        <button id="selfieViewTabWardrobe" class="secondary" type="button" role="tab" aria-selected="false" aria-controls="selfieViewWardrobe" data-selfie-view="wardrobe" tabindex="-1">衣橱</button>
       </div>
       <div id="selfieViewAppearance" class="selfie-view-panel" role="tabpanel" aria-labelledby="selfieViewTabAppearance">
         <div class="grid">
@@ -1889,12 +1934,12 @@
       </div>
     </section>
 
-    <section id="audit">
+    <section id="audit" role="tabpanel" aria-labelledby="configurationAudit">
       <h2>辅助功能</h2>
       <div id="auditViewTabs" class="tabs-inline" role="tablist" aria-label="辅助功能分类">
-        <button id="auditViewTabReview" class="active" type="button" role="tab" aria-selected="true" aria-controls="auditViewReview" data-audit-view="review">审核</button>
-        <button id="auditViewTabRecognition" type="button" role="tab" aria-selected="false" aria-controls="auditViewRecognition" data-audit-view="recognition" tabindex="-1">识图</button>
-        <button id="auditViewTabTranslation" type="button" role="tab" aria-selected="false" aria-controls="auditViewTranslation" data-audit-view="translation" tabindex="-1">翻译</button>
+        <button id="auditViewTabReview" class="secondary active" type="button" role="tab" aria-selected="true" aria-controls="auditViewReview" data-audit-view="review">审核</button>
+        <button id="auditViewTabRecognition" class="secondary" type="button" role="tab" aria-selected="false" aria-controls="auditViewRecognition" data-audit-view="recognition" tabindex="-1">识图</button>
+        <button id="auditViewTabTranslation" class="secondary" type="button" role="tab" aria-selected="false" aria-controls="auditViewTranslation" data-audit-view="translation" tabindex="-1">翻译</button>
       </div>
       <div id="auditViewReview" class="selfie-view-panel" role="tabpanel" aria-labelledby="auditViewTabReview">
         <div class="grid">
@@ -1933,7 +1978,7 @@
       <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。识图和翻译模型均可独立选择；未选择时使用当前聊天 LLM 或辅助模型优先级。</div>
     </section>
 
-    <section id="backup" class="floating-action-section">
+    <section id="backup" class="floating-action-section" role="tabpanel" aria-labelledby="configurationBackup">
       <div class="between">
         <div><h2>备份管理</h2><p class="muted">备份最多保留 5 个。核心配置必须保留，其他数据按项目存储用途提供默认选择；衣橱不是必选项，也可在形象页单独导入导出。</p></div>
         <button class="secondary" type="button" onclick="navigateToTab('raw')">高级 JSON</button>
@@ -1950,7 +1995,7 @@
       <div id="backupList" class="daily-schedule" aria-live="polite"><div class="muted">正在读取备份列表…</div></div>
     </section>
 
-    <section id="raw" class="floating-action-section">
+    <section id="raw" class="floating-action-section" role="tabpanel" aria-labelledby="configurationRaw">
       <div class="between"><h2>高级 · 配置原文</h2><button class="secondary" type="button" onclick="navigateToTab('backup')">备份管理</button></div>
       <p class="muted">这里改的是插件自己的配置，不包含 AstrBot 启动用的网页地址和口令。</p>
       <textarea id="configText" style="min-height:360px"></textarea>
@@ -2021,11 +2066,13 @@
     <div class="modal">
       <div class="between">
         <h2 id="cacheModelsTitle">缓存模型</h2>
-        <button class="secondary" type="button" onclick="closeCacheModels()">关闭</button>
+        <button id="cacheModelsClose" class="secondary" type="button" onclick="closeCacheModels()">关闭</button>
       </div>
       <div class="modal-body">
-        <label for="cacheSearch">搜索模型</label><input id="cacheSearch" type="search" placeholder="输入模型名筛选">
+        <div id="cacheModelsSearch"><label for="cacheSearch">搜索模型</label><input id="cacheSearch" type="search" placeholder="输入模型名筛选"></div>
+        <div id="cacheModelsSummary" class="muted" aria-live="polite"></div>
         <div id="cacheModels" class="model-list"></div>
+        <div id="cacheModelsPager" class="catalog-pager"></div>
       </div>
     </div>
   </div>
@@ -2053,6 +2100,12 @@
   </div>
   <div id="referenceGalleryModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="referenceGalleryTitle">
     <div class="modal"><div class="between"><h2 id="referenceGalleryTitle">选择参考图</h2><button class="secondary" type="button" onclick="closeReferenceGallery()">关闭</button></div><div id="referenceGalleryBody" class="modal-body"></div></div>
+  </div>
+  <div id="selectPickerModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="selectPickerTitle">
+    <div class="modal select-picker-modal">
+      <div class="modal-head"><h3 id="selectPickerTitle">选择选项</h3><button id="selectPickerClose" class="secondary icon-btn" type="button" aria-label="关闭选择窗口" title="关闭"><span aria-hidden="true">×</span></button></div>
+      <div class="modal-body"><input id="selectPickerSearch" type="search" placeholder="搜索选项" aria-label="搜索选项"><div id="selectPickerOptions" class="select-picker-options" role="group" aria-labelledby="selectPickerTitle"></div></div>
+    </div>
   </div>
   <div id="catalogPickerModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="catalogPickerTitle">
     <div class="modal"><div class="between"><h2 id="catalogPickerTitle">选择提示词预设</h2><button id="catalogPickerClose" class="secondary" type="button" onclick="closeCatalogPicker()">关闭</button></div><div class="modal-body"><div id="catalogPresetPanel" class="preset-panel catalog-picker-panel"></div><div id="catalogCosPanel" class="preset-panel catalog-picker-panel"></div></div></div>
@@ -2870,9 +2923,7 @@
     const PICKER_CATALOG_CACHE_TTL_MS = 30000;
     const PICKER_PAGE_SIZE = 30;
     const PAGE_PREFETCH_AHEAD = 3;
-    const PICKER_PAGE_CACHE = new Map();
     const MANAGED_PAGE_CACHE = new Map();
-    const PICKER_PAGE_REQUEST_GENERATIONS = new Map();
     const MANAGED_PAGE_REQUEST_GENERATIONS = new Map();
     let PICKER_CATALOG_CACHE_VERSION = 0;
     const PICKER_PANEL_STATES = new Map();
@@ -2907,7 +2958,7 @@
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
     let SELFIE_REFERENCE_VERSION = 0;
-    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", galleryRequestSeq: 0, nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
+    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", running: false, galleryTargetSlotId: "", galleryRequestSeq: 0, nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, sessionsVersion: 0, loadSeq: 0, viewportFittedForSession: false };
     const PICKER_CACHE = {
       tags: {data: [], loadedAt: 0, request: null, version: 0},
     };
@@ -3023,7 +3074,6 @@
         RECORD_LOAD_SEQ += 1;
         ASSET_LOAD_SEQ += 1;
         ASSET_TAG_LOAD_SEQ += 1;
-        PICKER_PAGE_REQUEST_GENERATIONS.clear();
         MANAGED_PAGE_REQUEST_GENERATIONS.clear();
         PICKER_CACHE.tags.version += 1;
         GALLERY_PICKER_CACHE.version += 1;
@@ -3033,7 +3083,6 @@
         }
         RECORD_PAGE_REQUESTS.clear();
         ASSET_PAGE_REQUESTS.clear();
-        PICKER_PAGE_CACHE.clear();
         MANAGED_PAGE_CACHE.clear();
         RECORD_PAGE_CACHE.clear();
         ASSET_PAGE_CACHE.clear();
@@ -3046,9 +3095,6 @@
       const persistedIndex = pruneDashboardPersistCache();
       const persistedWindowName = pruneDashboardWindowNameCache();
       const listOptions = {index: persistedIndex, windowCache: persistedWindowName};
-      for (const entry of listDashboardPersistCache('picker-page', listOptions)) {
-        if (entry.key) PICKER_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
-      }
       for (const entry of listDashboardPersistCache('managed-page', listOptions)) {
         if (entry.key) MANAGED_PAGE_CACHE.set(entry.key, {data: entry.data, loadedAt: Date.now(), request: null});
       }
@@ -3185,7 +3231,7 @@
       const method = String(options.method || 'GET').toUpperCase();
       const endpoint = bridgeEndpoint(path);
       const trace = traceRequest({
-        page: document.querySelector('nav.page-nav button.active')?.dataset.tab || 'base',
+        page: document.querySelector('main.app-shell > section.active')?.id || 'base',
         requestKey: `${method} ${endpoint}`,
         sessionId: STUDIO?.current?.id || '',
         startedAt: Date.now(), status: 'pending'
@@ -3329,7 +3375,12 @@
       for (const key of Object.keys(map)) {
         const tab = $(map[key]);
         const pane = $(panes[key]);
-        if (tab) tab.classList.toggle('active', ACTIVE_CHANNEL_PANE === key);
+        if (tab) {
+          const active = ACTIVE_CHANNEL_PANE === key;
+          tab.classList.toggle('active', active);
+          tab.setAttribute('aria-selected', String(active));
+          tab.tabIndex = active ? 0 : -1;
+        }
         if (pane) pane.classList.toggle('active', ACTIVE_CHANNEL_PANE === key);
       }
       document.querySelectorAll('[data-priority-kind]').forEach(block => {
@@ -3370,7 +3421,8 @@ Source prompt:
       CONFIG.image_channels ??= [];
       CONFIG.audit_channels ??= [];
       CONFIG.enabled_image_model_priority ??= [];
-      CONFIG.enabled_audit_model_priority ??= [];
+      delete CONFIG.enabled_audit_model_priority;
+      delete CONFIG.enabledAuditModelPriority;
       CONFIG.image_model_call_mode ??= CONFIG.random_image_model ? 'random' : 'sequence';
       delete CONFIG.random_image_model;
       const img = CONFIG.image;
@@ -3490,7 +3542,6 @@ Source prompt:
         if ($('imagePromptEnTemplate')) $('imagePromptEnTemplate').value = String(img.image_prompt_en_template || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
 
         $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
-        $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
         if ($('imageModelCallMode')) $('imageModelCallMode').value = ['sequence','random','fixed'].includes(CONFIG.image_model_call_mode) ? CONFIG.image_model_call_mode : 'sequence';
         renderAllChannelLists();
         refreshModelSelectors();
@@ -3549,12 +3600,12 @@ Source prompt:
        CONFIG.image.prompt_en_model = ($('promptEnModel') && $('promptEnModel').value) || '';
        CONFIG.image.image_prompt_en_template = String(($('imagePromptEnTemplate') && $('imagePromptEnTemplate').value) || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
       collectChannels();
-      for (const kind of ['image','audit']) prunePriorityList(kind);
+      prunePriorityList('image');
       CONFIG.enabled_image_model_priority = textList('priorityList');
-      CONFIG.enabled_audit_model_priority = textList('auditPriorityList');
       CONFIG.image_model_call_mode = ($('imageModelCallMode') && $('imageModelCallMode').value) || 'sequence';
       return CONFIG;
     }
+    let CACHE_MODELS_PAGE = 1;
     function uniq(values) {
       const out = [], seen = new Set();
       for (const value of values || []) {
@@ -4172,19 +4223,38 @@ Source prompt:
         </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
     }
     function renderCacheModels(ch = currentModalChannel()) {
+      const cache = ch.models_cache || [];
+      $('cacheModelsSearch').hidden = cache.length <= SELECT_PICKER_SEARCH_THRESHOLD;
+      if ($('cacheModelsSearch').hidden) $('cacheSearch').value = '';
       const search = $('cacheSearch').value.trim().toLowerCase();
-      const items = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
-      $('cacheModels').innerHTML = items.map(item => {
-        const active = (ch.enabled_models || []).includes(item);
+      const enabled = new Set(ch.enabled_models || []);
+      const items = cache.filter(item => !search || item.toLowerCase().includes(search))
+        .sort((a, b) => Number(enabled.has(b)) - Number(enabled.has(a)));
+      const pages = Math.max(1, Math.ceil(items.length / PICKER_PAGE_SIZE));
+      CACHE_MODELS_PAGE = Math.max(1, Math.min(CACHE_MODELS_PAGE, pages));
+      const offset = (CACHE_MODELS_PAGE - 1) * PICKER_PAGE_SIZE;
+      const rows = items.slice(offset, offset + PICKER_PAGE_SIZE);
+      $('cacheModelsSummary').textContent = `第 ${CACHE_MODELS_PAGE}/${pages} 页 · ${search ? `匹配 ${items.length} / ` : '共 '}${cache.length} 个模型`;
+      $('cacheModels').innerHTML = rows.map(item => {
+        const active = enabled.has(item);
         return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="secondary mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
       }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
+      $('cacheModelsPager').innerHTML = pages > 1 ? `<span class="muted">${offset + 1}-${offset + rows.length} / ${items.length}</span><button class="secondary mini" type="button" data-cache-page="-1" ${CACHE_MODELS_PAGE === 1 ? 'disabled' : ''}>上一页</button><button class="secondary mini" type="button" data-cache-page="1" ${CACHE_MODELS_PAGE === pages ? 'disabled' : ''}>下一页</button>` : '';
+      $('cacheModelsPager').querySelectorAll('[data-cache-page]').forEach(button => button.onclick = () => {
+        CACHE_MODELS_PAGE += Number(button.dataset.cachePage);
+        renderCacheModels();
+        $('cacheModels').scrollTop = 0;
+      });
     }
     function openCacheModels() {
       if (!isChannelModalOpen()) return;
+      CACHE_MODELS_PAGE = 1;
+      $('cacheSearch').value = '';
       renderCacheModels();
       $('cacheModelsModal').classList.add('show');
       $('channelModal').inert = true;
-      $('cacheSearch').focus();
+      $('cacheModels').scrollTop = 0;
+      $('cacheModelsClose').focus({preventScroll: true});
     }
     function closeCacheModels() {
       const wasOpen = $('cacheModelsModal').classList.contains('show');
@@ -4427,7 +4497,6 @@ Source prompt:
         patchDomains: [
           kind === 'audit' ? 'audit_channels' : 'image_channels',
           'enabled_image_model_priority',
-          'enabled_audit_model_priority',
           'image_model_call_mode',
         ],
       });
@@ -4504,7 +4573,6 @@ Source prompt:
         setSelectOptions(id, values, values.includes(previous) ? previous : fallback);
       };
       prunePriorityList('image', labels);
-      prunePriorityList('audit', audits);
       const auditLabels = [''].concat(audits);
       preserveSelection('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       preserveSelection('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
@@ -4525,11 +4593,10 @@ Source prompt:
     }
     const PRIORITY_UI = {
       image: {channel:'priorityChannel', picker:'priorityPicker', list:'priorityList', rows:'priorityRows'},
-      audit: {channel:'auditPriorityChannel', picker:'auditPriorityPicker', list:'auditPriorityList', rows:'auditPriorityRows'},
     };
     function priorityUi(kind = 'image') { return PRIORITY_UI[kind] || PRIORITY_UI.image; }
     function priorityLabels(kind) {
-      return kind === 'audit' ? auditModelLabels() : allModelLabels();
+      return allModelLabels();
     }
     function priorityEntryMatchesLabel(entry, label) {
       const item = String(entry || '').trim();
@@ -4633,10 +4700,8 @@ Source prompt:
         </div></div>`).join('') || `<div class="muted">未设置${kind === 'image' ? '生图' : '辅助'}优先级时按启用顺序尝试。</div>`;
     }
     function renderAllPriorityRows() {
-      for (const kind of ['image','audit']) {
-        prunePriorityList(kind);
-        renderPriorityRows(kind);
-      }
+      prunePriorityList('image');
+      renderPriorityRows('image');
     }
 
     let QQ_GROUP_ROWS = [];
@@ -5060,7 +5125,7 @@ Source prompt:
           // Quiet autosave for form and channel-list changes
           quiet: reason === 'form' || reason === 'channel-list',
           patchDomains: reason === 'form'
-            ? ['permission', 'image', 'enabled_image_model_priority', 'enabled_audit_model_priority', 'image_model_call_mode']
+            ? ['permission', 'image', 'enabled_image_model_priority', 'image_model_call_mode']
             : null,
         });
       }, options.delay != null ? options.delay : (reason === 'form' ? 900 : 650));
@@ -5454,7 +5519,6 @@ Source prompt:
         image_channels: copy(CONFIG.image_channels),
         audit_channels: copy(CONFIG.audit_channels),
         enabled_image_model_priority: $('priorityList') ? textList('priorityList') : copy(CONFIG.enabled_image_model_priority),
-        enabled_audit_model_priority: $('auditPriorityList') ? textList('auditPriorityList') : copy(CONFIG.enabled_audit_model_priority),
         image_model_call_mode: ($('imageModelCallMode') && $('imageModelCallMode').value) || CONFIG.image_model_call_mode || 'sequence',
       };
     }
@@ -5792,7 +5856,9 @@ Source prompt:
         if (requestSeq !== METRICS_LOAD_SEQ || windowKey !== String($('monitorMetricsWindow')?.value || 'all')) return;
         const d = res.data || {};
         syncMetricAlertForm();
-        const windowLabel = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部保留记录';
+        const cumulative = d.statistics_scope === 'cumulative';
+        const selectedWindow = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部累计统计';
+        const windowLabel = cumulative ? selectedWindow : `${selectedWindow}（当前保留记录）`;
         const statusLabels = {succeeded:'成功', failed:'失败', partial_success:'部分成功', cancelled:'已取消', delivery_failed:'发送失败', queued:'排队中', running:'进行中', expired:'已过期'};
         const errorLabels = {auth:'鉴权失败', not_found:'接口或模型不存在', safety:'审核拦截', quota:'额度不足', param:'参数不兼容', timeout:'超时', network:'网络错误', server:'上游服务错误', rate_limit:'请求限流', unknown:'无法分类', fatal:'不可重试'};
         const renderCountChips = (entries, labels = {}) => {
@@ -5816,13 +5882,13 @@ Source prompt:
         const recommendations = Array.isArray(d.recommendations) ? d.recommendations : [];
         const metric = (label, value, note = '') => `<div class="metrics-kpi"><span class="metrics-kpi-label">${label}</span><strong class="metrics-kpi-value">${value}</strong>${note ? `<span class="metrics-kpi-note">${note}</span>` : ''}</div>`;
         const percent = value => `${(Number(value || 0) * 100).toFixed(1)}%`;
-        const recordCount = escapeHtml(String(d.retained_records ?? 0));
-        const totalRecordCount = escapeHtml(String(d.total_retained_records ?? d.retained_records ?? 0));
+        const recordCount = escapeHtml(String(d.records ?? d.retained_records ?? 0));
+        const totalRecordCount = escapeHtml(String(d.total_records ?? d.total_retained_records ?? d.retained_records ?? 0));
         const categories = [
           {
             key: 'output', title: '产出统计', summary: `${escapeHtml(String(d.requested_images ?? 0))} 张请求`,
             html: `<div class="metrics-section"><h3 class="metrics-section-title">窗口与产出</h3><div class="metrics-kpi-grid">
-              ${metric('纳入记录', `${recordCount} / ${totalRecordCount}`, '当前窗口 / 全部保留')}
+              ${metric('统计记录', `${recordCount} / ${totalRecordCount}`, cumulative ? '当前窗口 / 累计记录' : '当前窗口 / 保留记录')}
               ${metric('图片请求', escapeHtml(String(d.requested_images ?? 0)), '总请求数')}
               ${metric('成功图片', escapeHtml(String(d.succeeded_images ?? 0)), '已生成')}
               ${metric('失败图片', escapeHtml(String(d.failed_images ?? 0)), '未成功生成')}
@@ -5882,7 +5948,7 @@ Source prompt:
           },
         ];
         METRICS_CONTENTS = Object.fromEntries(categories.map(category => [category.key, category]));
-        $('monitorMetricsWindowLabel').textContent = `统计范围：${windowLabel}`;
+        $('monitorMetricsWindowLabel').textContent = `统计范围：${windowLabel}${cumulative && d.statistics_started_at ? ` · 起始 ${d.statistics_started_at}` : ''}`;
         root.classList.remove('metrics-error');
         root.innerHTML = categories.map(category => `<button class="secondary metrics-launcher" type="button" data-metrics-category="${category.key}"><strong>${category.title}</strong><span>${category.summary}</span></button>`).join('');
         if (ACTIVE_METRICS_CATEGORY && $('metricsModal')?.classList.contains('show')) renderMetricsCategory(ACTIVE_METRICS_CATEGORY);
@@ -6809,7 +6875,7 @@ Source prompt:
       const averageLabel = sampleCount ? `${avg.toFixed(2)}s` : '暂无样本';
       $('monitorStats').innerHTML = [
         ['筛选', String(filteredCount)],
-        ['总计', String(totalCount)],
+        ['保留记录', String(totalCount)],
         ['统计范围', sampleCount ? `${scopeLabel}（${sampleCount} 条）` : '暂无样本'],
         ['成功', successLabel],
         ['失败', failureLabel],
@@ -8878,10 +8944,6 @@ Source prompt:
       setSelectOptions('testAspect', ASPECTS, CONFIG.image?.default_aspect_ratio || '9:16');
       refreshModelSelectors();
       clearTestData(false);
-      if (window.__TEST_PRESET_OPEN) {
-        const state = catalogPickerState('testPresetPanel');
-        void loadCatalogPickerPage('testPresetPanel', 'image', state.page);
-      }
     }
     function setTestBusy(busy) {
       $('testImageBtn').disabled = !!busy;
@@ -10000,7 +10062,7 @@ Source prompt:
           if ($('logoutBtn')) $('logoutBtn').style.display = 'none';
         }
         if ($('loginStatus')) $('loginStatus').textContent = '';
-        const activeTab = document.querySelector('nav.page-nav button.active')?.dataset.tab;
+        const activeTab = document.querySelector('main.app-shell > section.active')?.id;
         if (activeTab && activeTab !== 'base') navigateToTab(activeTab, {force:true});
         const health = await checkHealth();
         // The base tab only needs config and health. Heavy data pages load when
@@ -10792,12 +10854,6 @@ Source prompt:
         clearEntry(PICKER_CACHE.tags);
         clearDashboardPersistNamespace('asset-tags');
       }
-      for (const key of [...PICKER_PAGE_CACHE.keys()]) {
-        if (!normalized || key.startsWith(`${normalized}:`)) {
-          PICKER_PAGE_CACHE.delete(key);
-          removeDashboardPersistCache('picker-page', key);
-        }
-      }
       for (const key of [...MANAGED_PAGE_CACHE.keys()]) {
         if (!normalized || key.startsWith(`${normalized}:`)) {
           MANAGED_PAGE_CACHE.delete(key);
@@ -10828,108 +10884,23 @@ Source prompt:
         PRESET_MANAGER_REVISIONS.cos = revision;
       }
     }
-    function syncPresetToggleButton(btnId, open) {
-      const btn = $(btnId);
-      if (!btn) return;
-      btn.textContent = open ? '收回' : '预设';
-    }
-    function syncCosToggleButton(btnId, open) {
-      const btn = $(btnId);
-      if (!btn) return;
-      btn.textContent = open ? '收回' : 'COS池';
-    }
     function catalogPickerState(panelId) {
       if (!PICKER_PANEL_STATES.has(panelId)) {
         PICKER_PANEL_STATES.set(panelId, {
-          kind: '', items: [], total: 0, page: 1, query: '', loaded: false, autoLoadScheduled: false, error: '', seq: 0,
+          kind: '', items: [], total: 0, page: 1, query: '', filter: '', seriesOptions: [], loaded: false, autoLoadScheduled: false, error: '', seq: 0,
         });
       }
       return PICKER_PANEL_STATES.get(panelId);
     }
-    async function fetchCatalogPage(kind, query, page, force = false) {
-      await ensureDashboardPersistentCachesHydrated();
-      const offset = Math.max(0, (page - 1) * PICKER_PAGE_SIZE);
-      const normalizedQuery = String(query || '').trim();
-      const key = `${kind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
-      const requestGenerations = PICKER_PAGE_REQUEST_GENERATIONS;
-      let cached = PICKER_PAGE_CACHE.get(key);
-      if (force) {
-        requestGenerations.set(key, (requestGenerations.get(key) || 0) + 1);
-        PICKER_PAGE_CACHE.delete(key);
-        removeDashboardPersistCache('picker-page', key);
-        cached = null;
-      }
-      if (!force && (!cached?.data || Date.now() - cached.loadedAt >= PICKER_CATALOG_CACHE_TTL_MS)) {
-        const persisted = readDashboardPersistCacheEntry('picker-page', key);
-        if (persisted?.data) {
-          cached = {data: persisted.data, loadedAt: Date.now(), request: null};
-          PICKER_PAGE_CACHE.set(key, cached);
-        }
-      }
-      if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
-      if (cached?.request) return cached.request;
-      const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
-      const requestGeneration = requestGenerations.get(key) || 0;
-      const params = new URLSearchParams({limit: String(PICKER_PAGE_SIZE), offset: String(offset), search: normalizedQuery});
-      if (kind === 'image') params.set('kind', 'image');
-      const endpoint = kind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets?';
-      const request = (async () => {
-        const res = await catalogApi(endpoint + params.toString());
-        const payload = res.data || {};
-        if (payload.load_status && payload.load_status.ok === false) throw new Error(payload.load_status.error || '预设加载失败');
-        let items = Array.isArray(payload.items) ? payload.items : [];
-        let total = Number(payload.total ?? res.count ?? items.length);
-        if (Array.isArray(payload)) {
-          const filtered = payload.filter(item => !normalizedQuery || `${item.name || item.title || ''} ${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
-          total = filtered.length;
-          items = filtered.slice(offset, offset + PICKER_PAGE_SIZE);
-        } else if (kind === 'image' && !Array.isArray(payload.items)) {
-          const rows = mergePromptPresets(Array.isArray(payload.presets) ? payload.presets : []);
-          const filtered = rows.filter(item => !normalizedQuery || `${item.name || item.title || ''} ${item.prompt || ''} ${item.description || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
-          total = filtered.length;
-          items = filtered.slice(offset, offset + PICKER_PAGE_SIZE);
-        } else if (kind === 'cos' && !Array.isArray(payload.items)) {
-          const rows = flattenCosPickerPayload(payload);
-          const filtered = rows.filter(item => !normalizedQuery || `${item.title || ''} ${item.id || ''} ${item.prompt || ''} ${(item.tags || []).join(' ')}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
-          total = filtered.length;
-          items = filtered.slice(offset, offset + PICKER_PAGE_SIZE);
-        }
-        if (kind === 'image') items = mergePromptPresets(items);
-        const data = {items, total, offset, limit: PICKER_PAGE_SIZE, revision: Number(payload.revision || 0)};
-        if (kind === 'cos') updateCosPoolRevision(data);
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && (requestGenerations.get(key) || 0) === requestGeneration) {
-          PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
-          writeDashboardPersistCache('picker-page', key, data);
-          while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
-        }
-        return data;
-      })().catch(error => {
-        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION && (requestGenerations.get(key) || 0) === requestGeneration) {
-          PICKER_PAGE_CACHE.delete(key);
-          removeDashboardPersistCache('picker-page', key);
-        }
-        throw error;
-      });
-      PICKER_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});
-      return request;
-    }
-    function prefetchCatalogPages(kind, query, page, total) {
-      const totalPages = Math.max(1, Math.ceil(Number(total || 0) / PICKER_PAGE_SIZE));
-      const targets = Array.from({length: PAGE_PREFETCH_AHEAD}, (_, index) => page + index + 1)
-        .filter(target => target <= totalPages);
-      targets.forEach(target => {
-        void fetchCatalogPage(kind, query, target).catch(() => {});
-      });
-    }
-    async function fetchManagedCatalogPage(kind, searchQuery, page, force = false) {
+    async function fetchManagedCatalogPage(kind, searchQuery, page, force = false, filters = PRESET_MANAGER_FILTERS) {
       await ensureDashboardPersistentCachesHydrated();
       const normalizedQuery = String(searchQuery || '').trim();
       const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
-      const normalizedSeries = normalizedKind === 'cos' ? String(PRESET_MANAGER_FILTERS.cos || '').trim() : '';
-      const normalizedPresetFilter = normalizedKind === 'image' ? String(PRESET_MANAGER_FILTERS.image || '').trim() : '';
+      const normalizedSeries = normalizedKind === 'cos' ? String(filters.cos || '').trim() : '';
+      const normalizedPresetFilter = normalizedKind === 'image' ? String(filters.image || '').trim() : '';
       const query = normalizedQuery;
       const key = normalizedKind === 'image'
-        ? `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${normalizedPresetFilter}:${page}`
+        ? `${normalizedKind}:v2:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${normalizedPresetFilter}:${page}`
         : `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${normalizedSeries.toLocaleLowerCase()}:${page}`;
       const requestGenerations = MANAGED_PAGE_REQUEST_GENERATIONS;
       let cached = MANAGED_PAGE_CACHE.get(key);
@@ -11013,11 +10984,11 @@ Source prompt:
       MANAGED_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});
       return request;
     }
-    function prefetchManagedCatalogPages(kind, query, page, total) {
+    function prefetchManagedCatalogPages(kind, query, page, total, filters = PRESET_MANAGER_FILTERS) {
       const totalPages = Math.max(1, Math.ceil(Number(total || 0) / PICKER_PAGE_SIZE));
       Array.from({length: PAGE_PREFETCH_AHEAD}, (_, index) => page + index + 1)
         .filter(target => target <= totalPages)
-        .forEach(target => { void fetchManagedCatalogPage(kind, query, target).catch(() => {}); });
+        .forEach(target => { void fetchManagedCatalogPage(kind, query, target, false, filters).catch(() => {}); });
     }
     function flattenCosPickerPayload(payload) {
       const pools = payload && typeof payload === 'object' ? payload : {};
@@ -11036,7 +11007,7 @@ Source prompt:
     }
     async function loadCatalogPickerPage(panelId, kind, page = 1, force = false) {
       const state = catalogPickerState(panelId);
-      const requestKey = `${kind}:${state.query}:${Math.max(1, Number(page) || 1)}`;
+      const requestKey = JSON.stringify([kind, state.query, state.filter, Math.max(1, Number(page) || 1)]);
       if (!force && state.requestKey === requestKey && state.request) return state.request;
       state.kind = kind;
       state.page = Math.max(1, Number(page) || 1);
@@ -11046,14 +11017,22 @@ Source prompt:
       state.requestKey = requestKey;
       const request = (async () => { try {
         if (!state.loaded) renderCatalogPicker(panelId);
-        const data = await fetchCatalogPage(kind, state.query, state.page, force);
+        const filters = {[kind]:state.filter};
+        const data = await fetchManagedCatalogPage(kind, state.query, state.page, force, filters);
         if (seq !== state.seq) return;
         state.items = data.items;
         state.total = data.total;
+        if (kind === 'cos') {
+          state.seriesOptions = data.series_options || [];
+          if (state.filter && !state.seriesOptions.includes(state.filter)) {
+            state.filter = '';
+            return loadCatalogPickerPage(panelId, kind, 1, force);
+          }
+        }
         state.loaded = true;
         const pageCount = Math.max(1, Math.ceil(state.total / PICKER_PAGE_SIZE));
         if (state.page > pageCount) return loadCatalogPickerPage(panelId, kind, pageCount, force);
-        prefetchCatalogPages(kind, state.query, state.page, state.total);
+        prefetchManagedCatalogPages(kind, state.query, state.page, state.total, filters);
       } catch (error) {
         if (seq === state.seq) state.error = error.message || '列表读取失败';
       } finally {
@@ -11067,34 +11046,20 @@ Source prompt:
       return request;
     }
     function renderCatalogPicker(panelId) {
-      if (panelId === 'catalogPresetPanel' || panelId === 'catalogCosPanel') {
-        const open = CATALOG_PICKER?.panelId === panelId;
-        const target = open ? CATALOG_PICKER.targetInputId : '';
-        if (panelId === 'catalogCosPanel') renderCosPanel(panelId, target, open);
-        else renderPresetPanel(panelId, target, open);
-        return;
-      }
-      const kind = panelId.toLowerCase().includes('cos') ? 'cos' : 'image';
-      if (kind === 'cos') {
-        const panel = $(panelId);
-        if (!panel) return;
-        const mapping = {
-          studioCosPanel: ['studioPrompt', 'studioCosBtn', !!STUDIO.cosOpen],
-          studioNodeCosPanel: ['studioNodePrompt', 'studioNodeCosBtn', !!STUDIO.nodeCosOpen],
-          testCosPanel: ['testPrompt', 'testCosBtn', !!window.__TEST_COS_OPEN],
-        }[panelId] || ['', '', true];
-        renderCosPanel(panelId, mapping[0], mapping[2], mapping[1]);
-        return;
-      }
-      const mapping = {
-        studioPresetPanel: ['studioPrompt', 'studioPresetBtn', !!STUDIO.presetOpen],
-        studioNodePresetPanel: ['studioNodePrompt', 'studioNodePresetBtn', !!STUDIO.nodePresetOpen],
-        testPresetPanel: ['testPrompt', 'testPresetBtn', !!window.__TEST_PRESET_OPEN],
-      }[panelId] || ['', '', true];
-      renderPresetPanel(panelId, mapping[0], mapping[2], mapping[1]);
+      const open = CATALOG_PICKER?.panelId === panelId;
+      const target = open ? CATALOG_PICKER.targetInputId : '';
+      if (panelId === 'catalogCosPanel') renderCosPanel(panelId, target, open);
+      else renderPresetPanel(panelId, target, open);
     }
     function bindCatalogPickerControls(panel, panelId, kind) {
       const state = catalogPickerState(panelId);
+      panel.querySelector('[data-picker-filter]')?.addEventListener('change', event => {
+        state.filter = event.target.value;
+        state.page = 1;
+        state.seq += 1;
+        clearTimeout(PICKER_SEARCH_TIMERS.get(panelId));
+        void loadCatalogPickerPage(panelId, kind, 1);
+      });
       panel.querySelectorAll('[data-picker-page]').forEach(button => button.onclick = () => {
         void loadCatalogPickerPage(panelId, kind, state.page + Number(button.dataset.pickerPage));
       });
@@ -11108,10 +11073,9 @@ Source prompt:
         PICKER_SEARCH_TIMERS.set(panelId, setTimeout(() => void loadCatalogPickerPage(panelId, kind, 1), 250));
       });
     }
-    function renderPresetPanel(panelId, targetInputId, open, btnId) {
+    function renderPresetPanel(panelId, targetInputId, open) {
       const panel = $(panelId);
       if (!panel) return;
-      if (btnId) syncPresetToggleButton(btnId, open);
       if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
       panel.classList.add('open');
       const state = catalogPickerState(panelId);
@@ -11140,7 +11104,7 @@ Source prompt:
         return `${heading}<button type="button" class="preset-chip" data-preset-idx="${idx}" title="${name}">${name}</button>`;
       }).join('');
       const pages = Math.max(1, Math.ceil(state.total / PICKER_PAGE_SIZE));
-      panel.innerHTML = `<div class="cos-panel-toolbar"><span class="muted">第 ${state.page}/${pages} 页 · 共 ${state.total} 项</span></div><input class="studio-node-search" data-prompt-search type="search" placeholder="搜索预设" aria-label="搜索预设" value="${escapeHtml(query)}">` + (presetButtons || `<div class="status">${query ? '没有匹配的预设' : '暂无预设'}</div>` ) + pickerPagerMarkup(state);
+      panel.innerHTML = `<div class="catalog-picker-controls"><div class="cos-panel-toolbar"><span class="muted">第 ${state.page}/${pages} 页 · 共 ${state.total} 项</span></div><input class="studio-node-search" data-prompt-search type="search" placeholder="搜索预设" aria-label="搜索预设" value="${escapeHtml(query)}">${catalogPickerFilterMarkup(state, 'image')}</div><div class="catalog-picker-items">` + (presetButtons || `<div class="status">${query || state.filter ? '没有匹配的预设' : '暂无预设'}</div>` ) + '</div>' + pickerPagerMarkup(state);
       panel.querySelectorAll('[data-preset-idx]').forEach(btn => btn.onclick = () => {
         const item = rows[Number(btn.getAttribute('data-preset-idx'))];
         if (!item) return;
@@ -11149,6 +11113,12 @@ Source prompt:
         btn.classList.add('active');
       });
       bindCatalogPickerControls(panel, panelId, 'image');
+    }
+    function catalogPickerFilterMarkup(state, kind) {
+      const options = kind === 'cos'
+        ? [['', '全部系列'], ...state.seriesOptions.map(series => [series, series])]
+        : Array.from($('presetManagerFilter').options).map(option => [option.value, option.text]);
+      return `<label>${kind === 'cos' ? '系列筛选' : '预设分类'}<select data-picker-filter aria-label="${kind === 'cos' ? '系列筛选' : '预设分类'}">${options.map(([value, label]) => `<option value="${escapeHtml(value)}" ${value === state.filter ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>`;
     }
     function presetManagerStatus(text, bad = false) {
       const el = $('presetManagerStatus');
@@ -11340,9 +11310,12 @@ Source prompt:
     async function switchPresetKind(kind) {
       PRESET_KIND = ['cos', 'nai'].includes(kind) ? kind : 'image';
       Object.values(PRESET_MANAGER_SEARCH_TIMERS).forEach(clearTimeout);
-      $('presetKindImage').classList.toggle('active', PRESET_KIND === 'image');
-      $('presetKindCos').classList.toggle('active', PRESET_KIND === 'cos');
-      $('presetKindNai').classList.toggle('active', PRESET_KIND === 'nai');
+      for (const [value, id] of [['image', 'presetKindImage'], ['cos', 'presetKindCos'], ['nai', 'presetKindNai']]) {
+        const button = $(id), active = PRESET_KIND === value;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
+      }
       $('presetManagerSearch').value = PRESET_MANAGER_QUERIES[PRESET_KIND] || '';
       $('presetManagerSearch').placeholder = PRESET_KIND === 'nai' ? '搜索画师名或画师串' : '搜索预设名或提示词';
       $('presetManagerSearch').setAttribute('aria-label', $('presetManagerSearch').placeholder);
@@ -11500,10 +11473,9 @@ Source prompt:
       if (PRESET_KIND === kind) await loadManagedPromptPresets(kind);
       showToast((res.data && res.data.message) || `${kind === 'nai' ? 'NAI 画师串' : '生图预设'}已导入`, 'ok');
     }
-    function renderCosPanel(panelId, targetInputId, open, btnId) {
+    function renderCosPanel(panelId, targetInputId, open) {
       const panel = $(panelId);
       if (!panel) return;
-      if (btnId) syncCosToggleButton(btnId, open);
       if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
       panel.classList.add('open');
       if (PICKER_LOADING.has(panelId)) { panel.innerHTML = '<div class="status">正在加载 COS 池…</div>'; return; }
@@ -11523,14 +11495,14 @@ Source prompt:
       }
       const rows = state.items;
       const pages = Math.max(1, Math.ceil(state.total / PICKER_PAGE_SIZE));
-      panel.innerHTML = `<div class="cos-panel-toolbar"><button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button><span class="muted">第 ${state.page}/${pages} 页 · 共 ${state.total} 项</span></div><input class="studio-node-search" data-cos-search type="search" placeholder="搜索 COS" aria-label="搜索 COS" value="${escapeHtml(state.query)}">` + (rows.length ? rows.map((item, idx) => {
+      panel.innerHTML = `<div class="catalog-picker-controls"><div class="cos-panel-toolbar"><button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button><span class="muted">第 ${state.page}/${pages} 页 · 共 ${state.total} 项</span></div><input class="studio-node-search" data-cos-search type="search" placeholder="搜索 COS" aria-label="搜索 COS" value="${escapeHtml(state.query)}">${catalogPickerFilterMarkup(state, 'cos')}</div><div class="catalog-picker-items">` + (rows.length ? rows.map((item, idx) => {
         const title = escapeHtml(item.title || item.id || '未命名套装');
         const compatibility = item.compatibility && item.compatibility.variation_enabled
           ? '可随机姿势/场景'
           : '固定构图';
         const source = item.source === 'custom' ? '自定义' : (item.favorite ? '已收藏' : '内置');
         return `<div class="cos-pool-row"><button type="button" class="preset-chip" data-cos-idx="${idx}" title="${title} · ${compatibility}">${title}<small>${escapeHtml(source)}</small></button><button type="button" class="secondary mini cos-favorite-btn" data-cos-favorite="${idx}" title="${item.favorite ? '取消收藏' : '收藏'}" aria-label="${item.favorite ? '取消收藏' : '收藏'}">${item.favorite ? '★' : '☆'}</button>${item.source === 'custom' ? `<button type="button" class="danger mini cos-delete-btn" data-cos-delete="${idx}" title="删除自定义 COS" aria-label="删除自定义 COS">×</button>` : ''}</div>`;
-      }).join('') : `<div class="status">${state.query ? '没有匹配的 COS 项目' : 'COS 池为空'}</div>`) + pickerPagerMarkup(state);
+      }).join('') : `<div class="status">${state.query ? '没有匹配的 COS 项目' : 'COS 池为空'}</div>`) + '</div>' + pickerPagerMarkup(state);
       panel.querySelector('[data-cos-maintain]')?.addEventListener('click', openCosPoolModal);
       bindCatalogPickerControls(panel, panelId, 'cos');
       panel.querySelectorAll('[data-cos-idx]').forEach(btn => {
@@ -11576,9 +11548,6 @@ Source prompt:
       clearPickerCache('cos');
       const jobs = [];
       const openPanels = [
-        ['studioCosPanel', !!STUDIO.cosOpen],
-        ['studioNodeCosPanel', !!STUDIO.nodeCosOpen],
-        ['testCosPanel', !!window.__TEST_COS_OPEN],
         ['catalogCosPanel', CATALOG_PICKER?.kind === 'cos'],
       ];
       for (const [panelId, isOpen] of openPanels) {
@@ -11595,9 +11564,6 @@ Source prompt:
       clearPickerCache('image');
       const jobs = [];
       const openPanels = [
-        ['studioPresetPanel', !!STUDIO.presetOpen],
-        ['studioNodePresetPanel', !!STUDIO.nodePresetOpen],
-        ['testPresetPanel', !!window.__TEST_PRESET_OPEN],
         ['catalogPresetPanel', CATALOG_PICKER?.kind === 'image'],
       ];
       for (const [panelId, isOpen] of openPanels) {
@@ -11653,34 +11619,6 @@ Source prompt:
         } catch (e) { if ($('cosPoolStatus')) $('cosPoolStatus').textContent = e.message || '导入失败'; }
       };
       input.click();
-    }
-    async function toggleStudioPresets() {
-      STUDIO.presetOpen = !STUDIO.presetOpen;
-      STUDIO.cosOpen = false;
-      renderCosPanel('studioCosPanel', 'studioPrompt', false, 'studioCosBtn');
-      if (STUDIO.presetOpen) {
-        const state = catalogPickerState('studioPresetPanel');
-        await loadCatalogPickerPage('studioPresetPanel', 'image', state.page);
-        window.__TEST_PRESET_OPEN = false;
-        window.__TEST_COS_OPEN = false;
-        renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
-        renderCosPanel('testCosPanel', 'testPrompt', false, 'testCosBtn');
-      }
-      renderPresetPanel('studioPresetPanel', 'studioPrompt', STUDIO.presetOpen, 'studioPresetBtn');
-    }
-    async function toggleStudioCos() {
-      STUDIO.cosOpen = !STUDIO.cosOpen;
-      STUDIO.presetOpen = false;
-      renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
-      if (STUDIO.cosOpen) {
-        const state = catalogPickerState('studioCosPanel');
-        await loadCatalogPickerPage('studioCosPanel', 'cos', state.page);
-        window.__TEST_PRESET_OPEN = false;
-        window.__TEST_COS_OPEN = false;
-        renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
-        renderCosPanel('testCosPanel', 'testPrompt', false, 'testCosBtn');
-      }
-      renderCosPanel('studioCosPanel', 'studioPrompt', STUDIO.cosOpen, 'studioCosBtn');
     }
     function toggleTestPresets() {
       openCatalogPicker('image', 'testPrompt', 'testPresetBtn');
@@ -12948,13 +12886,149 @@ Source prompt:
       if (!res.success) return showToast(res.message || '删除失败', 'bad');
       STUDIO.current = null; STUDIO.canvas = null; await loadStudioList('', {force:true}); showToast('画布已删除', 'ok');
     }
+    let SELECT_PICKER = null;
+    const SELECT_PICKER_SEARCH_THRESHOLD = 8;
+    const SELECT_PICKER_OBSERVER = new MutationObserver(() => {
+      if (SELECT_PICKER?.matches(':disabled')) closeSelectPicker();
+      else renderSelectPickerOptions();
+    });
+    function closeSelectPicker() {
+      const select = SELECT_PICKER;
+      SELECT_PICKER = null;
+      SELECT_PICKER_OBSERVER.disconnect();
+      $('selectPickerModal').classList.remove('show');
+      select?.setAttribute('aria-expanded', 'false');
+      if (select?.isConnected && !select.matches(':disabled')) select.focus({preventScroll:true});
+    }
+    function renderSelectPickerOptions() {
+      const select = SELECT_PICKER;
+      if (!select) return;
+      if (!select.isConnected) { closeSelectPicker(); return; }
+      const search = $('selectPickerSearch');
+      search.hidden = Array.from(select.options).filter(option => !option.hidden && !option.closest('optgroup')?.hidden).length <= SELECT_PICKER_SEARCH_THRESHOLD;
+      if (search.hidden) search.value = '';
+      const query = $('selectPickerSearch').value.trim().toLocaleLowerCase();
+      let group = null;
+      const rows = Array.from(select.options).map((option, index) => {
+        const parent = option.closest('optgroup');
+        if (option.hidden || parent?.hidden || (query && !`${option.text} ${parent?.label || ''}`.toLocaleLowerCase().includes(query))) return '';
+        const heading = parent && parent !== group ? `<div class="select-picker-group">${escapeHtml(parent.label)}</div>` : '';
+        group = parent;
+        return `${heading}<button type="button" class="secondary" data-select-index="${index}" aria-pressed="${option.selected}" ${option.disabled || parent?.disabled ? 'disabled' : ''}><span>${escapeHtml(option.text || '默认')}</span><span aria-hidden="true">${option.selected ? '✓' : ''}</span></button>`;
+      }).join('');
+      $('selectPickerOptions').innerHTML = rows || '<div class="status">没有匹配的选项</div>';
+    }
+    function openSelectPicker(select) {
+      if (!select || select.multiple || select.size > 1 || select.matches(':disabled')) return;
+      if (SELECT_PICKER === select) return;
+      if (SELECT_PICKER) closeSelectPicker();
+      SELECT_PICKER = select;
+      $('selectPickerTitle').textContent = select.getAttribute('aria-label') || select.labels?.[0]?.textContent.trim() || select.parentElement.querySelector('label')?.textContent.trim() || '选择选项';
+      $('selectPickerSearch').value = '';
+      select.setAttribute('aria-haspopup', 'dialog');
+      select.setAttribute('aria-controls', 'selectPickerModal');
+      select.setAttribute('aria-expanded', 'true');
+      renderSelectPickerOptions();
+      SELECT_PICKER_OBSERVER.observe(select, {childList:true, subtree:true, attributes:true, characterData:true});
+      $('selectPickerModal').classList.add('show');
+      $('selectPickerModal').querySelector('.modal-body').scrollTop = 0;
+      $('selectPickerClose').focus({preventScroll:true});
+    }
+    const isPickerSelect = target => target instanceof HTMLSelectElement && !target.multiple && target.size <= 1;
+    document.addEventListener('pointerdown', event => {
+      if (isPickerSelect(event.target) && !event.target.matches(':disabled')) event.preventDefault();
+    }, true);
+    document.addEventListener('mousedown', event => {
+      if (isPickerSelect(event.target) && !event.target.matches(':disabled')) event.preventDefault();
+    }, true);
+    document.addEventListener('click', event => {
+      if (!isPickerSelect(event.target)) return;
+      event.preventDefault();
+      openSelectPicker(event.target);
+    }, true);
+    $('selectPickerClose').onclick = closeSelectPicker;
+    $('selectPickerSearch').oninput = renderSelectPickerOptions;
+    $('selectPickerModal').addEventListener('click', event => {
+      if (event.target === $('selectPickerModal')) { event.stopImmediatePropagation(); closeSelectPicker(); return; }
+      const button = event.target.closest('[data-select-index]');
+      const select = SELECT_PICKER;
+      if (!button || button.disabled || !select?.isConnected || select.matches(':disabled')) return;
+      const index = Number(button.dataset.selectIndex), option = select.options[index];
+      if (!option || option.disabled || option.closest('optgroup')?.disabled) return;
+      const changed = select.selectedIndex !== index;
+      select.selectedIndex = index;
+      closeSelectPicker();
+      if (changed) {
+        select.dispatchEvent(new Event('input', {bubbles:true}));
+        select.dispatchEvent(new Event('change', {bubbles:true}));
+      }
+    });
+    document.addEventListener('keydown', event => {
+      if (SELECT_PICKER) {
+        if (event.key === 'Escape') {
+          event.preventDefault(); event.stopImmediatePropagation(); closeSelectPicker(); return;
+        }
+        const buttons = [...$('selectPickerOptions').querySelectorAll('button:not(:disabled)')];
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && (event.target !== $('selectPickerSearch') || event.key.startsWith('Arrow'))) {
+          event.preventDefault(); event.stopImmediatePropagation();
+          const current = buttons.indexOf(document.activeElement);
+          const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+            : current < 0 ? (event.key === 'ArrowDown' ? 0 : buttons.length - 1)
+            : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[index]?.focus();
+        } else if (event.key === 'Tab') {
+          const controls = [$('selectPickerClose'), ...($('selectPickerSearch').hidden ? [] : [$('selectPickerSearch')]), ...buttons];
+          const index = controls.indexOf(document.activeElement);
+          if (event.shiftKey && index <= 0) { event.preventDefault(); controls.at(-1)?.focus(); }
+          else if (!event.shiftKey && (index < 0 || index === controls.length - 1)) { event.preventDefault(); controls[0].focus(); }
+        }
+        return;
+      }
+      if (isPickerSelect(event.target) && ['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault(); event.stopImmediatePropagation(); openSelectPicker(event.target);
+      }
+    }, true);
+    function scrollTabIntoView(button) {
+      if (!button) return;
+      const tablist = button.closest('.tabs-inline');
+      if (!tablist) return;
+      const bounds = tablist.getBoundingClientRect(), tabBounds = button.getBoundingClientRect();
+      if (tabBounds.left < bounds.left) tablist.scrollLeft += tabBounds.left - bounds.left;
+      else if (tabBounds.right > bounds.right) tablist.scrollLeft += tabBounds.right - bounds.right;
+    }
+    function setConfigurationNavigation(collapsed, restoreFocus = false) {
+      $('configurationNav').hidden = collapsed;
+      const toggle = $('configurationToggle');
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+      toggle.title = collapsed ? '展开配置导航' : '收起配置导航';
+      toggle.setAttribute('aria-label', toggle.title);
+      if (restoreFocus) toggle.focus({preventScroll: true});
+    }
+    $('configurationToggle').onclick = () => {
+      setConfigurationNavigation(!$('configurationNav').hidden);
+    };
+    document.addEventListener('pointerdown', event => {
+      if (!$('configurationNav').hidden && !$('configurationHeader').contains(event.target)) setConfigurationNavigation(true);
+    });
+    $('configurationHeader').addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !$('configurationNav').hidden) {
+        event.preventDefault(); event.stopPropagation(); setConfigurationNavigation(true, true);
+      }
+    });
     function navigateToTab(tab, options = {}) {
-      const target = String(tab || '').trim();
-      const button = [...document.querySelectorAll('nav.page-nav button[data-tab]')].find(item => item.dataset.tab === target);
+      let target = String(tab || '').trim();
+      if (target === 'configuration') {
+        target = document.querySelector('#configurationNav button.active')?.dataset.configTab || 'channels';
+      }
+      const configButtons = [...document.querySelectorAll('[data-config-tab]')];
+      const configButton = configButtons.find(item => item.dataset.configTab === target);
+      const navTarget = configButton ? 'configuration' : target;
+      const button = [...document.querySelectorAll('nav.page-nav button[data-tab]')].find(item => item.dataset.tab === navTarget);
       const section = target ? $(target) : null;
       if (!button || !section) return false;
       DASHBOARD_VISITED_TABS.add(target);
-      const current = document.querySelector('nav.page-nav button.active')?.dataset.tab || '';
+      const current = document.querySelector('main.app-shell > section.active')?.id || '';
+      const currentNav = document.querySelector('nav.page-nav button.active')?.dataset.tab || '';
       if (current === target && options.force !== true) return false;
       document.querySelectorAll('nav.page-nav button').forEach(item => {
         item.classList.toggle('active', item === button);
@@ -12962,8 +13036,18 @@ Source prompt:
         if (item === button) item.setAttribute('aria-current', 'page');
         else item.removeAttribute('aria-current');
       });
-      if (current !== target && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) button.classList.add('nav-switching');
+      if (currentNav !== navTarget && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) button.classList.add('nav-switching');
+      $('configurationHeader').hidden = !configButton;
+      if (!configButton) setConfigurationNavigation(true);
+      if (configButton) configButtons.forEach(item => {
+        const active = item === configButton;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-selected', String(active));
+        item.tabIndex = active ? 0 : -1;
+      });
       document.querySelectorAll('main.app-shell > section').forEach(item => item.classList.toggle('active', item === section));
+      scrollTabIntoView(configButton);
+      if (configButton && currentNav !== navTarget) window.scrollTo(0, 0);
       if (target === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
       if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetCollections(); }
       if (target === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
@@ -12972,14 +13056,32 @@ Source prompt:
       if (target === 'backup') loadBackupManager();
       if (target === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
       if (target === 'groups') { loadQQGroups(); }
-      if (options.focus === true) button.focus();
+      if (options.focus === true) (configButton || button).focus({preventScroll: true});
       return true;
     }
     document.querySelectorAll('nav.page-nav button[data-tab]').forEach(btn => {
       btn.addEventListener('click', () => {
-        // Keep the proxy tab check explicit for embedded-page integrations.
-        const isProxyTab = btn.dataset.tab === 'proxies';
-        navigateToTab(btn.dataset.tab, { focus: isProxyTab });
+        navigateToTab(btn.dataset.tab);
+      });
+    });
+    document.querySelectorAll('[data-config-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        navigateToTab(btn.dataset.configTab);
+        setConfigurationNavigation(true, true);
+      });
+    });
+    document.querySelectorAll('.tabs-inline[role="tablist"]').forEach(tablist => {
+      tablist.addEventListener('keydown', event => {
+        if (event.defaultPrevented) return;
+        const buttons = [...tablist.querySelectorAll(':scope > button[role="tab"]')];
+        const index = buttons.indexOf(event.target);
+        if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+        if (tablist !== $('configurationNav')) buttons[next].click();
+        buttons[next].focus({preventScroll: true});
+        scrollTabIntoView(buttons[next]);
       });
     });
     document.querySelectorAll('[data-nav-target]').forEach(card => {
@@ -13108,7 +13210,7 @@ Source prompt:
     $('modalRefreshModels').onclick = () => refreshChannelModels();
     $('modalEnableAll').onclick = () => { removeAllEnabledModels(); };
     $('openCacheModels').onclick = openCacheModels;
-    $('cacheSearch').oninput = () => renderCacheModels();
+    $('cacheSearch').oninput = () => { CACHE_MODELS_PAGE = 1; renderCacheModels(); $('cacheModels').scrollTop = 0; };
     $('manualAdd').onclick = () => {
       const value = $('manualModel').value.trim();
       if (!value) return;
@@ -13142,8 +13244,6 @@ Source prompt:
     if ($('studioCreateModal')) $('studioCreateModal').addEventListener('click', event => {
       if (event.target === $('studioCreateModal')) closeStudioCreateModal();
     });
-    if ($('studioPresetBtn')) $('studioPresetBtn').onclick = toggleStudioPresets;
-    if ($('studioCosBtn')) $('studioCosBtn').onclick = toggleStudioCos;
     if ($('testPresetBtn')) $('testPresetBtn').onclick = toggleTestPresets;
     if ($('testCosBtn')) $('testCosBtn').onclick = toggleTestCos;
     if ($('cosPoolModal')) $('cosPoolModal').addEventListener('click', event => { if (event.target === $('cosPoolModal')) closeCosPoolModal(); });

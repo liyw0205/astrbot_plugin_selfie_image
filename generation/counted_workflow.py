@@ -40,6 +40,7 @@ class CountedGenerationWorkflow:
         self.last_elapsed = 0.0
         self.failed_at = 0
         self.last_failure_error = ""
+        self.all_targets_cooling_down = False
         self.cancelled = False
         self.succeeded_shots = 0
         self.cancelled_shots = 0
@@ -53,7 +54,20 @@ class CountedGenerationWorkflow:
 
     async def run(self) -> Dict[str, Any]:
         await asyncio.gather(*(self._one(index) for index in range(self.total)))
-        return self._summarize_result()
+        result = self._summarize_result()
+        if (
+            self.all_targets_cooling_down
+            and not self.cancelled
+            and not self.plugin._task_cancel_requested(self.task_id)
+        ):
+            await self.plugin._send_task_notification(
+                self.task_id,
+                self.event,
+                "任务已结束：所有可用出图渠道均已进入冷却。\n"
+                f"计划 {self.total} 张，成功 {self.succeeded_shots} 张，"
+                f"失败 {self.skipped_shots} 张，未执行 {result['batch_unstarted']} 张。",
+            )
+        return result
 
     def _persist_progress(self, index: int = 0) -> None:
         completed = min(self.total, self.succeeded_shots + self.skipped_shots + self.cancelled_shots)
@@ -109,6 +123,13 @@ class CountedGenerationWorkflow:
                             self._persist_progress(index + 1)
                         return
                 result = await self.run_one(index)
+                if result.get("all_targets_cooling_down"):
+                    # Close admission before releasing the slot or waiting
+                    # for record commits. Already-running shots still drain.
+                    self.all_targets_cooling_down = True
+                    self.stop = True
+                    if not self.failed_at:
+                        self.failed_at = index + 1
             finally:
                 if legacy_slot is not None:
                     legacy_slot.release()
@@ -151,6 +172,8 @@ class CountedGenerationWorkflow:
         error = plugin._friendly_user_error_message(raw_error, self.fail_label)
         self.skipped_shots += 1
         self._persist_progress(index + 1)
+        if self.all_targets_cooling_down:
+            return
         mode, skip_max = plugin._batch_failure_policy()
         # Completion order can differ from shot index. Count terminal shots to
         # decide whether another queued or in-flight shot remains.
@@ -274,6 +297,8 @@ class CountedGenerationWorkflow:
         )
         if self.cancelled:
             error = "任务已取消"
+        elif self.all_targets_cooling_down:
+            error = "所有可用出图渠道均已进入冷却，任务提前结束"
         elif self.failed_at:
             error = self.last_failure_error or self.fail_label or "生图没有完成"
         elif delivery_failed:
@@ -309,4 +334,7 @@ class CountedGenerationWorkflow:
             result["status"] = "delivery_failed"
         if self.failed_at:
             result["batch_failed_at"] = self.failed_at
+        if self.all_targets_cooling_down:
+            result["all_targets_cooling_down"] = True
+            result["batch_unstarted"] = max(0, self.total - result["completed_count"])
         return self.plugin._normalize_generation_result(result, self.total)

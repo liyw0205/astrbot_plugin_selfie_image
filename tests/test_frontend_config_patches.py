@@ -92,7 +92,7 @@ def test_priority_selectors_remain_filtered_after_model_selector_refresh():
     channel_source = (root / "pages/dashboard/source/channel_editor.js").read_text(encoding="utf-8")
 
     assert "prunePriorityList('image', labels);" in channel_source
-    assert "prunePriorityList('audit', audits);" in channel_source
+    assert "prunePriorityList('audit'" not in channel_source
     assert "preserveSelection('priorityPicker'" not in channel_source
     assert "preserveSelection('auditPriorityPicker'" not in channel_source
 

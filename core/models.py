@@ -132,7 +132,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "image_channels": [],
     "audit_channels": [],
     "enabled_image_model_priority": [],
-    "enabled_audit_model_priority": [],
     "group_chat_configs": {},
     "monitoring": {
         "generation_alerts": {
@@ -350,7 +349,6 @@ class AICatConfig:
     image_channels: List[ImageChannelConfig]
     audit_channels: List[ImageChannelConfig]
     enabled_image_model_priority: List[str]
-    enabled_audit_model_priority: List[str]
     image_model_call_mode: str
     # Every normalized config object gets a fresh revision.  Exclude it from
     # dataclass equality so callers comparing normalized config values retain
@@ -572,7 +570,6 @@ class AICatConfig:
             image_channels=channels,
             audit_channels=audit_channels,
             enabled_image_model_priority=split_values(raw.get("enabled_image_model_priority")),
-            enabled_audit_model_priority=split_values(raw.get("enabled_audit_model_priority")),
             image_model_call_mode=image_model_call_mode,
         )
 
@@ -730,7 +727,7 @@ class AICatConfig:
         return self._store_targets(key, self._bind_download_proxies(targets))
 
     def get_audit_targets(self) -> List[ImageModelTarget]:
-        key = self._target_cache_key("audit", priority=self.enabled_audit_model_priority)
+        key = self._target_cache_key("audit")
         cached = self._cached_targets(key)
         if cached is not None:
             return cached
@@ -739,7 +736,7 @@ class AICatConfig:
             targets.extend(
                 channel.targets(self.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS)
             )
-        result = self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_audit_model_priority))
+        result = self._bind_download_proxies(targets)
         return self._store_targets(key, result)
 
 def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -751,8 +748,8 @@ def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
         raw["audit_channels"] = raw["auditChannels"]
     if "enabledImageModelPriority" in raw and "enabled_image_model_priority" not in raw:
         raw["enabled_image_model_priority"] = raw["enabledImageModelPriority"]
-    if "enabledAuditModelPriority" in raw and "enabled_audit_model_priority" not in raw:
-        raw["enabled_audit_model_priority"] = raw["enabledAuditModelPriority"]
+    raw.pop("enabledAuditModelPriority", None)
+    raw.pop("enabled_audit_model_priority", None)
     for key in ("botName", "bot_name", "personality"):
         raw.pop(key, None)
 

@@ -59,7 +59,10 @@ INFLIGHT_MEDIA_TTL_SECONDS = 24 * 3600
 INFLIGHT_MEDIA_JOURNAL_FILENAME = "pending_request_media.json"
 CHANNEL_COOLDOWN_FAILURE_THRESHOLD = 3
 CHANNEL_COOLDOWN_SECONDS = 60
-CHANNEL_TRANSIENT_ERROR_CATEGORIES = {
+CHANNEL_COOLDOWN_ERROR_CATEGORIES = {
+    "auth",
+    "quota",
+    "rate_limit",
     "network",
     "server",
     "timeout",
@@ -722,7 +725,10 @@ class GenerationStoreMixin(PromptLookupMixin):
     def _load_records(self) -> List[Dict[str, Any]]:
         data = load_json_file(self.records_path)
         items = data.get("records") if isinstance(data.get("records"), list) else []
-        records = [item for item in items if isinstance(item, dict)]
+        records = [
+            {**item, "id": item.get("id") or f"legacy-{index + 1}"}
+            for index, item in enumerate(items) if isinstance(item, dict)
+        ]
         keep_limit = self._record_keep_limit()
         retained, evicted = self._trim_records_keeping_pinned(records, keep_limit)
         database = self._record_database()
@@ -747,6 +753,8 @@ class GenerationStoreMixin(PromptLookupMixin):
             self._record_storage_health["read_only_source"] = "unavailable"
             return []
 
+        if database is not None and records:
+            database.seed_metric_records(records)
         compacted: List[Dict[str, Any]] = []
         for index, item in enumerate(retained):
             prepared = copy.deepcopy(item)
@@ -1452,19 +1460,40 @@ class GenerationStoreMixin(PromptLookupMixin):
         ]
 
     def get_generation_metrics(self, *, window_seconds: Optional[int] = None) -> Dict[str, Any]:
-        """Return redacted aggregate metrics from retained generation records."""
+        """Use durable statistical history independently of record retention."""
         with self._records_lock:
             records = [dict(item) for item in self._records if isinstance(item, dict)]
+        now = time.time()
+        database_getter = getattr(self, "_record_database", None)
+        database = database_getter() if callable(database_getter) else None
+        history = records
+        total = len(records)
+        started = min((_record_timestamp(record) for record in records), default=0)
+        if database is not None:
+            history, total, started = database.load_metric_records(window_seconds=window_seconds, now=now)
         raw_config = getattr(self, "raw_config", {})
         monitoring = raw_config.get("monitoring") if isinstance(raw_config, Mapping) else {}
         alerts = monitoring.get("generation_alerts") if isinstance(monitoring, Mapping) else None
         get_cache_metrics = getattr(self, "get_cache_metrics", None)
-        return build_generation_metrics(
-            records,
+        metrics = build_generation_metrics(
+            history,
             window_seconds=window_seconds,
+            now=now,
             alert_settings=alerts if isinstance(alerts, Mapping) else None,
             cache_metrics=get_cache_metrics() if callable(get_cache_metrics) else None,
         )
+        metrics.update({
+            "records": metrics["quality"]["records"],
+            "total_records": total,
+            "statistics_scope": "cumulative" if database is not None else "retained",
+            "statistics_started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)) if started > 0 else "",
+            "retained_records": sum(
+                1 for record in records
+                if window_seconds is None or _record_timestamp(record) >= now - max(1, int(window_seconds))
+            ),
+            "total_retained_records": len(records),
+        })
+        return metrics
 
     def _composition_metadata(self, prompt: str, source: str, aspect_ratio: str, resolution: str, reference_count: int) -> Dict[str, Any]:
         return composition_metadata(
@@ -2835,7 +2864,7 @@ class GenerationStoreMixin(PromptLookupMixin):
             return result
 
     def _select_healthy_generation_targets(self, targets: Iterable[Any]) -> Tuple[List[Any], List[Dict[str, Any]]]:
-        """Skip temporarily unhealthy channels while preserving a no-dead-end fallback."""
+        """Skip cooling channels, including when no target remains available."""
         items = list(targets or [])
         if not items:
             return [], []
@@ -2859,22 +2888,8 @@ class GenerationStoreMixin(PromptLookupMixin):
                 available.append(target)
 
         selected = available
-        if not selected and cooling:
-            # All channels are cooling down. Keep the channel that recovers
-            # first so a transient failure never makes generation unavailable.
-            _, earliest_target, _ = min(cooling, key=lambda item: (item[2], item[0]))
-            earliest_channel = str(getattr(earliest_target, "channel_name", "") or "").strip()
-            selected = [
-                target
-                for _, target, _ in cooling
-                if str(getattr(target, "channel_name", "") or "").strip() == earliest_channel
-            ]
-
-        selected_ids = {id(target) for target in selected}
         skipped: List[Dict[str, Any]] = []
         for _, target, cooldown_until in cooling:
-            if id(target) in selected_ids:
-                continue
             remaining = max(1, int(round(cooldown_until - now)))
             label = redact_sensitive_text(str(getattr(target, "label", "") or ""))
             skipped.append(
@@ -2910,6 +2925,10 @@ class GenerationStoreMixin(PromptLookupMixin):
                 if not channel:
                     continue
                 category = str(attempt.get("error_category") or "").strip()
+                # A cooldown skip never contacted the provider and must not
+                # alter failure streaks or count as a real health sample.
+                if category == "cooldown":
+                    continue
                 success = bool(attempt.get("success"))
                 with self._channel_health_lock:
                     state = self._channel_health.setdefault(
@@ -2942,7 +2961,7 @@ class GenerationStoreMixin(PromptLookupMixin):
                             str(attempt.get("error_user_message") or attempt.get("error") or "")
                         )[:240]
                         state["last_error_ts"] = now
-                        if category not in CHANNEL_TRANSIENT_ERROR_CATEGORIES:
+                        if category not in CHANNEL_COOLDOWN_ERROR_CATEGORIES:
                             state["consecutive_failures"] = 0
                         else:
                             state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1

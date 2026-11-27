@@ -322,7 +322,7 @@ def build_model_status(
 
 
 def metric_window_seconds(value: Any) -> Optional[int]:
-    """Normalize a metrics window key; ``None`` means all retained records."""
+    """Normalize a metrics window key; ``None`` means all recorded history."""
     key = str(value or "all").strip().lower()
     if key in {"", "all", "全部"}:
         return None
@@ -473,6 +473,35 @@ def _metric_recommendations(
     return recommendations
 
 
+def generation_metric_record(record: Mapping[str, Any]) -> Dict[str, Any]:
+    """Keep only inputs used by metrics, independently of retained details."""
+    fields = (
+        "time", "created_ts", "timestamp", "updated_ts", "status", "success",
+        "requested_count", "succeeded_count", "failed_count", "count",
+        "elapsed_seconds", "queue_wait_seconds", "used_model", "retry_count",
+    )
+    projected = {key: record[key] for key in fields if key in record}
+    timings = record.get("stage_timings")
+    if isinstance(timings, Mapping):
+        projected["stage_timings"] = {
+            key: timings[key] for key in GENERATION_TIMING_STAGES if key in timings
+        }
+    response = record.get("response_data")
+    if isinstance(response, Mapping):
+        projected["response_data"] = {key: response[key] for key in fields if key in response}
+    attempt_fields = (
+        "channel", "model", "label", "provider_type", "success", "elapsed_seconds",
+        "error_category", "http_status", "retry_action", "cooldown_remaining_seconds",
+    )
+    attempts = record.get("attempts") or (response.get("attempts") if isinstance(response, Mapping) else [])
+    if isinstance(attempts, list):
+        projected["attempts"] = [
+            {key: attempt[key] for key in attempt_fields if key in attempt}
+            for attempt in attempts if isinstance(attempt, Mapping)
+        ]
+    return projected
+
+
 def build_generation_metrics(
     records: Iterable[Mapping[str, Any]],
     *,
@@ -481,7 +510,7 @@ def build_generation_metrics(
     alert_settings: Optional[Mapping[str, Any]] = None,
     cache_metrics: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Aggregate retained generation records without returning prompt content."""
+    """Aggregate generation statistics without returning prompt content."""
     all_items = [dict(record) for record in records if isinstance(record, Mapping)]
     if window_seconds is not None:
         try:
@@ -531,13 +560,20 @@ def build_generation_metrics(
         successful_records += int(status == "succeeded")
         partial_records += int(status == "partial_success")
         cancelled_records += int(status == "cancelled")
+        # Per-image rows inherit the task's batch size. Only summary rows
+        # with outcome counts describe the whole batch.
+        batch_summary = any(
+            row.get(key) is not None
+            for row in (record, response)
+            for key in ("succeeded_count", "failed_count")
+        )
         try:
             requested += max(
                 1,
                 int(
-                    record.get("requested_count")
-                    or response.get("requested_count")
+                    (record.get("requested_count") or response.get("requested_count") if batch_summary else 0)
                     or record.get("count")
+                    or response.get("count")
                     or 1
                 ),
             )

@@ -124,11 +124,12 @@ async function main() {
     if(['/api/prompt-presets','/api/prompt-presets/manage','/api/cos-pools'].includes(url.pathname)) {
       catalogCalls.push(url.pathname+url.search);
       const cos=url.pathname==='/api/cos-pools',query=(url.searchParams.get('search')||'').toLowerCase();
-      const rows=Array.from({length:36},(_,index)=>({id:`fixture-${index}`,name:`Preset ${String(index).padStart(2,'0')}`,title:`COS ${String(index).padStart(2,'0')}`,prompt:`${cos?'COS':'Preset'} prompt ${index}`}))
-        .filter(item=>!query||`${item.name} ${item.title} ${item.prompt}`.toLowerCase().includes(query));
+      const filter=url.searchParams.get('preset_filter'),series=url.searchParams.get('series');
+      const rows=Array.from({length:74},(_,index)=>({id:`fixture-${index}`,name:`Preset ${String(index).padStart(2,'0')}${index%4===0?' 长名称预设分类和按钮排列验证':''}`,title:`COS ${String(index).padStart(2,'0')}`,prompt:`${cos?'COS':'Preset'} prompt ${index}`,preset_group:index%3===0?'action':'',cos_type:index%2===0?'Series A':'Series B'}))
+        .filter(item=>(!query||`${item.name} ${item.title} ${item.prompt}`.toLowerCase().includes(query))&&(!filter||item.preset_group===filter)&&(!series||item.cos_type===series));
       const offset=Number(url.searchParams.get('offset')||0),limit=Number(url.searchParams.get('limit')||30);
       await new Promise(resolve=>setTimeout(resolve,60));
-      response.setHeader('Content-Type','application/json');response.end(JSON.stringify({success:true,data:{items:rows.slice(offset,offset+limit),total:rows.length,revision:1}}));return;
+      response.setHeader('Content-Type','application/json');response.end(JSON.stringify({success:true,data:{items:rows.slice(offset,offset+limit),total:rows.length,revision:1,series_options:['Series A','Series B']}}));return;
     }
     if(url.pathname==='/api/selfie-identity-thumbnails'||url.pathname==='/api/selfie-reference') {
       identityCalls.push(url.pathname+url.search);
@@ -228,13 +229,18 @@ async function main() {
       fs.writeFileSync(path.join(output,'timeout.png'),Buffer.from(shot.data,'base64'));
       throw new Error('Timed out: '+expression);
     };
-    const click=async (selector,block='center')=>{
+    const click=async (selector,block='center',touch=false)=>{
       await evaluate("document.querySelector('.toast-wrap')?.replaceChildren();");
       const point=await evaluate(`(async()=>{const el=document.querySelector(${JSON.stringify(selector)});el.scrollIntoView({block:${JSON.stringify(block)}});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const r=el.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+r.height/2;const hit=document.elementFromPoint(x,y);if(!hit||!(el.contains(hit)||hit.contains(el)))throw new Error('Click target obstructed: '+${JSON.stringify(selector)}+' by '+hit?.outerHTML.slice(0,300));return {x,y};})()`);
       const frame=await cdp.send('Runtime.evaluate',{expression:"(()=>{const r=document.querySelector('iframe')?.getBoundingClientRect();return r?{x:r.x,y:r.y}:{x:0,y:0};})()",returnByValue:true});
       point.x+=frame.result.value.x;point.y+=frame.result.value.y;
-      await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
-      await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
+      if(touch) {
+        await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...point,id:1}]});
+        await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+      } else {
+        await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
+        await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
+      }
     };
     const screenshot=async name=>{
       const shot=await cdp.send('Page.captureScreenshot',{format:'png'});
@@ -245,6 +251,14 @@ async function main() {
       if(result!==true)failures.push({label,result});
     };
     const modalFits=id=>`(()=>{const modal=$('${id}').querySelector('.modal'),body=modal.querySelector('.modal-body'),r=modal.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1&&r.top>=0&&r.bottom<=innerHeight+1&&body.scrollWidth<=body.clientWidth+1;})()`;
+    const catalogLayoutFits=panelId=>`(()=>{
+      const panel=$('${panelId}'),controls=panel.querySelector('.catalog-picker-controls'),list=panel.querySelector('.catalog-picker-items'),pager=panel.querySelector('.catalog-pager');
+      const c=controls.getBoundingClientRect(),l=list.getBoundingClientRect(),filter=controls.querySelector('label').getBoundingClientRect();
+      if(c.bottom>l.top||filter.width<c.width-1||l.height<=0||list.scrollWidth>list.clientWidth+1)return false;
+      if([...list.querySelectorAll('.preset-chip')].some(button=>button.getBoundingClientRect().height>90||button.scrollWidth>button.clientWidth+1))return false;
+      if(pager){const p=pager.getBoundingClientRect(),body=panel.parentElement.getBoundingClientRect();if(l.bottom>p.top||p.bottom>body.bottom+1||p.right>body.right+1)return false;}
+      return true;
+    })()`;
     const galleryFits=id=>`(()=>{
       const grid=$('${id}').querySelector('.studio-gallery-grid'),cells=[...grid.children],images=cells.map(cell=>cell.querySelector('img'));
       return getComputedStyle(grid).gridTemplateColumns.trim().split(/\\s+/).length===3&&cells.length===3
@@ -266,6 +280,17 @@ async function main() {
         return box.width>0&&box.left>=field.left&&box.right<=field.right+1&&field.right<=innerWidth+1;
       });
     })()`;
+    const tabsMatch=selector=>`(()=>{
+      const buttons=[...document.querySelector(${JSON.stringify(selector)}).querySelectorAll(':scope > button')];
+      return buttons.filter(button=>button.classList.contains('active')).length===1&&buttons.every(button=>{
+        const active=button.classList.contains('active'),style=getComputedStyle(button);
+        return style.backgroundColor==='rgb(255, 255, 255)'
+          &&(!active||style.borderColor==='rgb(37, 99, 235)')
+          &&style.color===(active?'rgb(37, 99, 235)':'rgb(26, 27, 39)')
+          &&button.getAttribute('aria-selected')===String(active)&&button.tabIndex===(active?0:-1)
+          &&button.scrollWidth<=button.clientWidth+1;
+      });
+    })()`;
     for(const embedded of [false,true])for(const [width,height] of [[1280,900],[390,844],[320,568]]) {
       const label=`${embedded?'embedded':'standalone'}-${width}`;contextId=undefined;
       await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500});
@@ -281,6 +306,79 @@ async function main() {
         await evaluate("document.documentElement.classList.add('embedded-dashboard-ready');");
       }
       await evaluate('CONFIG={};fillForms();');
+      await check(label+' sidebar only contains workspace pages and configuration',`JSON.stringify([...document.querySelectorAll('#pageNav [data-tab]')].map(button=>button.dataset.tab))===JSON.stringify(['base','test','monitor','assets','studio','presets','configuration'])`);
+      await evaluate("navigateToTab('configuration');");
+      await check(label+' configuration opens channels first',"$('channels').classList.contains('active')&&!$('configurationHeader').hidden");
+      await check(label+' configuration uses glass background',"getComputedStyle($('configurationHeader')).backdropFilter.includes('blur')");
+      await evaluate("setConfigurationNavigation(true);window.configurationContentBounds=$('channels').getBoundingClientRect().toJSON();");
+      await click('#configurationToggle > span');
+      await check(label+' clicking configuration text toggles the entire heading',"!$('configurationNav').hidden&&$('configurationToggle').getBoundingClientRect().width>=$('configurationHeader').clientWidth-1");
+      await check(label+' configuration overlays content without moving or resizing it',"(()=>{const r=$('channels').getBoundingClientRect(),nav=$('configurationNav').getBoundingClientRect(),button=$('configurationChannels'),b=button.getBoundingClientRect();return r.top===configurationContentBounds.top&&r.width===configurationContentBounds.width&&nav.bottom>r.top&&button.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2));})()");
+      await check(label+' configuration has an opaque frosted surface',"['configurationHeader','configurationNav'].every(id=>{const style=getComputedStyle($(id));return style.backdropFilter.includes('blur')&&style.backgroundColor==='rgb(232, 238, 242)';})");
+      if(width<=390) await check(label+' configuration wraps into multiple rows',"$('configurationBackup').getBoundingClientRect().top>$('configurationChannels').getBoundingClientRect().top");
+      await click('#configurationToggle');
+      await check(label+' configuration collapses without switching page',"$('configurationNav').hidden&&$('configurationToggle').getAttribute('aria-expanded')==='false'&&$('channels').classList.contains('active')");
+      await click('#configurationToggle');
+      for(const target of ['channels','groups','proxies','image','selfie','audit','raw','backup']) {
+        await click(`#configurationNav [data-config-tab="${target}"]`);
+        await check(label+' configuration selects '+target,`$('${target}').classList.contains('active')&&document.querySelectorAll('main.app-shell > section.active').length===1&&document.querySelector('#pageNav .active').dataset.tab==='configuration'&&!$('configurationHeader').hidden`);
+        await check(label+' configuration closes and restores focus after selection '+target,"$('configurationNav').hidden&&document.activeElement===$('configurationToggle')");
+        await click('#configurationToggle');
+        await check(label+' configuration tabs show one blue selection '+target,tabsMatch('#configurationNav'));
+        await check(label+' configuration stays within viewport '+target,"document.documentElement.scrollWidth<=innerWidth+1&&$('configurationNav').getBoundingClientRect().right<=innerWidth+1");
+      }
+      await evaluate("$('configurationBackup').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}));");
+      await check(label+' configuration Home focuses first tab without closing menu',"!$('configurationNav').hidden&&document.activeElement===$('configurationChannels')");
+      await evaluate("$('configurationChannels').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));");
+      await check(label+' configuration arrow focuses next tab',"!$('configurationNav').hidden&&document.activeElement===$('configurationGroups')");
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13,text:'\r'});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter'});
+      await check(label+' configuration keyboard selection closes menu',"$('groups').classList.contains('active')&&$('configurationNav').hidden&&document.activeElement===$('configurationToggle')");
+      await click('#configurationToggle');
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});
+      await check(label+' Escape closes configuration overlay',"$('configurationNav').hidden&&document.activeElement===$('configurationToggle')");
+      await evaluate("navigateToTab('base');");
+      await check(label+' workspace hides configuration navigation',"$('configurationHeader').hidden");
+      await evaluate("navigateToTab('configuration');");
+      await check(label+' configuration restores last selected page',"$('groups').classList.contains('active')");
+      await evaluate("navigateToTab('image');window.previousCooldown=$('rateLimitSeconds').value;$('rateLimitSeconds').value='37';navigateToTab('audit');navigateToTab('base');navigateToTab('configuration');");
+      await check(label+' navigation preserves configuration form edits',"$('audit').classList.contains('active')&&$('rateLimitSeconds').value==='37'");
+      await evaluate("$('rateLimitSeconds').value=previousCooldown;");
+      await evaluate("navigateToTab('base');");
+      await click('[data-nav-target="channels"]');
+      await check(label+' workspace shortcut opens nested configuration',"$('channels').classList.contains('active')&&!$('configurationHeader').hidden&&$('configurationChannels').classList.contains('active')");
+      await check(label+' entering configuration keeps header and menu visible',"window.scrollY===0&&$('configurationHeader').getBoundingClientRect().top>=0");
+      await check(label+' scrolling configuration tabs preserves page position',"(()=>{const y=window.scrollY;scrollTabIntoView($('configurationBackup'));scrollTabIntoView($('configurationChannels'));return window.scrollY===y;})()");
+      await click('#configurationToggle');
+      await screenshot(label+'-configuration');
+      await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',x:width-2,y:2,button:'left',clickCount:1});
+      await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:width-2,y:2,button:'left',clickCount:1});
+      await check(label+' clicking outside closes configuration overlay',"$('configurationNav').hidden");
+      for(const kind of ['image','audit']) {
+        await click(kind==='image'?'#channelTabImage':'#channelTabAudit');
+        await check(label+' channel tabs show one blue selection '+kind,tabsMatch('#channels > .tabs-inline'));
+      }
+      await check(label+' auxiliary priority is removed',"!$('auditPriorityList')&&!document.querySelector('[data-priority-kind=\"audit\"]')");
+      await evaluate("switchChannelPane('image');");
+      await evaluate("navigateToTab('selfie');");
+      for(const view of ['Appearance','Schedule','Wardrobe']) {
+        await click('#selfieViewTab'+view);
+        await check(label+' identity tabs show one blue selection '+view,tabsMatch('#selfieViewTabs'));
+      }
+      await evaluate("switchSelfieView('appearance');");
+      await evaluate("navigateToTab('audit');");
+      for(const view of ['Review','Recognition','Translation']) {
+        await click('#auditViewTab'+view);
+        await check(label+' auxiliary tabs show one blue selection '+view,tabsMatch('#auditViewTabs'));
+      }
+      await evaluate("switchAuditView('review');");
+      await evaluate("navigateToTab('presets');");
+      for(const kind of ['Image','Cos','Nai']) {
+        await click('#presetKind'+kind);
+        await check(label+' preset tabs show one blue selection '+kind,tabsMatch('#presets > .tabs-inline'));
+      }
+      await evaluate("switchPresetKind('image');");
       await evaluate("navigateToTab('image');");
       await evaluate('window.scrollTo(0,0);');
       await until("$('sidebarLogoMenu').hidden");
@@ -342,32 +440,32 @@ async function main() {
       }
       await until("!document.querySelector('#pageNav .nav-switching')");
       await check(label+' selected navigation is smaller and labels stay black',`(()=>{
-        const current=document.querySelector('#pageNav .active'),other=document.querySelector('#pageNav [data-tab="channels"]');
+        const current=document.querySelector('#pageNav .active'),other=document.querySelector('#pageNav [data-tab="presets"]');
         return current.getAttribute('aria-current')==='page'&&current.getBoundingClientRect().width<other.getBoundingClientRect().width
           &&[...document.querySelectorAll('#pageNav button')].every(button=>getComputedStyle(button).color==='rgb(26, 27, 39)'&&getComputedStyle(button,'::before').color==='rgb(89, 100, 242)');
       })()`);
-      await evaluate("document.querySelector('#pageNav [data-tab=\"channels\"]').scrollIntoView({block:'center'});");
-      const navPoint=await evaluate("(()=>{const r=document.querySelector('#pageNav [data-tab=\"channels\"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
+      await evaluate("(async()=>{document.querySelector('#pageNav [data-tab=\"presets\"]').scrollIntoView({block:'center'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()");
+      const navPoint=await evaluate("(()=>{const r=document.querySelector('#pageNav [data-tab=\"presets\"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
       await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',...navPoint,button:'left',clickCount:1});
-      await until("document.querySelector('#pageNav [data-tab=\"channels\"]').classList.contains('nav-expanded')");
-      await until("(()=>{const button=document.querySelector('#pageNav [data-tab=\"channels\"]');return button.getBoundingClientRect().width>button.offsetWidth*1.035&&parseFloat(getComputedStyle(button,'::after').top)<-3.9;})()");
+      await until("document.querySelector('#pageNav [data-tab=\"presets\"]').classList.contains('nav-expanded')");
+      await until("(()=>{const button=document.querySelector('#pageNav [data-tab=\"presets\"]');return button.getBoundingClientRect().width>button.offsetWidth*1.035&&parseFloat(getComputedStyle(button,'::after').top)<-3.9;})()");
       await check(label+' long press enlarges the frame until it meets its neighbor',`(()=>{
-        const button=document.querySelector('#pageNav [data-tab="channels"]'),r=button.getBoundingClientRect(),above=button.previousElementSibling.getBoundingClientRect();
+        const button=document.querySelector('#pageNav [data-tab="presets"]'),r=button.getBoundingClientRect(),above=button.previousElementSibling.getBoundingClientRect();
         return r.top+parseFloat(getComputedStyle(button,'::after').top)*1.04<=above.bottom+1;
       })()`);
       await screenshot(label+'-sidebar-pressed');
       await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',...navPoint,button:'left',clickCount:1});
-      await until("document.querySelector('#pageNav [data-tab=\"channels\"]').classList.contains('active')&&!document.querySelector('#pageNav .nav-expanded, #pageNav .nav-switching')");
-      await check(label+' release selects and shrinks the navigation item',"document.querySelector('#pageNav .active').getBoundingClientRect().width<document.querySelector('#pageNav [data-tab=\"groups\"]').getBoundingClientRect().width");
+      await until("document.querySelector('#pageNav [data-tab=\"presets\"]').classList.contains('active')&&!document.querySelector('#pageNav .nav-expanded, #pageNav .nav-switching')");
+      await check(label+' release selects and shrinks the navigation item',"document.querySelector('#pageNav .active').getBoundingClientRect().width<document.querySelector('#pageNav [data-tab=\"configuration\"]').getBoundingClientRect().width");
       await check(label+' scrolling gesture cancels a pending long press',`(async()=>{
-        const button=document.querySelector('#pageNav [data-tab="groups"]');
+        const button=document.querySelector('#pageNav [data-tab="configuration"]');
         button.dispatchEvent(new PointerEvent('pointerdown',{isPrimary:true,button:0,clientX:50,clientY:50}));
         button.dispatchEvent(new PointerEvent('pointermove',{isPrimary:true,clientX:50,clientY:75}));
         await new Promise(resolve=>setTimeout(resolve,220));
         return !button.classList.contains('nav-expanded');
       })()`);
       await check(label+' pointer cancellation restores a held navigation item',`(async()=>{
-        const button=document.querySelector('#pageNav [data-tab="groups"]');
+        const button=document.querySelector('#pageNav [data-tab="configuration"]');
         button.dispatchEvent(new PointerEvent('pointerdown',{isPrimary:true,button:0,clientX:50,clientY:50}));
         await new Promise(resolve=>setTimeout(resolve,220));
         const expanded=button.classList.contains('nav-expanded');
@@ -554,9 +652,37 @@ async function main() {
         await click(selector);
         await until(`$('${panelId}').querySelector('[data-${kind==='cos'?'cos':'preset'}-idx]')!==null`);
         await check(label+' node '+kind+' picker dialog fits',modalFits('catalogPickerModal'));
+        await check(label+' node '+kind+' separates controls list and pager',catalogLayoutFits(panelId));
+        await evaluate("window.catalogDialogBounds=$('catalogPickerModal').querySelector('.modal').getBoundingClientRect().toJSON();");
+        await click(`#${panelId} [data-picker-filter]`);
+        await check(label+' node '+kind+' opens styled filter above catalog',modalFits('selectPickerModal'));
+        await check(label+' catalog remains open under select',"$('catalogPickerModal').classList.contains('show')&&$('selectPickerModal').classList.contains('show')");
+        await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
+        await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});
+        await check(label+' Escape only closes topmost select',`!$('selectPickerModal').classList.contains('show')&&$('catalogPickerModal').classList.contains('show')&&document.activeElement===document.querySelector('#${panelId} [data-picker-filter]')`);
+        await click(`#${panelId} [data-picker-filter]`);
+        await check(label+' short category lists omit search and avoid keyboard focus',"$('selectPickerSearch').hidden&&document.activeElement===$('selectPickerClose')");
+        const filterIndex=await evaluate(`Array.from(document.querySelector('#${panelId} [data-picker-filter]').options).findIndex(option=>option.value==='${kind==='cos'?'Series A':'action'}')`);
+        await click(`#selectPickerOptions [data-select-index="${filterIndex}"]`);
+        await until(`catalogPickerState('${panelId}').filter==='${kind==='cos'?'Series A':'action'}'&&!PICKER_LOADING.has('${panelId}')`);
+        await check(label+' node '+kind+' dialog size stays fixed after filtering',"(()=>{const r=$('catalogPickerModal').querySelector('.modal').getBoundingClientRect();return r.width===catalogDialogBounds.width&&r.height===catalogDialogBounds.height&&r.top===catalogDialogBounds.top;})()");
+        await check(label+' node '+kind+' filter changes server page',`catalogPickerState('${panelId}').total===${kind==='cos'?37:25}&&catalogPickerState('${panelId}').items.every(item=>item.${kind==='cos'?'cos_type': 'preset_group'}==='${kind==='cos'?'Series A':'action'}')`);
         await screenshot(label+'-node-'+kind+'-picker');
+        await click(`#${panelId} [data-picker-filter]`);
+        await click('#selectPickerOptions [data-select-index="0"]');
+        await until(`!PICKER_LOADING.has('${panelId}')&&catalogPickerState('${panelId}').total===74`);
+        await evaluate(`$('${panelId}').querySelector('.catalog-picker-items').scrollTop=99999;`);
+        await check(label+' node '+kind+' keeps controls and pagination visible while scrolling',catalogLayoutFits(panelId));
+        await click(`#${panelId} [data-picker-page="1"]`);
+        await until(`!PICKER_LOADING.has('${panelId}')&&catalogPickerState('${panelId}').page===2`);
+        await check(label+' node '+kind+' page two keeps controls and pager separate',catalogLayoutFits(panelId));
+        await check(label+' node '+kind+' resets list scroll on page changes',`$('${panelId}').querySelector('.catalog-picker-items').scrollTop===0&&$('catalogPickerModal').querySelector('.modal-body').scrollTop===0`);
+        await screenshot(label+'-node-'+kind+'-page-two');
+        await click(`#${panelId} [data-picker-page="-1"]`);
+        await until(`!PICKER_LOADING.has('${panelId}')&&catalogPickerState('${panelId}').page===1`);
+        const expectedPrompt=await evaluate(`catalogPickerState('${panelId}').items[0].prompt`);
         await click(`#${panelId} [data-${kind==='cos'?'cos':'preset'}-idx]`);
-        await check(label+' node '+kind+' choice updates prompt and closes dialog',`!$('catalogPickerModal').classList.contains('show')&&$('studioNodePrompt').value==='${kind==='cos'?'COS':'Preset'} prompt 0'&&studioNode('node-one').params.prompt===$('studioNodePrompt').value`);
+        await check(label+' node '+kind+' choice updates prompt and closes dialog',`!$('catalogPickerModal').classList.contains('show')&&$('studioNodePrompt').value===${JSON.stringify(expectedPrompt)}&&studioNode('node-one').params.prompt===$('studioNodePrompt').value`);
       }
       await evaluate('clearTimeout(STUDIO.canvasSaveTimer);');
       await evaluate("navigateToTab('monitor');");
@@ -601,12 +727,48 @@ async function main() {
         await until(`$('${panelId}').querySelector('[data-${kind==='cos'?'cos':'preset'}-idx]')!==null`);
         await evaluate(`for(let i=0;i<8;i++)${kind==='cos'?'toggleTestCos':'toggleTestPresets'}();`);
         await check(label+' test '+kind+' picker fits',modalFits('catalogPickerModal'));
+        await check(label+' quick test '+kind+' exposes filters',`!!$('${panelId}').querySelector('[data-picker-filter]')`);
+        const expectedPrompt=await evaluate(`catalogPickerState('${panelId}').items[0].prompt`);
         await click(`#${panelId} [data-${kind==='cos'?'cos':'preset'}-idx]`);
         assert.equal(catalogCalls.length,beforeCatalog,'node and quick-test pickers must reuse paginated cache');
-        await check(label+' test '+kind+' updates prompt',`$('testPrompt').value==='${kind==='cos'?'COS':'Preset'} prompt 0'&&!$('catalogPickerModal').classList.contains('show')`);
+        await check(label+' test '+kind+' updates prompt',`$('testPrompt').value===${JSON.stringify(expectedPrompt)}&&!$('catalogPickerModal').classList.contains('show')`);
       }
       await check(label+' quick test pairs select fields',filtersFit('testChannel'));
       await check(label+' quick test template fields removed',"!document.querySelector('#test [id^=\"testTemplate\"]')&&!$('testVariationEnabled')");
+      await evaluate(`(()=>{const field=document.createElement('div');field.id='smokeSelectField';field.innerHTML='<label for="smokeSelect">选择测试</label><select id="smokeSelect"><option value="a">默认选项</option><optgroup label="其他选项"><option value="b">${modelName}</option><option disabled value="c">不可用选项</option></optgroup><optgroup disabled label="停用分组"><option value="d">停用分组选项</option></optgroup></select>';$('test').append(field);window.selectChanges=0;$('smokeSelect').onchange=()=>selectChanges++;})()`);
+      await click('#smokeSelect','center',width<500);
+      await until("$('selectPickerModal').classList.contains('show')");
+      await check(label+' shared select handles disabled options and groups',"$('selectPickerOptions').querySelectorAll('button:disabled').length===2");
+      await check(label+' shared select fits long model names',modalFits('selectPickerModal'));
+      await check(label+' few built-in choices need no search or input focus',"$('selectPickerSearch').hidden&&document.activeElement===$('selectPickerClose')");
+      await screenshot(label+'-select-picker');
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowUp',code:'ArrowUp'});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowUp',code:'ArrowUp'});
+      await check(label+' ArrowUp selects last available option',"document.activeElement.dataset.selectIndex==='1'");
+      await click('#selectPickerOptions [data-select-index="1"]');
+      await check(label+' shared select updates original field exactly once',"$('smokeSelect').value==='b'&&selectChanges===1&&document.activeElement===$('smokeSelect')");
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter'});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter'});
+      await until("$('selectPickerModal').classList.contains('show')");
+      await click('#selectPickerOptions [data-select-index="1"]');
+      await check(label+' reselecting current value avoids duplicate saves',"selectChanges===1");
+      await click('#smokeSelect');
+      await evaluate("window.selectDialogBounds=$('selectPickerModal').querySelector('.modal').getBoundingClientRect().toJSON();for(let i=0;i<12;i++)$('smokeSelect').add(new Option('Model option '+i,'extra-'+i));");
+      await until("!$('selectPickerSearch').hidden");
+      await check(label+' long option lists expose search without focusing it',"document.activeElement===$('selectPickerClose')");
+      await click('#selectPickerSearch');
+      await evaluate("$('selectPickerSearch').value='Model option 11';$('selectPickerSearch').dispatchEvent(new Event('input'));");
+      await check(label+' search narrows options without resizing the dialog',"(()=>{const r=$('selectPickerModal').querySelector('.modal').getBoundingClientRect();return $('selectPickerOptions').querySelectorAll('button').length===1&&r.width===selectDialogBounds.width&&r.height===selectDialogBounds.height&&r.top===selectDialogBounds.top;})()");
+      await evaluate("$('selectPickerSearch').value='no matching choice';$('selectPickerSearch').dispatchEvent(new Event('input'));");
+      await check(label+' empty selection results keep dialog size',"$('selectPickerOptions').querySelectorAll('button').length===0&&$('selectPickerModal').querySelector('.modal').getBoundingClientRect().height===selectDialogBounds.height");
+      await click('#selectPickerClose');
+      await click('#smokeSelect');
+      await check(label+' reopening searchable choices does not open keyboard',"!$('selectPickerSearch').hidden&&$('selectPickerSearch').value===''&&document.activeElement===$('selectPickerClose')");
+      await screenshot(label+'-searchable-select-picker');
+      await evaluate("$('smokeSelect').disabled=true;");
+      await until("!$('selectPickerModal').classList.contains('show')");
+      await check(label+' disabled fields cannot open selector',"(()=>{openSelectPicker($('smokeSelect'));return !SELECT_PICKER;})()");
+      await evaluate("$('smokeSelectField').remove();");
       await evaluate('window.scrollTo(0,0);');
       await screenshot(label+'-quick-test');
       await click('#testExtraReferences [data-ref-add]');
@@ -665,10 +827,32 @@ async function main() {
       await click('#openCacheModels');
       await check(label+' cached model dialog fits',modalFits('cacheModelsModal'));
       await check(label+' cache lists models',"$('cacheModels').querySelectorAll('.model-row').length===2");
-      await evaluate("$('cacheSearch').value='cached-model';$('cacheSearch').dispatchEvent(new Event('input'));");
-      await check(label+' cache search narrows models',"$('cacheModels').querySelectorAll('.model-row').length===1");
-      await click('#cacheModels .model-row button');
+      await check(label+' short cache lists omit search and avoid input focus',"$('cacheModelsSearch').hidden&&document.activeElement===$('cacheModelsClose')&&!$('cacheModelsPager').children.length");
+      await click('#cacheModels [data-model="cached-model"] button');
       await check(label+' cache enables model in channel',"collectModalChannel().enabled_models.includes('cached-model')");
+      await evaluate("window.originalModelCache=currentModalChannel().models_cache;window.cacheDialogBounds=$('cacheModelsModal').querySelector('.modal').getBoundingClientRect().toJSON();(()=>{const ch=currentModalChannel();ch.models_cache=Array.from({length:8},(_,i)=>'model-'+i);storeModalChannel(ch);renderModalModels(ch);})()");
+      await check(label+' eight cached models still need no search',"$('cacheModelsSearch').hidden");
+      await evaluate("(()=>{const ch=currentModalChannel();ch.models_cache.push('model-8');storeModalChannel(ch);renderModalModels(ch);})()");
+      await check(label+' nine cached models expose search without focusing it',"!$('cacheModelsSearch').hidden&&document.activeElement!==$('cacheSearch')");
+      await evaluate("(()=>{const ch=currentModalChannel();ch.models_cache=Array.from({length:65},(_,i)=>'model-'+String(i).padStart(2,'0'));storeModalChannel(ch);renderModalModels(ch);})()");
+      await check(label+' cache limits page to thirty models',"$('cacheModels').querySelectorAll('.model-row').length===30&&$('cacheModelsSummary').textContent.includes('1/3')");
+      await evaluate("$('cacheModels').scrollTop=99999;");
+      await click('#cacheModelsPager [data-cache-page="1"]');
+      await check(label+' cache second page starts from model thirty and resets scroll',"CACHE_MODELS_PAGE===2&&$('cacheModels').querySelector('.model-row').dataset.model==='model-30'&&$('cacheModels').scrollTop===0");
+      await click('#cacheModelsPager [data-cache-page="1"]');
+      await check(label+' cache last page has five models and disables next',"$('cacheModels').querySelectorAll('.model-row').length===5&&$('cacheModelsPager').querySelector('[data-cache-page=\"1\"]').disabled");
+      await evaluate("$('cacheSearch').value='model-64';$('cacheSearch').dispatchEvent(new Event('input'));");
+      await check(label+' cache search resets page and filters all cached models',"CACHE_MODELS_PAGE===1&&$('cacheModels').querySelectorAll('.model-row').length===1&&$('cacheModels').querySelector('.model-row').dataset.model==='model-64'&&!$('cacheModelsPager').children.length");
+      await check(label+' cache search and page changes preserve dialog size',"(()=>{const r=$('cacheModelsModal').querySelector('.modal').getBoundingClientRect();return r.width===cacheDialogBounds.width&&r.height===cacheDialogBounds.height&&r.top===cacheDialogBounds.top;})()");
+      await evaluate("window.originalEnabledModels=[...currentModalChannel().enabled_models];$('cacheSearch').value='';(()=>{const ch=currentModalChannel();ch.enabled_models=[...ch.enabled_models,'model-64','model-61'];storeModalChannel(ch);renderModalModels(ch);})()");
+      await check(label+' enabled cached models lead before pagination without changing group order',"JSON.stringify([...$('cacheModels').querySelectorAll('.model-row')].slice(0,3).map(row=>row.dataset.model))===JSON.stringify(['model-61','model-64','model-00'])");
+      await check(label+' cache sort preserves stored cache and enabled priority',"currentModalChannel().models_cache[0]==='model-00'&&currentModalChannel().models_cache[64]==='model-64'&&JSON.stringify(currentModalChannel().enabled_models)===JSON.stringify([...originalEnabledModels,'model-64','model-61'])");
+      await evaluate("$('cacheSearch').value='model-6';$('cacheSearch').dispatchEvent(new Event('input'));");
+      await check(label+' enabled models lead within search results',"JSON.stringify([...$('cacheModels').querySelectorAll('.model-row')].map(row=>row.dataset.model))===JSON.stringify(['model-61','model-64','model-60','model-62','model-63'])");
+      await click('#cacheModels [data-model="model-61"] button');
+      await check(label+' disabling model moves it back into the unused group',"JSON.stringify([...$('cacheModels').querySelectorAll('.model-row')].map(row=>row.dataset.model))===JSON.stringify(['model-64','model-60','model-61','model-62','model-63'])");
+      await evaluate("(()=>{const ch=currentModalChannel();ch.enabled_models=originalEnabledModels;storeModalChannel(ch);renderModalModels(ch);})()");
+      await evaluate("$('cacheSearch').value='';(()=>{const ch=currentModalChannel();ch.models_cache=originalModelCache;storeModalChannel(ch);renderModalModels(ch);})()");
       await screenshot(label+'-cache-models');
       await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
       await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});
@@ -738,13 +922,13 @@ async function main() {
         assert.equal(saved.find(channel=>channel.id===channelId).name,`new-${kind}-edited`);
         await evaluate('closeChannelModal();');
       }
-      await evaluate("window.priorityBefore={image:$('priorityList').value,audit:$('auditPriorityList').value};$('priorityList').value='Channel A/model-a';refreshPriorityPickerWithLabels('image',['Channel A/model-a','Channel A/model-b','Channel B/model-c']);");
+      await evaluate("window.priorityBefore=$('priorityList').value;$('priorityList').value='Channel A/model-a';refreshPriorityPickerWithLabels('image',['Channel A/model-a','Channel A/model-b','Channel B/model-c']);");
       await check(label+' priority model filters selected models',"$('priorityChannel').value==='Channel A'&&$('priorityPicker').options.length===1&&$('priorityPicker').value==='Channel A/model-b'&&$('priorityPicker').options[0].textContent==='model-b'");
       await evaluate("$('priorityList').value+=String.fromCharCode(10)+'Channel A/model-b';refreshPriorityPickerWithLabels('image',['Channel A/model-a','Channel A/model-b','Channel B/model-c']);");
       await check(label+' priority filters exhausted channels',"$('priorityChannel').options.length===1&&$('priorityChannel').value==='Channel B'&&$('priorityPicker').value==='Channel B/model-c'");
       await evaluate("$('priorityList').value+=String.fromCharCode(10)+'Channel B/model-c';refreshPriorityPickerWithLabels('image',['Channel A/model-a','Channel A/model-b','Channel B/model-c']);");
       await check(label+' exhausted priority lists have no selectable value',"!$('priorityChannel').value&&!$('priorityPicker').value");
-      await evaluate("$('priorityList').value=priorityBefore.image;$('auditPriorityList').value=priorityBefore.audit;refreshPriorityPicker('image');refreshPriorityPicker('audit');window.beforeProxyConfig=JSON.parse(JSON.stringify(CONFIG));CONFIG.image_channels=[{name:'Channel use',proxy_id:'download-proxy',enabled_models:['a','b'],model_download_proxy_ids:{a:'download-proxy'}},{name:'Model use',enabled_models:['c'],model_download_proxy_ids:{c:'download-proxy',disabled:'download-proxy'}}];CONFIG.audit_channels=[];document.querySelectorAll('main.app-shell>section').forEach(section=>section.classList.toggle('active',section.id==='proxies'));renderProxyList();");
+      await evaluate("$('priorityList').value=priorityBefore;refreshPriorityPicker('image');window.beforeProxyConfig=JSON.parse(JSON.stringify(CONFIG));CONFIG.image_channels=[{name:'Channel use',proxy_id:'download-proxy',enabled_models:['a','b'],model_download_proxy_ids:{a:'download-proxy'}},{name:'Model use',enabled_models:['c'],model_download_proxy_ids:{c:'download-proxy',disabled:'download-proxy'}}];CONFIG.audit_channels=[];document.querySelectorAll('main.app-shell>section').forEach(section=>section.classList.toggle('active',section.id==='proxies'));renderProxyList();");
       await evaluate(`CONFIG.proxies=${JSON.stringify(config.proxies)};renderProxyList();`);
       await check(label+' proxy usage counts channels once and enabled model overrides once',"proxyUsage('download-proxy').length===2&&$('proxyList').querySelector('[data-act=\"usage\"] span').textContent==='2'");
       await click('#proxyList [data-act="usage"]');

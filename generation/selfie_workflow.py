@@ -159,7 +159,7 @@ class SelfieWorkflowService:
         source: str,
         fail_label: str,
         message_override: str = "",
-        include_at_avatar: bool = False,
+        include_at_avatar: bool = True,
         allow_context_fallback: bool = True,
         requested_count_override: int = 0,
         preset_aspect: str = "",
@@ -286,7 +286,7 @@ class SelfieWorkflowService:
             expanded_extra = special_variants[0]
         else:
             expanded_extra, preset_aspect, preset_resolution, preset_name = plugin._expand_user_text_with_preset(raw_extra)
-        has_refs = bool(self.extract_image_sources(event))
+        has_refs = bool(self.extract_image_sources(event, include_at_avatar=True))
         await plugin._ensure_daily_selfie_schedule(expanded_extra or "自拍", has_refs)
         base_action = plugin._build_selfie_request_action(expanded_extra, has_refs)
         async for item in plugin._handle_selfie_command(
@@ -323,7 +323,7 @@ class SelfieWorkflowService:
             expanded_extra = special_variants[0]
         else:
             expanded_extra, preset_aspect, preset_resolution, preset_name = plugin._expand_user_text_with_preset(raw_extra)
-        has_refs = bool(self.extract_image_sources(event))
+        has_refs = bool(self.extract_image_sources(event, include_at_avatar=True))
         try:
             fallback = plugin._build_leg_focus_action(expanded_extra, has_refs)
         except LegFocusDataError as exc:
@@ -376,7 +376,7 @@ class SelfieWorkflowService:
             expanded_extra, preset_aspect, preset_resolution, preset_name = (
                 plugin._expand_cos_user_text_with_preset(raw_extra)
             )
-        has_refs = bool(self.extract_image_sources(event))
+        has_refs = bool(self.extract_image_sources(event, include_at_avatar=True))
         suppress_cos_pose = (
             preset_name == "动作预设" or prompt_preset_group(preset_name) == "action"
         )
@@ -421,7 +421,7 @@ class SelfieWorkflowService:
             expanded_extra = special_variants[0]
         else:
             expanded_extra, preset_aspect, preset_resolution, preset_name = plugin._expand_user_text_with_preset(raw_extra)
-        has_refs = bool(self.extract_image_sources(event))
+        has_refs = bool(self.extract_image_sources(event, include_at_avatar=True))
         await plugin._ensure_daily_selfie_schedule(expanded_extra or "看看你", has_refs)
         fallback = plugin._build_third_person_look_action(expanded_extra, has_refs)
         async for item in plugin._handle_selfie_command(

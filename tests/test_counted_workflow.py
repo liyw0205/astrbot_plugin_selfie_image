@@ -10,6 +10,7 @@ import pytest
 from astrbot_plugin_selfie_image.core.models import AICatConfig
 from astrbot_plugin_selfie_image.features.reference_media import ImageDeliveryOutcome
 from astrbot_plugin_selfie_image.generation.counted_workflow import CountedGenerationWorkflow
+from astrbot_plugin_selfie_image.generation.generation_results import build_task_terminal_state
 from astrbot_plugin_selfie_image.generation.image_scheduler import ImageJobScheduler
 from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
@@ -264,3 +265,106 @@ def test_legacy_slot_is_released_when_cooldown_is_interrupted(plugin, error):
         run_batch(plugin, run_one, total=2)
     assert gate._value == 1
     run_one.assert_not_awaited()
+
+
+@pytest.mark.parametrize("mode", ["stop", "skip", "skip_max"])
+def test_all_channels_cooling_stops_pending_shots_and_notifies_once(plugin, mode):
+    plugin._image_inflight_limit = lambda: 1
+    plugin._batch_failure_policy = lambda: (mode, 100)
+    run_one = AsyncMock(return_value={
+        "success": False, "error": "account disabled", "all_targets_cooling_down": True,
+    })
+
+    result = run_batch(plugin, run_one, total=100)
+
+    run_one.assert_awaited_once_with(0)
+    assert result["status"] == "failed"
+    assert result["all_targets_cooling_down"] is True
+    assert result["cancelled"] is False
+    assert result["completed_count"] == result["failed_count"] == 1
+    assert result["batch_unstarted"] == 99
+    plugin._batch_shot_fail_text.assert_not_called()
+    plugin._send_task_notification.assert_awaited_once()
+    message = plugin._send_task_notification.await_args.args[2]
+    assert "任务已结束" in message
+    assert "成功 0 张，失败 1 张，未执行 99 张" in message
+
+
+@pytest.mark.parametrize("late_cooldown", [False, True])
+def test_cooldown_drains_inflight_results_before_final_notification(plugin, late_cooldown):
+    plugin._image_inflight_limit = lambda: 3
+    plugin._batch_failure_policy = lambda: ("skip", 0)
+    plugin._batch_success_text.return_value = "image sent"
+    events = []
+    started = []
+
+    async def commit(_task_id):
+        # Yield before processing the cooldown result to expose admission races.
+        await asyncio.sleep(0)
+
+    async def send(_event, files):
+        events.append(("image", files[0]))
+
+    async def notify(_task_id, _event, text):
+        events.append(("notification", text))
+
+    plugin._wait_for_record_commits.side_effect = commit
+    plugin._send_generated_images.side_effect = send
+    plugin._send_task_notification.side_effect = notify
+
+    async def run():
+        all_started = asyncio.Event()
+
+        async def run_one(index):
+            started.append(index)
+            if len(started) == 3:
+                all_started.set()
+            await all_started.wait()
+            if index == 0:
+                return {"success": False, "all_targets_cooling_down": True, "error": "cooling"}
+            await asyncio.sleep(0)
+            if index == 1:
+                return {"success": True, "files": ["late.png"]}
+            return {"success": False, "error": "late timeout", "all_targets_cooling_down": late_cooldown}
+
+        return await asyncio.wait_for(plugin._run_counted_generation_shots(
+            task_id="task", event=object(), total=100, fail_label="failed",
+            run_one=run_one, log_prefix="cooldown regression",
+        ), timeout=2)
+
+    result = asyncio.run(run())
+
+    assert started == [0, 1, 2]
+    assert result["status"] == "partial_success"
+    assert result["files"] == ["late.png"]
+    assert result["succeeded_count"] == 1
+    assert result["failed_count"] == 2
+    assert result["completed_count"] == 3
+    assert result["progress_percent"] == 3
+    assert result["batch_unstarted"] == 97
+    assert "冷却" in result["error"]
+    assert events[0] == ("image", "late.png")
+    assert events[-1][0] == "notification"
+    assert "成功 1 张，失败 2 张，未执行 97 张" in events[-1][1]
+    assert sum("任务已结束" in text for kind, text in events if kind == "notification") == 1
+    terminal = build_task_terminal_state(result, requested_count=100)
+    assert terminal["terminal_status"] == "partial_success"
+    assert terminal["success"] is False
+    assert terminal["result"]["completed_count"] == 3
+    assert terminal["result"]["batch_unstarted"] == 97
+
+
+def test_cancel_during_cooldown_drain_does_not_send_completion_notice(plugin):
+    plugin._image_inflight_limit = lambda: 1
+
+    async def commit(_task_id):
+        plugin._task_cancel_requested.return_value = True
+
+    plugin._wait_for_record_commits.side_effect = commit
+    result = run_batch(plugin, AsyncMock(return_value={
+        "success": False, "all_targets_cooling_down": True,
+    }), total=100)
+
+    assert result["cancelled"] is True
+    assert result["status"] == "cancelled"
+    plugin._send_task_notification.assert_not_awaited()

@@ -25,9 +25,7 @@ from astrbot_plugin_selfie_image.webui.dashboard_api import SelfieImageDashboard
         ("page_tasks_export", (), "_task_controller", "export"),
         ("page_studio_get", ("studio-1",), "_canvas_controller", "studio_get"),
         ("page_studio_canvas_get", ("studio-1",), "_canvas_controller", "studio_canvas"),
-        ("page_creative_canvas_get", ("canvas-1",), "_canvas_controller", "creative_canvas_get"),
         ("page_studio_gallery", (), "_canvas_controller", "gallery"),
-        ("page_creative_canvas_gallery", (), "_canvas_controller", "gallery"),
     ],
 )
 def test_slow_dashboard_io_keeps_event_loop_responsive(

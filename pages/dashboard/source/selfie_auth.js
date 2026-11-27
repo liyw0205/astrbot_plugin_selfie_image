@@ -827,7 +827,7 @@
           if ($('logoutBtn')) $('logoutBtn').style.display = 'none';
         }
         if ($('loginStatus')) $('loginStatus').textContent = '';
-        const activeTab = document.querySelector('nav.page-nav button.active')?.dataset.tab;
+        const activeTab = document.querySelector('main.app-shell > section.active')?.id;
         if (activeTab && activeTab !== 'base') navigateToTab(activeTab, {force:true});
         const health = await checkHealth();
         // The base tab only needs config and health. Heavy data pages load when

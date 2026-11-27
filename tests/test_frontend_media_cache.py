@@ -53,8 +53,9 @@ def test_gallery_and_catalog_pickers_use_server_pages_and_support_search():
     assert "data-gallery-more" in PAGE
     assert "data-prompt-search" in PAGE
     assert "data-cos-search" in PAGE
-    assert "async function fetchCatalogPage(kind, query, page, force = false)" in PAGE
-    assert "limit: String(PICKER_PAGE_SIZE), offset: String(offset), search: normalizedQuery" in PAGE
+    assert "async function fetchManagedCatalogPage(kind, searchQuery, page, force = false, filters = PRESET_MANAGER_FILTERS)" in PAGE
+    assert "await fetchManagedCatalogPage(kind, state.query, state.page, force, filters)" in PAGE
+    assert 'data-picker-filter' in PAGE
     assert "data-picker-page=\"1\"" in PAGE
     assert "id=\"presetManagerPager\"" in PAGE
     assert "id=\"presetCosManagerPager\"" in PAGE
@@ -160,10 +161,9 @@ def test_record_and_asset_persistent_pages_survive_short_memory_ttl():
 
 def test_catalogs_prefetch_three_forward_pages_without_loading_media():
     assert "const PAGE_PREFETCH_AHEAD = 3;" in PAGE
-    assert "function prefetchCatalogPages(kind, query, page, total)" in PAGE
-    assert "function prefetchManagedCatalogPages(kind, query, page, total)" in PAGE
+    assert "function prefetchManagedCatalogPages(kind, query, page, total, filters = PRESET_MANAGER_FILTERS)" in PAGE
     assert "Array.from({length: PAGE_PREFETCH_AHEAD}, (_, index) => page + index + 1)" in PAGE
-    prefetch = PAGE[PAGE.index("function prefetchCatalogPages"):PAGE.index("function fetchManagedCatalogPage")]
+    prefetch = PAGE[PAGE.index("function prefetchManagedCatalogPages"):PAGE.index("function flattenCosPickerPayload")]
     assert "loadProtectedImages" not in prefetch
 
 
@@ -184,13 +184,11 @@ def test_dashboard_catalog_pages_and_gallery_survive_a_reload_with_bounded_ttl()
     assert "scheduleDashboardPersistCacheWrite(storageKey" in PAGE
     assert "await hydrateDashboardPersistStorage();" in PAGE
     assert "async function hydrateDashboardPersistentCaches()" in PAGE
-    assert "listDashboardPersistCache('picker-page', listOptions)" in PAGE
     assert "listDashboardPersistCache('managed-page', listOptions)" in PAGE
     assert "listDashboardPersistCache('record-page', listOptions)" in PAGE
     assert "listDashboardPersistCache('asset-page', listOptions)" in PAGE
     assert "readDashboardPersistCache('gallery-picker', 'items')" in PAGE
     assert "readDashboardPersistCacheEntry('asset-collections', 'all')" in PAGE
-    assert "writeDashboardPersistCache('picker-page', key, data)" in PAGE
     assert "writeDashboardPersistCache('managed-page', key, value)" in PAGE
     assert "writeDashboardPersistCache('gallery-picker', 'items', GALLERY_PICKER_CACHE.items)" in PAGE
     assert "writeDashboardPersistCache('asset-collections', 'all', ASSET_COLLECTIONS)" in PAGE
@@ -210,7 +208,6 @@ def test_cache_aware_page_loads_wait_for_persistent_hydration():
 
 
 def test_cache_refreshes_reject_stale_catalog_pages_tags_prefetch_and_studio_gallery():
-    assert "PICKER_PAGE_REQUEST_GENERATIONS" in PAGE
     assert "MANAGED_PAGE_REQUEST_GENERATIONS" in PAGE
     assert "(requestGenerations.get(key) || 0) === requestGeneration" in PAGE
     assert "requestSeq === RECORD_LOAD_SEQ" in PAGE
@@ -438,7 +435,7 @@ def test_record_persona_reference_is_loaded_after_markup_without_inline_html_dat
 
 def test_selfie_controls_only_offer_local_daily_outfit_refresh():
     controls = PAGE[PAGE.index('<input id="selfieFile"'):PAGE.index('<div id="selfieStatus"', PAGE.index('<input id="selfieFile"'))]
-    selfie_start = PAGE.index('<section id="selfie">')
+    selfie_start = PAGE.index('<section id="selfie"')
     selfie_end = PAGE.index('</section>', selfie_start)
     selfie_page = PAGE[selfie_start:selfie_end]
     schedule_start = selfie_page.index('<div id="selfieViewSchedule"')
@@ -627,9 +624,8 @@ def test_dashboard_shortcuts_and_priority_pin_cover_all_model_kinds():
     assert "main.app-shell > section" in PAGE
     assert "function movePriorityToTop" in PAGE
     assert "movePriorityToTop('${kind}', ${i})" in PAGE
-    assert "for (const kind of ['image','audit'])" in PAGE
     assert "priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\\n')" in PAGE
-    assert "auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\\n')" in PAGE
+    assert "auditPriorityList" not in PAGE
 
 
 def test_model_priority_refresh_uses_one_snapshot_and_keeps_selection():
@@ -638,7 +634,7 @@ def test_model_priority_refresh_uses_one_snapshot_and_keeps_selection():
     refresh = PAGE[refresh_start:refresh_end]
     assert refresh.count("collectChannels()") == 1
     assert "prunePriorityList('image', labels)" in refresh
-    assert "prunePriorityList('audit', audits)" in refresh
+    assert "prunePriorityList('audit'" not in refresh
     assert "values.includes(previous) ? previous : fallback" in refresh
     provider_start = PAGE.index("function setModelProviderType(")
     provider_end = PAGE.index("function addEnabledModel(", provider_start)

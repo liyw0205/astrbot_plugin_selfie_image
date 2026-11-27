@@ -637,69 +637,8 @@ CANVAS_ROUTE_CONTRACTS = (
         "page_studio_run", "Selfie Image studio run",
     ),
     CanvasRouteContract(
-        "creative_canvas_sessions_list", "/api/creative-canvas/sessions",
-        "creative-canvas/sessions", ("GET",), "creative_canvas_sessions_list",
-        "page_creative_canvas_list", "Selfie Image creation canvas list",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_sessions_create", "/api/creative-canvas/sessions",
-        "creative-canvas/sessions", ("POST",), "creative_canvas_sessions_create",
-        "page_creative_canvas_create", "Selfie Image creation canvas create",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_session_get", "/api/creative-canvas/sessions/<session_id>",
-        "creative-canvas/sessions/<session_id>", ("GET",), "creative_canvas_session_get",
-        "page_creative_canvas_get", "Selfie Image creation canvas get",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_session_update", "/api/creative-canvas/sessions/<session_id>",
-        "creative-canvas/sessions/<session_id>", ("POST",), "creative_canvas_session_update",
-        "page_creative_canvas_update", "Selfie Image creation canvas update",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_session_delete", "/api/creative-canvas/sessions/<session_id>/delete",
-        "creative-canvas/sessions/<session_id>/delete", ("POST",),
-        "creative_canvas_session_delete", "page_creative_canvas_delete",
-        "Selfie Image creation canvas delete",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_session_slot", "/api/creative-canvas/sessions/<session_id>/slots/<slot_id>",
-        "creative-canvas/sessions/<session_id>/slots/<slot_id>", ("POST",),
-        "creative_canvas_session_slot", "page_creative_canvas_set_slot",
-        "Selfie Image creation canvas slot",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_session_add_slot", "/api/creative-canvas/sessions/<session_id>/slots",
-        "creative-canvas/sessions/<session_id>/slots", ("POST",),
-        "creative_canvas_session_add_slot", "page_creative_canvas_add_slot",
-        "Selfie Image creation canvas add slot",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_session_reorder", "/api/creative-canvas/sessions/<session_id>/reorder",
-        "creative-canvas/sessions/<session_id>/reorder", ("POST",),
-        "creative_canvas_session_reorder", "page_creative_canvas_reorder",
-        "Selfie Image creation canvas reorder",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_session_promote", "/api/creative-canvas/sessions/<session_id>/promote",
-        "creative-canvas/sessions/<session_id>/promote", ("POST",),
-        "creative_canvas_session_promote", "page_creative_canvas_promote",
-        "Selfie Image creation canvas promote",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_session_run", "/api/creative-canvas/sessions/<session_id>/run",
-        "creative-canvas/sessions/<session_id>/run", ("POST",),
-        "creative_canvas_session_run", "page_creative_canvas_run",
-        "Selfie Image creation canvas run",
-    ),
-    CanvasRouteContract(
         "studio_gallery", "/api/studio/gallery", "studio/gallery", ("GET",),
         "studio_gallery", "page_studio_gallery", "Selfie Image studio gallery",
-    ),
-    CanvasRouteContract(
-        "creative_canvas_gallery", "/api/creative-canvas/gallery",
-        "creative-canvas/gallery", ("GET",), "creative_canvas_gallery",
-        "page_creative_canvas_gallery", "Selfie Image creation canvas gallery",
     ),
 )
 
