@@ -48,7 +48,7 @@ NEW_IDS = (
     "original_satin_slip_dress",
     "original_swim_with_shirt",
     "original_lace_slip_nightie",
-    # Batch 2: 崩坏星穹铁道 8 / 碧蓝航线 4 / 古风 3 / 原创 3 / 公主连结 2
+    # Batch 2: 崩坏星穹铁道 8 / 碧蓝航线 4 / 古风 3 / 原创 2 / 公主连结 2
     "firefly_white_gauze_dress",
     "robin_backless_satin_gown",
     "kafka_black_purple_coat",
@@ -65,7 +65,6 @@ NEW_IDS = (
     "ancient_lotus_short_qipao",
     "ancient_waterblue_chest_ruqun",
     "original_gray_knit_camisole",
-    "original_oversized_white_shirt",
     "original_wa_yukata_loose",
     "karyl_black_purple_cat_dress",
     "kokkoro_white_green_offshoulder",

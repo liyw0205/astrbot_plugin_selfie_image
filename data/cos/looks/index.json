@@ -34,7 +34,7 @@
     {
       "cos_type": "原创COS",
       "file": "原创COS.json",
-      "count": 59
+      "count": 52
     },
     {
       "cos_type": "原神",
@@ -399,7 +399,6 @@
     "original_satin_slip_dress",
     "style_eclipse_court",
     "style_neobaroque_space_opera",
-    "style_stained_glass_couture",
     "style_mechanical_garden_gala",
     "style_lunar_hotel_midnight",
     "style_aurora_crystal_procession",
@@ -407,12 +406,9 @@
     "original_eclipse_cartographer",
     "original_abyssal_diver_soprano",
     "original_meteor_auctioneer",
-    "original_stained_glass_restorer",
     "original_obsidian_jeweler",
     "original_orbital_greenhouse_botanist",
     "original_last_opera_soprano",
-    "original_cloudsea_lighthouse_keeper",
-    "original_aurora_train_conductor",
     "original_paper_theater_puppeteer",
     "original_meteorite_archive_keeper",
     "original_midnight_armillary_musician",
@@ -593,12 +589,9 @@
     "fate_semiramis_black_violet",
     "fate_cleopatra_white_gold",
     "gura_shark",
-    "original_oversized_white_shirt",
     "style_art_deco_airship",
-    "original_storm_eye_observer",
     "original_comet_return_messenger",
     "original_deep_space_archaeologist",
-    "original_cliff_cableway_mechanic",
     "azur_lane_enterprise",
     "azur_lane_prinz_eugen",
     "azur_lane_new_jersey",
