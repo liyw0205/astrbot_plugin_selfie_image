@@ -53,10 +53,12 @@ async def capture_command(tmp_path, mode, medium, language, message_refs=False):
     )
     plugin._quota_error_message = lambda *_a: ""
     plugin._rate_limit_error_message = lambda *_a: ""
-    plugin._event_reference_images = AsyncMock(return_value=[
+    references = [
         ImageReference(data=f"external-{index}".encode(), mime_type="image/png")
         for index in range(int(message_refs))
-    ])
+    ]
+    plugin._event_reference_images = AsyncMock(return_value=references)
+    plugin._event_reference_images_with_stats = AsyncMock(return_value=(references, len(references), 0))
     plugin._build_contextual_progress_text = AsyncMock(return_value="progress")
     plugin._record_bot_text_context = lambda *_a: None
     plugin._image_batch_queue_expected = lambda *_a: False

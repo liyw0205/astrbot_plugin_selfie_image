@@ -6595,6 +6595,27 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertIn("仅补充身份、可确认的体型", captured[0][1])
         self.assertEqual(captured[1], ("plain-edit", scoped_prompt, 1))
 
+        from astrbot_plugin_selfie_image.prompts.selfie_actions import build_group_selfie_action
+
+        group_prompt = build_group_selfie_action("与玩偶合影", has_refs=True)
+
+        async def describe_companion(_event, images, *, prompt_contract):
+            self.assertEqual(prompt_contract, group_prompt)
+            return "参考图二：蓝色男性玩偶，塑料关节", {"enabled": True, "applied": True}
+
+        plugin._describe_reference_images_for_generation = describe_companion
+        captured.clear()
+        with patch.object(plugin_main, "generate_image_with_fallback", side_effect=fake_generate):
+            asyncio.run(plugin._run_image_generation(
+                group_prompt, "9:16", "1K", [reference], targets=targets, event=object(),
+            ))
+        self.assertEqual(captured[0][2], 0)
+        self.assertIn("自动拟人为独立的成年女性", captured[0][1])
+        self.assertIn("参考图原型线索", captured[0][1])
+        self.assertIn("不按下述原型观察恢复原物种、玩偶结构或原型性别", captured[0][1])
+        self.assertIn("蓝色男性玩偶", captured[0][1])
+        self.assertEqual(captured[1], ("plain-edit", group_prompt, 1))
+
     def test_image_generation_audit_rejection_records_without_unbound_result(self) -> None:
         plugin = self._plugin_stub()
         plugin._save_reference_images_to_cache = lambda _refs: []

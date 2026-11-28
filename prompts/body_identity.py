@@ -41,6 +41,11 @@ def build_body_identity_prompt(
                 "never average or swap bodies between people. Headshot-only and non-human references do not establish human body traits. "
                 "A coherent group style does not require identical builds, heights, or proportions."
             )
+            lines.append(
+                "For companions requiring humanization or an explicitly requested gender conversion, apply companion conversion first; "
+                "preserve only compatible human traits afterward, never lock source species anatomy, toy structure or exaggerated chibi proportions. "
+                "Unknown human body traits do not prohibit creating a natural human companion."
+            )
         if is_legs:
             lines.append(
                 "Keep confirmed leg shape, thickness, and thigh-to-calf relationships; unknown legs remain unspecified. "
@@ -70,6 +75,10 @@ def build_body_identity_prompt(
             lines.append(
                 "每个人的可见体型和比例分别跟随其自身参考或明确人设，不在人物间平均、互换或混用；"
                 "只有头像或非人物参考时不臆测其人体身材。统一画风不等于统一各人的体型、身高或头身比例。"
+            )
+            lines.append(
+                "需要拟人或按用户要求转换性别的同伴，先执行合影对象转换规则，再保持转换后兼容的可确认人体特征；"
+                "不锁定原物种肢体、玩具结构或夸张Q版比例，未知人体身材不代表禁止生成自然人类同伴。"
             )
         if is_legs:
             lines.append(

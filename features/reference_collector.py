@@ -15,6 +15,7 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from io import BytesIO
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -31,6 +32,7 @@ from ..core.utils import (
     DEFAULT_MAX_IMAGE_DIMENSION,
     DEFAULT_MAX_IMAGE_PIXELS,
     normalize_image_mime,
+    reference_animation_frame_index,
     IMAGE_SOURCE_METADATA_FIELDS,
     unique,
 )
@@ -719,6 +721,7 @@ async def download_sources_as_references(
     max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
     max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
     max_frames: int = DEFAULT_MAX_ANIMATION_FRAMES,
+    extract_animation_frame: bool = True,
 ) -> Tuple[List[ImageReference], int]:
     refs: List[ImageReference] = []
     failed = 0
@@ -734,6 +737,7 @@ async def download_sources_as_references(
             max_dimension=max_dimension,
             max_pixels=max_pixels,
             max_frames=max_frames,
+            allow_animation_reference_frame=extract_animation_frame,
         )
         return fetched, local_failure_reasons
 
@@ -752,6 +756,31 @@ async def download_sources_as_references(
             if not data:
                 failed += 1
                 continue
+            source_url = str(source or "").strip()
+            frame_index = reference_animation_frame_index(data, mime) if extract_animation_frame else None
+            if frame_index is not None:
+                try:
+                    from PIL import Image
+
+                    with Image.open(BytesIO(data)) as image:
+                        image.seek(frame_index)
+                        with image.convert("RGBA") as frame:
+                            output = BytesIO()
+                            frame.save(output, format="PNG")
+                            data = output.getvalue()
+                except Exception:
+                    failed += 1
+                    if failure_reasons is not None and "invalid_or_unreadable" not in failure_reasons:
+                        failure_reasons.append("invalid_or_unreadable")
+                    continue
+                if len(data) > max_bytes:
+                    failed += 1
+                    if failure_reasons is not None and "too_large" not in failure_reasons:
+                        failure_reasons.append("too_large")
+                    continue
+                mime = "image/png"
+                # URL-preferring providers must receive the extracted PNG too.
+                source_url = ""
             digest = content_digest(data)
             if digest in seen:
                 continue
@@ -762,7 +791,7 @@ async def download_sources_as_references(
                 ImageReference(
                     data=data,
                     mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data)),
-                    source_url=str(source or "").strip(),
+                    source_url=source_url,
                 )
             )
     return refs, failed
@@ -860,6 +889,8 @@ class ReferenceCollector:
                     max_dimension=self.max_dimension,
                     max_pixels=self.max_pixels,
                     max_frames=self.max_frames,
+                    # Prompt lookup needs original bytes to match image digests.
+                    extract_animation_frame=not self.include_image_alternates,
                 )
             finally:
                 download_elapsed += max(0.0, time.monotonic() - download_started)

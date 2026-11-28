@@ -28,7 +28,7 @@
     function navigateToTab(tab, options = {}) {
       let target = String(tab || '').trim();
       if (target === 'configuration') {
-        target = document.querySelector('#configurationNav button.active')?.dataset.configTab || 'channels';
+        target = document.querySelector('#configurationNav button.active')?.dataset.configTab || 'groups';
       }
       const configButtons = [...document.querySelectorAll('[data-config-tab]')];
       const configButton = configButtons.find(item => item.dataset.configTab === target);

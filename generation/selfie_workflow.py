@@ -199,13 +199,21 @@ class SelfieWorkflowService:
             preset_name,
             rebuild_extra_request,
         )
-        extra_refs = await plugin._event_reference_images(
-            event,
-            include_at_avatar=include_at_avatar,
-            filter_at_avatars=filter_at_avatars,
-            context_hint=action,
-            allow_context_fallback=allow_context_fallback,
-        )
+        reference_options = {
+            "include_at_avatar": include_at_avatar,
+            "filter_at_avatars": filter_at_avatars,
+            "context_hint": action,
+            "allow_context_fallback": allow_context_fallback,
+        }
+        if progress_label == "合影":
+            extra_refs, source_count, _ = await plugin._event_reference_images_with_stats(
+                event, **reference_options,
+            )
+            if source_count and not extra_refs:
+                yield event.plain_result(plugin._reference_failure_message(event))
+                return
+        else:
+            extra_refs = await plugin._event_reference_images(event, **reference_options)
         if not action:
             action = default_action_with_refs if extra_refs else default_action
         cos_selection = plugin._select_selfie_references(action, extra_refs)

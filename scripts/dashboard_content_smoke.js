@@ -306,20 +306,20 @@ async function main() {
         await evaluate("document.documentElement.classList.add('embedded-dashboard-ready');");
       }
       await evaluate('CONFIG={};fillForms();');
-      await check(label+' sidebar only contains workspace pages and configuration',`JSON.stringify([...document.querySelectorAll('#pageNav [data-tab]')].map(button=>button.dataset.tab))===JSON.stringify(['base','test','monitor','assets','studio','presets','configuration'])`);
+      await check(label+' sidebar includes independent model channels',`JSON.stringify([...document.querySelectorAll('#pageNav [data-tab]')].map(button=>button.dataset.tab))===JSON.stringify(['base','test','monitor','assets','studio','presets','channels','configuration'])&&!document.querySelector('#configurationNav [data-config-tab="channels"]')`);
       await evaluate("navigateToTab('configuration');");
-      await check(label+' configuration opens channels first',"$('channels').classList.contains('active')&&!$('configurationHeader').hidden");
+      await check(label+' configuration opens groups first',"$('groups').classList.contains('active')&&!$('configurationHeader').hidden");
       await check(label+' configuration uses glass background',"getComputedStyle($('configurationHeader')).backdropFilter.includes('blur')");
-      await evaluate("setConfigurationNavigation(true);window.configurationContentBounds=$('channels').getBoundingClientRect().toJSON();");
+      await evaluate("setConfigurationNavigation(true);window.configurationContentBounds=$('groups').getBoundingClientRect().toJSON();");
       await click('#configurationToggle > span');
       await check(label+' clicking configuration text toggles the entire heading',"!$('configurationNav').hidden&&$('configurationToggle').getBoundingClientRect().width>=$('configurationHeader').clientWidth-1");
-      await check(label+' configuration overlays content without moving or resizing it',"(()=>{const r=$('channels').getBoundingClientRect(),nav=$('configurationNav').getBoundingClientRect(),button=$('configurationChannels'),b=button.getBoundingClientRect();return r.top===configurationContentBounds.top&&r.width===configurationContentBounds.width&&nav.bottom>r.top&&button.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2));})()");
+      await check(label+' configuration overlays content without moving or resizing it',"(()=>{const r=$('groups').getBoundingClientRect(),nav=$('configurationNav').getBoundingClientRect(),button=$('configurationGroups'),b=button.getBoundingClientRect();return r.top===configurationContentBounds.top&&r.width===configurationContentBounds.width&&nav.bottom>r.top&&button.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2));})()");
       await check(label+' configuration has an opaque frosted surface',"['configurationHeader','configurationNav'].every(id=>{const style=getComputedStyle($(id));return style.backdropFilter.includes('blur')&&style.backgroundColor==='rgb(232, 238, 242)';})");
-      if(width<=390) await check(label+' configuration wraps into multiple rows',"$('configurationBackup').getBoundingClientRect().top>$('configurationChannels').getBoundingClientRect().top");
+      if(width<=390) await check(label+' configuration wraps into multiple rows',"$('configurationBackup').getBoundingClientRect().top>$('configurationGroups').getBoundingClientRect().top");
       await click('#configurationToggle');
-      await check(label+' configuration collapses without switching page',"$('configurationNav').hidden&&$('configurationToggle').getAttribute('aria-expanded')==='false'&&$('channels').classList.contains('active')");
+      await check(label+' configuration collapses without switching page',"$('configurationNav').hidden&&$('configurationToggle').getAttribute('aria-expanded')==='false'&&$('groups').classList.contains('active')");
       await click('#configurationToggle');
-      for(const target of ['channels','groups','proxies','image','selfie','audit','raw','backup']) {
+      for(const target of ['groups','proxies','image','selfie','audit','raw','backup']) {
         await click(`#configurationNav [data-config-tab="${target}"]`);
         await check(label+' configuration selects '+target,`$('${target}').classList.contains('active')&&document.querySelectorAll('main.app-shell > section.active').length===1&&document.querySelector('#pageNav .active').dataset.tab==='configuration'&&!$('configurationHeader').hidden`);
         await check(label+' configuration closes and restores focus after selection '+target,"$('configurationNav').hidden&&document.activeElement===$('configurationToggle')");
@@ -328,12 +328,12 @@ async function main() {
         await check(label+' configuration stays within viewport '+target,"document.documentElement.scrollWidth<=innerWidth+1&&$('configurationNav').getBoundingClientRect().right<=innerWidth+1");
       }
       await evaluate("$('configurationBackup').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}));");
-      await check(label+' configuration Home focuses first tab without closing menu',"!$('configurationNav').hidden&&document.activeElement===$('configurationChannels')");
-      await evaluate("$('configurationChannels').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));");
-      await check(label+' configuration arrow focuses next tab',"!$('configurationNav').hidden&&document.activeElement===$('configurationGroups')");
+      await check(label+' configuration Home focuses first tab without closing menu',"!$('configurationNav').hidden&&document.activeElement===$('configurationGroups')");
+      await evaluate("$('configurationGroups').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));");
+      await check(label+' configuration arrow focuses next tab',"!$('configurationNav').hidden&&document.activeElement===$('configurationProxies')");
       await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13,text:'\r'});
       await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter'});
-      await check(label+' configuration keyboard selection closes menu',"$('groups').classList.contains('active')&&$('configurationNav').hidden&&document.activeElement===$('configurationToggle')");
+      await check(label+' configuration keyboard selection closes menu',"$('proxies').classList.contains('active')&&$('configurationNav').hidden&&document.activeElement===$('configurationToggle')");
       await click('#configurationToggle');
       await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
       await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});
@@ -341,20 +341,23 @@ async function main() {
       await evaluate("navigateToTab('base');");
       await check(label+' workspace hides configuration navigation',"$('configurationHeader').hidden");
       await evaluate("navigateToTab('configuration');");
-      await check(label+' configuration restores last selected page',"$('groups').classList.contains('active')");
+      await check(label+' configuration restores last selected page',"$('proxies').classList.contains('active')");
       await evaluate("navigateToTab('image');window.previousCooldown=$('rateLimitSeconds').value;$('rateLimitSeconds').value='37';navigateToTab('audit');navigateToTab('base');navigateToTab('configuration');");
       await check(label+' navigation preserves configuration form edits',"$('audit').classList.contains('active')&&$('rateLimitSeconds').value==='37'");
       await evaluate("$('rateLimitSeconds').value=previousCooldown;");
       await evaluate("navigateToTab('base');");
       await click('[data-nav-target="channels"]');
-      await check(label+' workspace shortcut opens nested configuration',"$('channels').classList.contains('active')&&!$('configurationHeader').hidden&&$('configurationChannels').classList.contains('active')");
+      await check(label+' workspace shortcut opens independent channels page',"$('channels').classList.contains('active')&&$('configurationHeader').hidden&&$('navChannels').classList.contains('active')&&$('navChannels').getAttribute('aria-current')==='page'");
+      await evaluate("navigateToTab('configuration');");
+      await check(label+' channels navigation preserves last configuration page',"$('audit').classList.contains('active')&&!$('configurationHeader').hidden");
       await check(label+' entering configuration keeps header and menu visible',"window.scrollY===0&&$('configurationHeader').getBoundingClientRect().top>=0");
-      await check(label+' scrolling configuration tabs preserves page position',"(()=>{const y=window.scrollY;scrollTabIntoView($('configurationBackup'));scrollTabIntoView($('configurationChannels'));return window.scrollY===y;})()");
+      await check(label+' scrolling configuration tabs preserves page position',"(()=>{const y=window.scrollY;scrollTabIntoView($('configurationBackup'));scrollTabIntoView($('configurationGroups'));return window.scrollY===y;})()");
       await click('#configurationToggle');
       await screenshot(label+'-configuration');
       await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',x:width-2,y:2,button:'left',clickCount:1});
       await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:width-2,y:2,button:'left',clickCount:1});
       await check(label+' clicking outside closes configuration overlay',"$('configurationNav').hidden");
+      await evaluate("navigateToTab('channels');");
       for(const kind of ['image','audit']) {
         await click(kind==='image'?'#channelTabImage':'#channelTabAudit');
         await check(label+' channel tabs show one blue selection '+kind,tabsMatch('#channels > .tabs-inline'));

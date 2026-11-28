@@ -16,6 +16,7 @@ from ..cos.leg_focus import (
     leg_focus_appearance_prompt,
 )
 from .group_prompt_pool import has_group_composition_contract
+from .group_identity import build_group_companion_identity_prompt
 from .body_identity import build_body_identity_prompt
 
 
@@ -394,6 +395,8 @@ def build_selfie_builtin_prompt(
         )
         if body_identity not in prompt:
             prompt = _join(prompt, body_identity)
+        if raw_is_group and not any(marker in prompt for marker in ("合影对象转换：", "Companion conversion:")):
+            prompt = _join(prompt, build_group_companion_identity_prompt(language))
         realism = photographic_realism_prompt(
             effective_appearance_type,
             language=language,
@@ -706,6 +709,8 @@ def build_selfie_builtin_prompt(
             if is_legs
             else "参考图一只锁定主角身份和身体比例；额外参考图只用于用户指定的服装、姿势、构图、光线或场景。"
             if is_cos
+            else "参考图一只作为主角身份锚点，额外参考图提供各自同框对象的原型，按合影对象转换规则处理。"
+            if is_group
             else "参考图一只作为主角身份锚点，额外参考图只用于服装、姿势、构图、光线或场景。"
         ) if has_reference_image else "按角色设定保持主角身份稳定，未说明性别时默认成年女性。",
         "" if is_legs else ("合影对象必须落实为独立完整人物，站位自然，边界清晰。" if is_group else ""),

@@ -200,6 +200,7 @@ def image_geometry_error(
     max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
     max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
     max_frames: int = DEFAULT_MAX_ANIMATION_FRAMES,
+    single_frame_only: bool = False,
 ) -> str:
     """Inspect image headers without decoding pixel data.
 
@@ -222,13 +223,30 @@ def image_geometry_error(
                 return "too_large_dimensions"
             if width * height > int(max_pixels):
                 return "too_many_pixels"
-            frames = int(getattr(opened, "n_frames", 1) or 1)
-            if frames > int(max_frames):
-                return "too_many_frames"
+            if not single_frame_only:
+                frames = int(getattr(opened, "n_frames", 1) or 1)
+                if frames > int(max_frames):
+                    return "too_many_frames"
     except Exception:
         # Keep legacy signature checks for unsupported/mocked image payloads.
         return ""
     return ""
+
+
+def reference_animation_frame_index(data: bytes, mime: str) -> Optional[int]:
+    """Select GIF frame zero or APNG frame one; keep static images unchanged."""
+    if mime == "image/gif":
+        return 0
+    if mime == "image/png":
+        try:
+            from PIL import Image
+
+            with Image.open(BytesIO(data)) as image:
+                if image.format == "PNG" and getattr(image, "is_animated", False):
+                    return 1
+        except Exception:
+            pass
+    return None
 
 
 def normalize_image_mime(mime: str, fallback: str = "image/png") -> str:
@@ -1573,11 +1591,31 @@ async def fetch_image_source(
     max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
     max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
     max_frames: int = DEFAULT_MAX_ANIMATION_FRAMES,
+    allow_animation_reference_frame: bool = False,
 ) -> Optional[Tuple[bytes, str]]:
     def fail(reason: str) -> Optional[Tuple[bytes, str]]:
         if failure_reasons is not None and reason not in failure_reasons:
             failure_reasons.append(reason)
         return None
+
+    def prepare(data: bytes) -> Optional[Tuple[bytes, str]]:
+        if len(data) > max_bytes:
+            return fail("too_large")
+        if not data or not looks_like_image_bytes(data):
+            return fail("invalid_or_unreadable")
+        mime = detect_mime_by_bytes(data)
+        if image_geometry_error(
+            data,
+            max_dimension=max_dimension,
+            max_pixels=max_pixels,
+            max_frames=max_frames,
+            single_frame_only=(
+                allow_animation_reference_frame
+                and reference_animation_frame_index(data, mime) is not None
+            ),
+        ):
+            return fail("too_large")
+        return data, mime
 
     text = decode_html_entities(str(source or "").strip())
     if not text:
@@ -1596,33 +1634,14 @@ async def fetch_image_source(
                 return fail("unavailable")
         lowered = text.lower()
         if lowered.startswith(("data:image/", "base64://")):
-            data, mime = data_url_to_bytes(
-                text,
-                max_dimension=max_dimension,
-                max_pixels=max_pixels,
-                max_frames=max_frames,
-            )
-            if data and len(data) > max_bytes:
-                return fail("too_large")
-            if data:
-                return data, mime
-            return fail("invalid_or_unreadable")
+            return prepare(decode_base64_payload(text))
 
         if os.path.exists(text) and os.path.isfile(text):
             if os.path.getsize(text) > max_bytes:
                 return fail("too_large")
             with open(text, "rb") as file:
                 data = file.read()
-            if not data or not looks_like_image_bytes(data):
-                return fail("invalid_or_unreadable")
-            if image_geometry_error(
-                data,
-                max_dimension=max_dimension,
-                max_pixels=max_pixels,
-                max_frames=max_frames,
-            ):
-                return fail("too_large")
-            return data, detect_mime_by_bytes(data)
+            return prepare(data)
 
         if not lowered.startswith(("http://", "https://")):
             return fail("unavailable")
@@ -1655,18 +1674,7 @@ async def fetch_image_source(
                     return fail("too_large")
                 chunks.append(chunk)
             data = b"".join(chunks)
-            if not data:
-                return fail("invalid_or_unreadable")
-            if not looks_like_image_bytes(data):
-                return fail("invalid_or_unreadable")
-            if image_geometry_error(
-                data,
-                max_dimension=max_dimension,
-                max_pixels=max_pixels,
-                max_frames=max_frames,
-            ):
-                return fail("too_large")
-            return data, detect_mime_by_bytes(data)
+            return prepare(data)
     except (asyncio.TimeoutError, aiohttp.ClientError, OSError, binascii.Error, ValueError):
         return fail("unavailable")
 

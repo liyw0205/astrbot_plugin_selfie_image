@@ -538,6 +538,13 @@ async def run_image_generation_workflow(
                     "参考图内容描述（仅用于辅助识别身份与可确认的体型；不得覆盖已锁定的 COS 服饰、姿势、场景、机位或构图）："
                     f"{reference_description}"
                 )
+            elif locked_mode == "group":
+                description_line = (
+                    "参考图原型线索（真人同伴保留各自身份；非人、二次元、卡通、玩偶和景物仅供拟人设计，"
+                    "优先执行合影对象转换及其性别规则，不按下述原型观察恢复原物种、玩偶结构或原型性别；"
+                    "机位、姿势、视线、场景和构图服从本次合同）："
+                    f"{reference_description}"
+                )
             elif locked_mode or has_body_identity:
                 description_line = (
                     "参考图内容描述（仅补充身份、可确认的体型及合同要求保留的服饰；机位、姿势、视线、场景和构图服从本次合同）："

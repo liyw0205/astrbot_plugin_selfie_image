@@ -1361,6 +1361,7 @@
       <button data-tab="assets" type="button">资产库</button>
       <button data-tab="studio" type="button">无限画布</button>
       <button data-tab="presets" type="button">预设管理</button>
+      <button id="navChannels" data-tab="channels" type="button">模型渠道</button>
       <button data-tab="configuration" type="button">配置管理</button>
     </nav>
     <div class="topline">
@@ -1378,7 +1379,6 @@
     <div id="configurationHeader" class="configuration-header" hidden>
       <h2 id="configurationTitle" class="configuration-heading"><button id="configurationToggle" class="secondary configuration-toggle" type="button" aria-controls="configurationNav" aria-expanded="true" aria-label="收起配置导航" title="收起配置导航"><span>配置管理</span><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"></path></svg></button></h2>
       <nav id="configurationNav" class="tabs-inline configuration-nav" role="tablist" aria-labelledby="configurationTitle">
-        <button id="configurationChannels" class="secondary" type="button" role="tab" data-config-tab="channels" aria-controls="channels" aria-selected="false" tabindex="-1">模型渠道</button>
         <button id="configurationGroups" class="secondary" type="button" role="tab" data-config-tab="groups" aria-controls="groups" aria-selected="false" tabindex="-1">群聊配置</button>
         <button id="configurationProxies" class="secondary" type="button" role="tab" data-config-tab="proxies" aria-controls="proxies" aria-selected="false" tabindex="-1">代理设置</button>
         <button id="configurationImage" class="secondary" type="button" role="tab" data-config-tab="image" aria-controls="image" aria-selected="false" tabindex="-1">出图设置</button>
@@ -1428,9 +1428,9 @@
       </div>
     </section>
 
-    <section id="channels" role="tabpanel" aria-labelledby="configurationChannels">
+    <section id="channels" aria-labelledby="navChannels">
       <div class="between">
-        <h2>渠道</h2>
+        <h2>模型渠道</h2>
         <div class="floating-actions" aria-label="添加渠道">
           <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
           <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
@@ -13018,7 +13018,7 @@ Source prompt:
     function navigateToTab(tab, options = {}) {
       let target = String(tab || '').trim();
       if (target === 'configuration') {
-        target = document.querySelector('#configurationNav button.active')?.dataset.configTab || 'channels';
+        target = document.querySelector('#configurationNav button.active')?.dataset.configTab || 'groups';
       }
       const configButtons = [...document.querySelectorAll('[data-config-tab]')];
       const configButton = configButtons.find(item => item.dataset.configTab === target);

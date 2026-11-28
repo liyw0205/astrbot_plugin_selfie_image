@@ -48,6 +48,7 @@ def test_unspecified_group_staging_can_draw_each_compound(query):
         assert "竖屏手机近景半身" not in action
         assert "不使用远景" not in action
         assert "同框人物的正面、侧面或背侧朝向自然错开" not in action
+        assert "本构图中的身份、性别、衣装与体型沿用均以已完成合影对象转换为前提" in action
 
 
 @pytest.mark.parametrize("query", [

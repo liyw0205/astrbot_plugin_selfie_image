@@ -255,6 +255,12 @@ class AuditMixin:
                 "只输出可见事实的中文正文，不要解释、不要 Markdown，看不清的内容不要编造。\n"
                 f"本次生成合同（仅用于判断哪些特征已经锁定）：\n{prompt_contract}"
             )
+            if any(marker in prompt_contract for marker in ("合影对象转换：", "Companion conversion:")):
+                instruct += (
+                    "\n合影对象包含非人、二次元、卡通、玩偶或景物时，分别记录其可迁移的配色、纹样、发型、饰品和气质线索；"
+                    "标明是待拟人的对象原型，不能因不是人物而略过。原型的性别、物种、玩具结构或夸张比例仅是来源事实，"
+                    "不能覆盖合同中默认拟为成年女性及自然人体的要求，不建议原样保留原型。"
+                )
         configured = str(getattr(self.config, "image_ocr_model", "") or "").strip()
         target = self._find_audit_target(configured) if configured else None
         model = ""

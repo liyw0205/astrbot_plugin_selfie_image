@@ -1002,6 +1002,8 @@ def build_group_selfie_action(
         + lighting_prompt
         + framing_prompt
         + group_staging
+        + "本构图中的身份、性别、衣装与体型沿用均以已完成合影对象转换为前提；"
+        "真人同伴保持自身身份，待拟人的对象不得因沿用参考而恢复原型性别、原物种、玩具结构或夸张比例。"
     )
     if not has_refs:
         base += " 没有合影对象参考图时，按文字要求生成自然同框完整人物；未指定性别时默认成年女性。"

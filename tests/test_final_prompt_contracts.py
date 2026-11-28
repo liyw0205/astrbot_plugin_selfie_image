@@ -67,6 +67,72 @@ def plugin_for_prompts(tmp_path, english=False):
 
 
 @pytest.mark.parametrize("english", [False, True])
+@pytest.mark.parametrize("appearance", ["auto", "real", "anime"])
+@pytest.mark.parametrize("with_identity", [False, True])
+def test_group_companion_conversion_survives_final_prompt_building(tmp_path, english, appearance, with_identity):
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin.persona.set_appearance_type(appearance)
+    if not with_identity:
+        plugin._persona_identity_reference = lambda **_kw: None
+    companions = [ImageReference(data=b"non-human-companion", mime_type="image/png")]
+    action = build_group_selfie_action(
+        "与引用的玩偶合影", has_refs=True, appearance_type=appearance,
+        has_identity_reference=with_identity,
+    )
+
+    prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
+        None, action, companions, cos_selection=plugin._select_group_references(companions),
+    ))
+
+    assert [ref.data for ref in refs] == ([b"identity"] if with_identity else []) + [b"non-human-companion"]
+    assert "合影对象转换：" in prompt
+    assert "自动拟人为独立的成年女性" in prompt
+    assert "仅用户本次文字明确指定其他性别时覆盖" in prompt
+    assert "真人同伴保留各自身份、性别" in prompt
+    assert "不改变 AI 主角身份" in prompt
+    assert "用户明确指定为背景、服装或道具的参考按该用途使用" in prompt
+    assert "先执行合影对象转换规则" in prompt or "apply companion conversion first" in prompt
+    for old_rule in ("有明确性别线索则按对应性别", "参考图或文字已明确性别则按该性别", "无明确性别时默认成年女性"):
+        assert old_rule not in prompt
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_group_builtin_restores_conversion_when_translated_contract_omits_it(language):
+    prompt = build_selfie_builtin_prompt(
+        "合影 【shot:group_portrait】", language=language,
+        has_reference_image=True, extra_reference_count=1,
+        action_content="Follow the selected group scene with an independent companion.",
+    )
+    if language == "en":
+        assert "must become independent adult women" in prompt
+        assert "Only an explicit gender request in the user's current instruction" in prompt
+        assert "never to the main subject" in prompt
+        assert "apply companion conversion first" in prompt
+    else:
+        assert "自动拟人为独立的成年女性" in prompt
+        assert "仅用户本次文字明确指定其他性别时覆盖" in prompt
+
+
+def test_group_reference_description_keeps_nonhuman_design_cues_and_conversion_priority():
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.config = SimpleNamespace(image_ocr_model="")
+    plugin._find_audit_target = lambda _model: None
+    plugin._call_text_llm = AsyncMock(return_value="参考图二：蓝色玩偶，银色纹样；人体身材未知")
+    prompt = build_selfie_builtin_prompt("合影", has_reference_image=True, extra_reference_count=1)
+
+    description, meta = asyncio.run(plugin._describe_reference_images_for_generation(
+        object(), [b"identity", b"toy"], prompt_contract=prompt,
+    ))
+
+    instruction = plugin._call_text_llm.call_args.args[1]
+    assert "标明是待拟人的对象原型，不能因不是人物而略过" in instruction
+    assert "不能覆盖合同中默认拟为成年女性" in instruction
+    assert "各图特征标明归属" in instruction
+    assert "蓝色玩偶" in description
+    assert meta["scope"] == "contract_identity"
+
+
+@pytest.mark.parametrize("english", [False, True])
 def test_cycling_selfie_command_reaches_final_prompt_without_schedule_or_pose_conflicts(tmp_path, english):
     from astrbot_plugin_selfie_image.features.daily_schedule import DailySchedule, ScheduleEvent
     from astrbot_plugin_selfie_image.features.persona import daily_schedule_date_key
@@ -1880,6 +1946,7 @@ def test_commands_keep_explicit_image_options(tmp_path, command, label, ratio, r
     plugin._quota_error_message = lambda *_a: ""
     plugin._rate_limit_error_message = lambda *_a: ""
     plugin._event_reference_images = AsyncMock(return_value=[])
+    plugin._event_reference_images_with_stats = AsyncMock(return_value=([], 0, 0))
     plugin._build_contextual_progress_text = AsyncMock(return_value="progress")
     plugin._record_bot_text_context = lambda *_a: None
     plugin._image_batch_queue_expected = lambda *_a: False
