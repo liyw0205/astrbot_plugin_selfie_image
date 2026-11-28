@@ -43,7 +43,6 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     pick_cos_camera,
     pick_cos_look_set,
     pick_cos_variation,
-    requests_cos_multi_view_collage,
     _cos_face_risk_tags,
     _cos_face_safety_prompt,
     _cos_unsafe_framings,
@@ -973,7 +972,13 @@ def test_ccd_sleepwear_cos_look_keeps_camera_and_pose_in_the_shared_random_pools
     profile = cos_look_compatibility(look["id"])
     shared_profile = cos_look_compatibility("custom_cos_id")
     assert profile["recommended_view_ids"] == ["selfie", "first", "third"]
-    assert profile["recommended_pose_ids"] == shared_profile["recommended_pose_ids"]
+    def garment_independent_poses(profile):
+        return [
+            pose_id for pose_id in profile["recommended_pose_ids"]
+            if not COS_RANDOM_POSE_CLASSES[pose_id].get("required_outfit_terms")
+        ]
+
+    assert garment_independent_poses(profile) == garment_independent_poses(shared_profile)
     assert profile["recommended_scene_ids"] == shared_profile["recommended_scene_ids"]
 
     for orientation in ("正面站姿", "背影"):
@@ -1320,102 +1325,6 @@ def test_random_cos_framing_is_always_selected_when_unspecified():
     explicit = pick_cos_framing(extra_request="COS 换装：竖屏全身构图")
     assert explicit["explicit"] is True
     assert explicit["view_id"] == "user"
-
-
-def test_cos_collage_respects_single_pose_framing_and_camera_constraints():
-    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
-    explicit_pose = build_cos_look_action(
-        "多视角拼贴，背对镜头",
-        picker=lambda **_: item,
-    )
-    explicit_framing = build_cos_look_action(
-        "多视角拼贴，竖屏全身构图",
-        picker=lambda **_: item,
-    )
-    selfie = build_cos_look_action(
-        "多视角拼贴",
-        camera="selfie",
-        picker=lambda **_: item,
-    )
-    first_person = build_cos_look_action(
-        "多视角拼贴，第一视角",
-        picker=lambda **_: item,
-    )
-
-    assert "【cos_view:multi_view_collage】" not in explicit_pose
-    assert "【cos_view:multi_view_collage】" not in explicit_framing
-    assert "【cos_view:multi_view_collage】" not in selfie
-    assert "【cos_view:multi_view_collage】" not in first_person
-    assert "【cam:third】" in explicit_pose
-    assert "【cam:selfie】" in selfie
-    assert "【cos_pose:back_to_camera】" in explicit_pose
-    assert "人物背部朝向镜头" in explicit_pose
-    assert "单张照片" in explicit_pose
-    assert "用户补充要求优先：多视角拼贴" not in explicit_pose
-
-    negative_request = build_cos_look_action(
-        "不要多视角拼贴",
-        picker=lambda **_: item,
-    )
-    assert "【cos_view:multi_view_collage】" not in negative_request
-
-
-def test_cos_multi_view_collage_is_a_low_weight_random_third_person_view():
-    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
-
-    def choose_collage_once(values):
-        if values == [False] * 23 + [True]:
-            return True
-        return values[0]
-
-    with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        side_effect=choose_collage_once,
-    ):
-        action = build_cos_look_action(
-            "",
-            camera="third",
-            picker=lambda **_: item,
-        )
-
-    assert "【cos_view:multi_view_collage】" in action
-
-
-def test_cos_multi_view_collage_supports_all_builtin_costumes():
-    ordinary_items = [item for item in COS_LOOK_SETS if not is_special_cos_look(item)]
-    assert ordinary_items
-
-    # Check every catalog entry through the cheap compatibility contract, then
-    # keep the expensive seven-panel prompt construction to representatives.
-    for item in COS_LOOK_SETS:
-        if is_special_cos_look(item):
-            assert cos_look_compatibility(item["id"])["variation_enabled"] is False
-        else:
-            assert cos_look_compatibility(item["id"])["variation_enabled"] is True
-
-    representative_indexes = {0, len(ordinary_items) // 3, len(ordinary_items) // 2,
-                              (len(ordinary_items) * 2) // 3, len(ordinary_items) - 1}
-    representatives = [ordinary_items[index] for index in sorted(representative_indexes)]
-    for item in representatives:
-        action = build_cos_look_action(
-            "多视角拼贴",
-            picker=lambda **_: item,
-        )
-        assert "【cos_view:multi_view_collage】" in action, item["id"]
-        variation = pick_cos_variation(
-            item["id"],
-            camera="third",
-            multi_view_collage=True,
-        )
-        assert len(variation["panel_pose_ids"]) == 7, item["id"]
-        assert len(set(zip(variation["panel_pose_ids"], variation["panel_framing_ids"]))) == 7, item["id"]
-
-    item = representatives[-1]
-    square_with_user_override = build_cos_look_action(
-        "多视角拼贴，16:9",
-        picker=lambda **_: item,
-    )
-    assert extract_prompt_aspect_ratio(square_with_user_override) == "16:9"
 
 
 def test_special_cos_is_fixed_and_addressable_without_random_staging():

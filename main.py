@@ -1679,7 +1679,6 @@ class SelfieImagePlugin(
         camera: str = "",
         match_query: str = "",
         force_id: str = "",
-        force_multi_view_collage: bool = False,
         suppress_cos_pose: bool = False,
     ) -> str:
         appearance_type = _appearance_type_for_request(getattr(self, "persona", None), extra_request)
@@ -1716,7 +1715,6 @@ class SelfieImagePlugin(
                 appearance_type=appearance_type,
                 match_query="",
                 force_id="",
-                force_multi_view_collage=force_multi_view_collage,
                 suppress_cos_pose=suppress_cos_pose,
                 picker=lambda **_: dict(custom_item),
             )
@@ -1736,7 +1734,6 @@ class SelfieImagePlugin(
             appearance_type=appearance_type,
             match_query=match_query,
             force_id=chosen_force,
-            force_multi_view_collage=force_multi_view_collage,
             suppress_cos_pose=suppress_cos_pose,
             picker=pick_cos_look_set,
         )
@@ -5233,6 +5230,15 @@ class SelfieImagePlugin(
                     "找不到要重画的画面，请引用图片或重新发送原图。",
                 )
         retry_prompt = self._build_retry_feedback_prompt(original_prompt, feedback_text)
+        if kind == "selfie" and not any(marker in retry_prompt for marker in ("身材保持：", "Body continuity:")):
+            from .prompts.body_identity import build_body_identity_prompt
+
+            retry_prompt += "\n\n" + build_body_identity_prompt(
+                has_identity_reference=bool(refs),
+                is_group=self._looks_like_group_selfie_intent(original_prompt),
+                is_legs=has_leg_focus_contract(original_prompt),
+                is_retry=True,
+            )
 
         requested_model = str(params.get("model") or "").strip()
         if not requested_model and source_record:
@@ -5297,8 +5303,10 @@ class SelfieImagePlugin(
         block = f"保持原构图与人物设定；优先修正用户反馈：{text}。"
         if re.search(r"比例|腿太长|腿长|身材|真人感|塑料|磨皮", text):
             block += (
-                "人物比例符合真人常模，约7至7.5头身，腿长自然，不刻意拉长；"
-                "皮肤保留真实纹理与自然光影，不过度磨皮，不呈塑料质感。"
+                "仅修正用户指出的比例偏差，可确认的体型与比例跟随相应人物参考；"
+                "参考未展示处按明确人设与自然人体结构补全，不预设尺寸或头身数；"
+                "保持用户明确指定的风格化比例与原构图透视，不因换装或填满画幅擅自拉长或缩窄肢体；"
+                "皮肤质感服从指定画风；写实画面保留真实纹理与自然光影，不过度磨皮，不呈塑料质感。"
                 "避免 elongated legs, short torso, distorted proportions, bad anatomy, plastic skin, overly smooth CGI。"
             )
         return "\n\n".join(

@@ -354,6 +354,97 @@
       "camera_ids": ["third"],
       "random_camera_ids": ["third"]
     },
+    "ground_oblique_raised_foot_foreground": {
+      "title": "贴地侧前抬脚强透视",
+      "prompt": "9:16竖幅，贴地低角度仰拍、侧前方机位，悬空脚贴近镜头作为前景，保留高抬膝、小腿向前和单腿承重的连贯透视；头部自然裁切，人体比例正常",
+      "scene_ids": ["pose_reference_room"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "kneeling_front_level_hem_oblique_high": {
+      "title": "高跪正前平提衣摆轻俯拍",
+      "prompt": "9:16竖幅，从人物正面略偏一侧、稍高于跪姿视线轻俯拍，保留完整头脸、撑起的上身、正前水平展开的衣摆、双膝与向后折回的小腿",
+      "scene_ids": ["pose_reference_room"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "staggered_hem_side_lift_full_oblique": {
+      "title": "错步侧提衣摆微斜全身",
+      "prompt": "9:16竖幅，正面略斜角、接近平视并轻微俯拍全身，头顶与双脚完整入镜，保留错步侧胯、拨发手与前摆向一侧归拢的斜垂关系，画面轻微倾斜",
+      "scene_ids": ["pose_reference_room"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "front_oblique_neck_to_upper_thigh": {
+      "title": "颈下至大腿上段胸腰近景",
+      "prompt": "9:16竖幅，正面略斜的胸腰局部近景，上缘从颈部附近截入，下缘到大腿上段，以胸腰和腰腹为中心；头脸、手部、膝部与足端按局部裁切留在画外，保持正常比例",
+      "scene_ids": ["pose_reference_room"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "low_oblique_knee_up_foot_down_diagonal": {
+      "title": "抬膝垂脚低机位斜构图",
+      "prompt": "9:16竖幅，正面偏侧低机位仰拍，突出抬起的大腿与膝部，保留同一小腿斜向下垂及悬空脚尖朝下，脸部完整可见，支撑腿从下缘自然裁切，人物沿画幅斜向延伸",
+      "scene_ids": ["pose_reference_room"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "table_side_lean_leg_overhead_full": {
+      "title": "伏桌侧屈高举腿完整构图",
+      "prompt": "9:16竖幅，从侧前方取景，完整交代伏桌上半身、贴桌支撑手、同侧伸直高举过头的腿与足端，面部转向镜头；另一条腿自然藏于桌后，桌面承托与关节连接清楚",
+      "scene_ids": ["ancient_wood_table_room"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "table_inverted_head_raised_legs": {
+      "title": "桌沿倒置头部与上举双腿",
+      "prompt": "9:16竖幅，镜头朝向探出桌沿的倒置面部，保留双眼轻闭、仰躺桌面的躯干、向两侧摊开的双臂与伸直向上抬起的双腿，现有发丝随倒置方向自然垂落，比例自然",
+      "scene_ids": ["ancient_wood_table_room"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "ancient_face_close_high_angle": {
+      "title": "贴近面部俯拍特写",
+      "prompt": "9:16竖幅，镜头从面部上方近距离俯拍，面部占据画面主体，少量发型与颈肩自然入镜，保留手机直拍质感与正常面部比例",
+      "scene_ids": ["ancient_soft_portrait_room"],
+      "camera_ids": ["third", "selfie"],
+      "random_camera_ids": ["third", "selfie"]
+    },
+    "hallway_wall_palm_tiptoe_full": {
+      "title": "门边撑墙踮脚全身",
+      "prompt": "9:16竖幅侧前方取景，交代人物侧身斜靠墙面的全身动作，保留撑墙手、另一只轻抬握拳的手、分开的微屈双膝和赤脚前脚掌接地的关系，脚跟抬起清楚可见",
+      "scene_ids": ["light_wood_hallway"],
+      "camera_ids": ["third", "selfie"],
+      "random_camera_ids": ["third", "selfie"]
+    },
+    "gaming_chair_crossed_leg_feet_suspended": {
+      "title": "电竞椅侧坐搭腿悬脚构图",
+      "prompt": "9:16手机直拍竖幅，侧前方取景，保留身体转向镜头、臀部与椅面接触、双手搭椅边、一腿屈膝搭在另一腿上方及双腿向前伸出的连续关系，双脚放松悬空朝下完整入镜",
+      "scene_ids": ["cartoon_gaming_chair_room"],
+      "camera_ids": ["third", "selfie"],
+      "random_camera_ids": ["third", "selfie"]
+    },
+    "blue_pool_chest_waterline_close": {
+      "title": "蓝池胸口水位近景",
+      "prompt": "9:16竖幅近景人像抓拍，从头部取到胸口水面，保留微倾头、贴脸发丝、胸口水位与少量水面涟漪气泡；下肢留在水下及画外，人物面部为主体",
+      "scene_ids": ["clear_blue_portrait_pool"],
+      "camera_ids": ["third", "selfie"],
+      "random_camera_ids": ["third", "selfie"]
+    },
+    "shallow_water_low_waist_to_legs": {
+      "title": "浅水提裙腰腹到腿部低角度",
+      "prompt": "9:16竖幅，只拍腰腹到腿部的半身低角度局部画面，双手从两侧提起原有裙摆、露出大腿，双腿并拢站立，小腿处水线与细碎倒影清楚；头脸和肩部留在画外",
+      "scene_ids": ["golden_shallow_water"],
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "hot_spring_chest_waterline_overlapped_hands": {
+      "title": "温泉胸口水位交叠手近景",
+      "prompt": "9:16竖幅人像，从头部取到胸口水面与前伸交叠的双手，人物看向镜头，保留身体微前倾、双手搭水面及薄雾花瓣；水下坐姿保持连续，不为展示下肢扩大取景",
+      "scene_ids": ["misty_petals_hot_spring"],
+      "camera_ids": ["third", "selfie"],
+      "random_camera_ids": ["third", "selfie"]
+    },
     "chair_low_full_body": {
       "title": "低机位椅上全身仰拍",
       "prompt": "相机位于人物膝部以下的近地高度，以克制的低机位向上拍摄全身；人物从头顶到双脚完整入画，并带到当前场景中实际存在的座椅。拍摄距离足够，使用正常焦段保持头身、腿部和座椅比例自然；保留人物与座面的承托关系，不贴近腿部，不使用夸张广角或极端仰角，不裁切抬起的手臂或脚部",
@@ -364,13 +455,6 @@
         "costume_atelier",
         "theater_dressing_room"
       ],
-      "camera_ids": ["third"],
-      "random_camera_ids": ["third"]
-    },
-    "photo_frame_front_medium": {
-      "title": "正面照片边框中景",
-      "prompt": "相机位于照片外部正前方，以第三人称正面拍摄中景；取景清楚保留白边照片的矩形边缘，以及人物上身从照片平面探出的前后层次。画面容纳姿势要求的边缘支撑点，照片框四边尽量完整入画，周围留少量干净空间；使用自然透视，不贴近边框、不使用夸张广角或斜侧机位",
-      "scene_ids": ["photo_frame_studio"],
       "camera_ids": ["third"],
       "random_camera_ids": ["third"]
     }

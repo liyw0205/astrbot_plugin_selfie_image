@@ -113,20 +113,11 @@ def test_explicit_light_constraints_do_not_get_a_random_light(tmp_path, lighting
     assert all(light["prompt"] not in final for light in COS_JSON_LIGHTINGS.values())
 
 
-def test_web_cos_and_collage_keep_one_light_contract():
+def test_web_cos_keeps_one_light_contract():
     web = cos.build_cos_third_person_prompt("COS 换装：蓝色礼服，摄影棚，抬臂靠墙侧背前倾")
     assert selected_id(web, "lighting") == "studio_side"
     assert cos.build_cos_third_person_prompt(web) == web
     assert web.count(COS_JSON_LIGHTINGS["studio_side"]["prompt"]) == 1
-
-    collage = cos.build_cos_look_action(
-        "摄影棚 多视角拼贴 自然手机快照", force_id="roxy_cream", camera="third",
-        force_multi_view_collage=True,
-    )
-    assert "【cos_view:multi_view_collage】" in collage
-    assert collage.count(COS_JSON_LIGHTINGS["studio_side"]["prompt"]) == 1
-    assert collage.count(COS_JSON_LIGHTING_RULES["collage"]) == 1
-    assert cos.build_cos_third_person_prompt(collage) == collage
 
 
 def test_builtin_cos_fallback_keeps_outdoor_lighting():

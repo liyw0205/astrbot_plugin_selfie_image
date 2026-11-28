@@ -10,7 +10,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import build_cos_look_action, get
 from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
 from astrbot_plugin_selfie_image.generation.selfie_batch_workflow import SelfieBatchWorkflow
 from astrbot_plugin_selfie_image.generation.selfie_workflow import SelfieWorkflowService
-from astrbot_plugin_selfie_image.studio.studio import action_prompt_presets, upper_prompt_presets
+from astrbot_plugin_selfie_image.studio.studio import BUILTIN_PROMPTS, action_prompt_presets, upper_prompt_presets
 from astrbot_plugin_selfie_image.webui.controllers import RecordController
 from astrbot_plugin_selfie_image.webui.services import WebContractError, filter_record_page
 
@@ -51,6 +51,7 @@ def test_cos_command_only_action_presets_take_over_pose(preset_name, suppressed)
 @pytest.mark.parametrize("explicit", [False, True])
 def test_cos_batch_does_not_inherit_a_random_collage(explicit):
     look = get_cos_look_by_id("roxy_cream")
+    preset = next(item for item in BUILTIN_PROMPTS if item["id"] == "multi_view_collage")
     plugin = SimpleNamespace(
         _normalize_count=int,
         _looks_like_group_selfie_intent=lambda _: False,
@@ -61,7 +62,7 @@ def test_cos_batch_does_not_inherit_a_random_collage(explicit):
     workflow = SelfieBatchWorkflow(
         plugin, "task", object(), "【cos:roxy_cream】 【cos_view:multi_view_collage】", [],
         "command-look-cos", 5, "9:16", "1K", "failed",
-        rebuild_extra_request="多视角拼贴" if explicit else "",
+        rebuild_extra_request=preset["prompt"] if explicit else "",
     )
     workflow._prepare_rebuild()
 
@@ -71,7 +72,9 @@ def test_cos_batch_does_not_inherit_a_random_collage(explicit):
     with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.choice", side_effect=choose):
         actions = workflow._build_actions()
     assert len(actions) == 5
-    assert all(("【cos_view:multi_view_collage】" in action) is explicit for action in actions)
+    assert all("【cos_view:multi_view_collage】" not in action for action in actions)
+    assert all((preset["prompt"] in action) is explicit for action in actions)
+    assert all(("【cos_staging:preset】" in action) is explicit for action in actions)
 
 
 def test_record_delta_sends_only_changed_rows_and_preserves_page_order():

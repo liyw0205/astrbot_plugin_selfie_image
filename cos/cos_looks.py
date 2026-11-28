@@ -29,8 +29,6 @@ from .cos_looks_loader import (
     COS_JSON_LIGHTING_RULES,
     COS_JSON_LIGHTING_REQUEST_TERMS,
     COS_JSON_MAKEUPS,
-    COS_JSON_MULTI_VIEW_COLLAGE,
-    COS_JSON_MULTI_VIEW_COLLAGE_TERMS,
     COS_JSON_POSES,
     COS_JSON_POSE_CUSTOM_REQUEST_TERMS,
     COS_JSON_POSE_REQUEST_ALIASES,
@@ -216,10 +214,6 @@ COS_EXPLICIT_ONLY_FRAMING_IDS = {
     for framing_id, framing in COS_JSON_FRAMINGS.items()
     if framing.get("explicit_only")
 }
-COS_MULTI_VIEW_COLLAGE_ID = str(COS_JSON_MULTI_VIEW_COLLAGE["id"])
-COS_MULTI_VIEW_COLLAGE_PANEL_COUNT = int(COS_JSON_MULTI_VIEW_COLLAGE["panel_count"])
-COS_MULTI_VIEW_COLLAGE_LABELS = tuple(COS_JSON_MULTI_VIEW_COLLAGE["panel_labels"])
-COS_MULTI_VIEW_COLLAGE_TERMS = COS_JSON_MULTI_VIEW_COLLAGE_TERMS
 
 # Scene prompts, style families, tags, and pose compatibility live in JSON.
 COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
@@ -526,9 +520,6 @@ def _strip_parsed_cos_request_terms(
         for term in sorted(camera_terms, key=len, reverse=True):
             if _has_positive_request(text, term):
                 cleaned = re.sub(re.escape(term), " ", cleaned)
-    for term in sorted(COS_MULTI_VIEW_COLLAGE_TERMS, key=len, reverse=True):
-        if _has_positive_request(text, term):
-            cleaned = re.sub(re.escape(term), " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned)
     cleaned = re.sub(r"\s*([，,、；;])\s*", r"\1", cleaned)
     cleaned = re.sub(r"^[，,、；;\s]+|[，,、；;\s]+$", "", cleaned)
@@ -735,7 +726,12 @@ def _pick_cos_composition(
 
 
 def _compatible_cos_composition_ids(*, pose_id: str, scene_id: str, camera: str) -> List[str]:
-    if pose_id == "user" or pose_id in COS_EXPLICIT_ONLY_POSE_IDS or camera != "third":
+    if (
+        pose_id == "user"
+        or pose_id in COS_EXPLICIT_ONLY_POSE_IDS
+        or camera != "third"
+        or COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("compound")
+    ):
         return []
     candidates = []
     for composition_id, item in COS_RANDOM_COMPOSITION_CLASSES.items():
@@ -762,7 +758,6 @@ def pick_cos_framing(
     allowed_framings: Iterable[str] = (),
     eligible_pose_ids: Iterable[str] = (),
     framing_weights: Optional[Mapping[str, int]] = None,
-    multi_view_collage: bool = False,
     forced_framing_id: str = "",
 ) -> Dict[str, Any]:
     """Pick a concrete framing unless the user's extra request already fixes it."""
@@ -880,17 +875,6 @@ def pick_cos_framing(
             "view_id": "unspecified",
             "title": "",
             "prompt": "",
-            "outfit_text": resolved_outfit,
-            "extra_request_text": resolved_extra,
-            "randomized_from_options": False,
-            "explicit": False,
-            "composition": {},
-        }
-    if multi_view_collage and camera == "third":
-        return {
-            "view_id": COS_MULTI_VIEW_COLLAGE_ID,
-            "title": str(COS_JSON_MULTI_VIEW_COLLAGE["title"]),
-            "prompt": str(COS_JSON_MULTI_VIEW_COLLAGE["prompt"]),
             "outfit_text": resolved_outfit,
             "extra_request_text": resolved_extra,
             "randomized_from_options": False,
@@ -1034,6 +1018,13 @@ def pick_cos_framing(
     )
     return selected
 
+
+def _cos_pose_matches_outfit(pose_id: str, cos_id: str) -> bool:
+    terms = COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("required_outfit_terms") or ()
+    description = _positive_cos_look_description(cos_id) if terms else ""
+    return not terms or any(_has_positive_request(description, term) for term in terms)
+
+
 def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
     """Return a look-specific staging profile, falling back to the shared pool."""
     look_id = str(cos_id or "").strip()
@@ -1126,6 +1117,14 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
             pose_id for pose_id in recommended_poses
             if pose_id != COS_SOFT_SURFACE_RECLINE_HEM_POSE_ID
         ]
+    recommended_poses = [
+        pose_id for pose_id in recommended_poses
+        if _cos_pose_matches_outfit(pose_id, look_id)
+    ]
+    scenes = [
+        scene_id for scene_id in scenes
+        if any(pose_id in recommended_poses for pose_id in scene_pose_compatibility[scene_id])
+    ]
     return {
         "variation_enabled": True,
         "pose_ids": poses,
@@ -1468,8 +1467,6 @@ def _pick_scene_lighting(
     scene_id: str,
     pose_id: str,
     extra_request: str = "",
-    *,
-    panel_pose_ids: Iterable[str] = (),
 ) -> tuple[str, str]:
     """Keep one scene light source while adapting visible faces and contacts."""
     scene = COS_RANDOM_SCENE_CLASSES.get(scene_id) or {}
@@ -1489,8 +1486,7 @@ def _pick_scene_lighting(
         lighting_id = "user"
     else:
         lighting_id = _pick_weighted_cos_id(allowed_ids)
-    panels = tuple(panel_pose_ids)
-    face_optional = any(_cos_pose_allows_face_shadow(item) for item in panels or (pose_id,))
+    face_optional = _cos_pose_allows_face_shadow(pose_id)
     parts = [
         COS_JSON_LIGHTING_RULES["user_lighting"]
         if lighting_id == "user"
@@ -1499,7 +1495,7 @@ def _pick_scene_lighting(
         COS_JSON_LIGHTING_RULES["user_face"] if lighting_id == "user"
         else COS_JSON_LIGHTING_RULES["face_optional" if face_optional else "face_visible"],
         COS_JSON_LIGHTING_RULES["contact"],
-        COS_JSON_LIGHTING_RULES["collage"] if panels else _cos_contact_shadow_prompt(pose_id),
+        _cos_contact_shadow_prompt(pose_id),
     ]
     return lighting_id, "".join(part for part in parts if part)
 
@@ -1533,7 +1529,7 @@ def _pick_scene_expression(pose_id: str, extra_request: str = "", *, covered_eye
         return expression_id, ""
     prompt_key = (
         "covered_eyes_prompt" if covered_eyes
-        else "closed_eyes_prompt" if pose_id in {"quiet_low_gaze", "sleeping_on_bed"}
+        else "closed_eyes_prompt" if pose.get("eyes_closed") or pose_id in {"quiet_low_gaze", "sleeping_on_bed"}
         else "prompt"
     )
     return expression_id, str(expression.get(prompt_key) or "").strip()
@@ -1636,234 +1632,6 @@ def _requests_explicit_soft_focus(text: str) -> bool:
     return any(_has_positive_request(text, term) for term in COS_EXPLICIT_SOFT_FOCUS_TERMS)
 
 
-def requests_cos_multi_view_collage(text: str) -> bool:
-    return any(_has_positive_request(text, term) for term in COS_MULTI_VIEW_COLLAGE_TERMS)
-
-
-def _pick_cos_collage_variation(
-    cos_id: str,
-    *,
-    extra_request: str,
-    avoid_poses: Iterable[str],
-    avoid_scenes: Iterable[str],
-) -> Optional[Dict[str, Any]]:
-    profile = cos_look_compatibility(cos_id)
-    allowed_poses = set(profile["recommended_pose_ids"])
-    allowed_scenes = set(profile["recommended_scene_ids"])
-    allowed_framings = _as_id_set(profile.get("recommended_framing_ids"))
-    requested_scene = _requested_cos_scene(extra_request)
-    if requested_scene == "user":
-        return None
-    requested_style_id = _requested_cos_style_id(extra_request, requested_scene=requested_scene)
-    if requested_style_id and not requested_scene:
-        allowed_scenes = {
-            scene_id for scene_id in allowed_scenes
-            if requested_style_id in (COS_RANDOM_SCENE_CLASSES[scene_id].get("style_ids") or ())
-        }
-
-    if requested_scene:
-        scene_ids = [requested_scene] if requested_scene in COS_RANDOM_SCENE_CLASSES else []
-    else:
-        scene_ids = list(allowed_scenes)
-    if not scene_ids:
-        return None
-
-    scene_pose_frames: Dict[str, Dict[str, List[str]]] = {}
-    for scene_id in scene_ids:
-        scene = COS_RANDOM_SCENE_CLASSES[scene_id]
-        if not requested_scene and scene_id not in allowed_scenes:
-            continue
-        poses = _scene_pose_ids(scene)
-        if scene_id in allowed_scenes:
-            poses = [pose_id for pose_id in poses if pose_id in allowed_poses]
-        else:
-            poses = [pose_id for pose_id in poses if pose_id not in COS_EXPLICIT_ONLY_POSE_IDS]
-        safe_poses = [
-            pose_id for pose_id in poses
-            if not _cos_unsafe_random_pair(cos_id, scene_id, pose_id, "third")
-        ]
-        if safe_poses:
-            poses = safe_poses
-        compatible: Dict[str, List[str]] = {}
-        for pose_id in poses:
-            frames = [
-                framing_id
-                for framing_id in COS_POSE_FRAMING_COMPATIBILITY.get(pose_id, ())
-                if framing_id not in COS_EXPLICIT_ONLY_FRAMING_IDS
-                and (not allowed_framings or framing_id in allowed_framings)
-                and framing_id in COS_RANDOM_CAMERA_FRAMING_IDS["third"]
-                and (
-                    framing_id not in COS_FRAMING_SCENE_COMPATIBILITY
-                    or scene_id in COS_FRAMING_SCENE_COMPATIBILITY[framing_id]
-                )
-                and (
-                    framing_id not in COS_FRAMING_CAMERA_COMPATIBILITY
-                    or "third" in COS_FRAMING_CAMERA_COMPATIBILITY[framing_id]
-                )
-                and framing_id not in COS_SCENE_POSE_FRAMING_EXCLUSIONS.get(
-                    (scene_id, pose_id), frozenset()
-                )
-            ]
-            if frames:
-                compatible[pose_id] = frames
-        if (
-            len(compatible) >= 3
-            and sum(len(frames) for frames in compatible.values()) >= COS_MULTI_VIEW_COLLAGE_PANEL_COUNT
-        ):
-            scene_pose_frames[scene_id] = compatible
-
-    if not scene_pose_frames:
-        return None
-    avoided_scenes = _as_id_set(avoid_scenes)
-    scene_candidates = [scene_id for scene_id in scene_pose_frames if scene_id not in avoided_scenes]
-    if not scene_candidates:
-        scene_candidates = list(scene_pose_frames)
-    if not requested_scene:
-        scene_candidates = _weighted_compatible_scene_ids(scene_candidates, cos_id)
-    scene_id = random.choice(scene_candidates)
-    compatible = scene_pose_frames[scene_id]
-    avoided_poses = _as_id_set(avoid_poses)
-    pose_candidates = [pose_id for pose_id in compatible if pose_id not in avoided_poses]
-    if not pose_candidates:
-        pose_candidates = list(compatible)
-    main_pose_candidates = [
-        pose_id for pose_id in pose_candidates
-        if "eye_level_full" in compatible[pose_id]
-    ]
-    main_pose = _pick_cos_pose(main_pose_candidates or pose_candidates)
-    main_framing_id = (
-        "eye_level_full"
-        if "eye_level_full" in compatible[main_pose]
-        else random.choice(compatible[main_pose])
-    )
-    panel_views = [(main_pose, main_framing_id)]
-
-    # Use each compatible pose once before adding alternate camera views.
-    remaining_poses = [item for item in pose_candidates if item != main_pose]
-    while remaining_poses:
-        if len(panel_views) >= COS_MULTI_VIEW_COLLAGE_PANEL_COUNT:
-            break
-        pose_id = _pick_cos_pose(remaining_poses)
-        remaining_poses.remove(pose_id)
-        panel_views.append((pose_id, random.choice(compatible[pose_id])))
-
-    pose_use_counts = {pose_id: 0 for pose_id in compatible}
-    for pose_id, _ in panel_views:
-        pose_use_counts[pose_id] += 1
-    used_views = set(panel_views)
-    while len(panel_views) < COS_MULTI_VIEW_COLLAGE_PANEL_COUNT:
-        pose_pool = pose_candidates or list(compatible)
-        view_candidates = [
-            (pose_id, framing_id)
-            for pose_id in pose_pool
-            for framing_id in compatible[pose_id]
-            if (pose_id, framing_id) not in used_views
-        ]
-        if not view_candidates:
-            view_candidates = [
-                (pose_id, framing_id)
-                for pose_id, frames in compatible.items()
-                for framing_id in frames
-                if (pose_id, framing_id) not in used_views
-            ]
-        if not view_candidates:
-            return None
-        least_used = min(pose_use_counts[pose_id] for pose_id, _ in view_candidates)
-        view_candidates = [
-            view for view in view_candidates
-            if pose_use_counts[view[0]] == least_used
-        ]
-        view = random.choices(
-            view_candidates,
-            weights=[_cos_pose_selection_weight(pose_id) for pose_id, _ in view_candidates],
-            k=1,
-        )[0]
-        panel_views.append(view)
-        used_views.add(view)
-        pose_use_counts[view[0]] += 1
-
-    panel_poses = [pose_id for pose_id, _ in panel_views]
-    slot_labels = COS_MULTI_VIEW_COLLAGE_LABELS
-    def collage_framing_prompt(framing_id: str) -> str:
-        # Panel ratios describe individual photos, not the output canvas. Keep
-        # numeric ratios out of the collage prompt so the global aspect parser
-        # cannot mistake a side panel for the square canvas ratio.
-        prompt = str(COS_FRAMING_CLASSES[framing_id]["prompt"])
-        return (
-            prompt.replace("9:16", "竖幅")
-            .replace("4:5", "窄竖幅")
-            .replace("16:9", "横幅")
-            .replace("1:1", "方形")
-        )
-
-    panels = [
-        f"{slot_labels[index]}：{collage_framing_prompt(framing_id)}；"
-        f"{_cos_pose_prompt_for_camera(pose_id, 'third')}"
-        f"{_cos_contact_shadow_prompt(pose_id)}"
-        for index, (pose_id, framing_id) in enumerate(panel_views)
-    ]
-
-    scene = COS_RANDOM_SCENE_CLASSES[scene_id]
-    style_id, scene_style_prompt = _pick_scene_style(scene_id, extra_request)
-    lighting_id, lighting_prompt = _pick_scene_lighting(
-        scene_id, main_pose, extra_request, panel_pose_ids=panel_poses,
-    )
-    expression_id, expression_prompt = _pick_scene_expression(
-        main_pose, extra_request, covered_eyes=cos_eye_mode(cos_id) == "full_cover",
-    )
-    if (
-        expression_id == "deep_affection"
-        and any(pose_id in {"back_to_camera", "over_shoulder"} for pose_id in panel_poses)
-    ):
-        # One expression line applies to every panel, including rear-facing poses.
-        expression_id, expression_prompt = _pick_scene_expression(
-            "over_shoulder", extra_request, covered_eyes=cos_eye_mode(cos_id) == "full_cover",
-        )
-    makeup_id, makeup_prompt = _pick_scene_makeup(
-        scene_id, extra_request, pose_id=main_pose, covered_eyes=cos_eye_mode(cos_id) == "full_cover",
-    )
-    prompt_parts = []
-    prompt_parts.append(
-        ("按用户指定场景补充环境细节：" if requested_scene else "本次随机场景优先于套装正文中残留的背景或环境描述：")
-        + scene["prompt"]
-    )
-    if scene_style_prompt:
-        prompt_parts.append("本次场景影像风格族保持与环境一致：" + scene_style_prompt)
-    prompt_parts.append("本次场景光照：" + lighting_prompt)
-    if not _requests_explicit_soft_focus(extra_request):
-        prompt_parts.append(str(COS_JSON_LIGHTING_RULES["subject_clarity"]))
-    if expression_prompt:
-        prompt_parts.append("本次兼容神态：" + expression_prompt)
-    if makeup_prompt:
-        prompt_parts.append("本次兼容妆造：" + makeup_prompt)
-    panel_prompt = (
-        "本次随机姿势优先于套装正文中残留的人物姿势描述：采用9:16竖幅画布上的自然错落式七格摄影拼贴，拒绝规整宫格；"
-        "中央是一张占据主要高度的竖幅大主图，明显大于其余画格；六张辅助照片分布在主图上下与两侧，"
-        "分割线错落，小画格的长宽和面积略有变化，不要等分或等高排列；"
-        "画格边界采用自然的不对称斜切与轻微错位，留白宽度可有细微变化，整体仍保持平衡、清晰易读；"
-        "总数严格为七张独立照片，不增不减，不合并或拆分画格，不做表格、九宫格或规则卡片墙；"
-        "每格都是同一人物、同一套 COS 服装、同一地点和同一影像风格下的独立照片，"
-        "每格各自完整、自然地呈现同一位主角，不是多人同框；照片之间不重叠，人物身体、脸、手和服装不得跨格拼接或被边界切断，不做镜像或重复曝光；"
-        "各画格的机位和姿势分别为：" + "；".join(panels)
-        + "。所有画格保持发型、妆容、服装结构、配饰和人物身份连续一致；"
-        "不添加文字、编号、水印、边框标题或额外人物，画面干净清晰。"
-    )
-    return {
-        "pose_id": main_pose,
-        "scene_id": scene_id,
-        "prompt": "".join(prompt_parts),
-        "panel_prompt": panel_prompt,
-        "panel_pose_ids": panel_poses,
-        "panel_framing_ids": [framing_id for _, framing_id in panel_views],
-        "main_framing_id": main_framing_id,
-        "style_id": style_id,
-        "lighting_id": lighting_id,
-        "expression_id": expression_id,
-        "makeup_id": makeup_id,
-        "style_family": str(scene.get("style_family") or ""),
-    }
-
-
 def pick_cos_variation(
     cos_id: str,
     *,
@@ -1874,7 +1642,6 @@ def pick_cos_variation(
     avoid_scenes: Iterable[str] = (),
     extra_request: str = "",
     camera: str = "",
-    multi_view_collage: bool = False,
     use_combinations: bool = False,
     suppress_pose: bool = False,
 ) -> Dict[str, Any]:
@@ -1891,6 +1658,10 @@ def pick_cos_variation(
     requested_scene = _requested_cos_scene(extra_request)
     selection_notice = ""
     rejected_pose_ids: set[str] = set()
+    if requested_pose and not _cos_pose_matches_outfit(requested_pose, cos_id):
+        rejected_pose_ids.add(requested_pose)
+        requested_pose = ""
+        selection_notice = "当前套装没有该动作所需的原有裙摆或衣摆，已改用兼容姿势。"
     handheld_requested = (
         (camera or parse_requested_cos_camera(extra_request)) == "selfie"
         and _requests_recline_handheld_selfie(extra_request)
@@ -1937,20 +1708,9 @@ def pick_cos_variation(
         allowed_poses.intersection_update(COS_RANDOM_SELFIE_POSE_IDS)
     selected_combination: Optional[Dict[str, Any]] = None
 
-    if multi_view_collage and not requested_pose and not rejected_pose_ids and camera == "third":
-        collage = _pick_cos_collage_variation(
-            cos_id,
-            extra_request=extra_request,
-            avoid_poses=avoided_poses,
-            avoid_scenes=avoided_scenes,
-        )
-        if collage:
-            return collage
-
     if (
         use_combinations
         and camera == "third"
-        and not multi_view_collage
         and not requested_scene
         and not requested_pose
         and not rejected_pose_ids
@@ -1987,6 +1747,7 @@ def pick_cos_variation(
             compatible_poses = _poses_for_camera(compatible_poses, camera)
         compatible_poses = [item for item in compatible_poses if item not in COS_EXPLICIT_ONLY_POSE_IDS]
         compatible_poses = [item for item in compatible_poses if item not in rejected_pose_ids]
+        compatible_poses = [item for item in compatible_poses if _cos_pose_matches_outfit(item, cos_id)]
         if not requested_pose:
             safe_poses = [
                 item for item in compatible_poses
@@ -2188,6 +1949,7 @@ _COS_LOOK_NAME_ALIASES = {
     "blue_archive_maki": ("真纪",),
     "blue_archive_fuuka": ("风香",),
     "blue_archive_toki": ("纺希",),
+    "blue_archive_kisaki_navy_gold_qipao": ("妃咲", "龙华妃咲", "竜華キサキ", "Kisaki"),
     "zzz_sunna_private_sportswear": ("千夏", "Sunna", "妄想天使千夏", "绝区零千夏"),
     "bocchi_hitori_pink_jacket_skirt": ("波奇", "波奇酱", "一里"),
     "bocchi_nijika_school_uniform": ("虹夏",),
@@ -2913,11 +2675,33 @@ def finalize_cos_prompt_for_request(
     )
 
 
+def _cos_preset_owns_staging(text: str) -> bool:
+    # Studio imports the COS builder, so resolve its preset catalog at call time.
+    from ..studio.studio import prompt_owns_staging
+
+    return prompt_owns_staging(text)
+
+
+def _build_cos_preset_staging_prompt(text: str) -> str:
+    text = re.sub(r"【cam:(?:selfie|first|third)】", "", text, flags=re.I).strip()
+    return (
+        "【他拍 / 看看COS模式】"
+        "场景、姿势、视角、景别和构图按本次明确选择的预设执行，"
+        "优先于套装正文中残留的拍摄与动作描述；人物身份、发型、服装结构与配饰仍按参考图和当前套装执行。"
+        + text
+        + " 【cam:third】 【cos_staging:preset】"
+    )
+
+
 def build_cos_third_person_prompt(text: str) -> str:
     """Wrap a raw COS-pool prompt in the shared third-person camera contract."""
     raw = str(text or "").strip()
     if not looks_like_cos_prompt(raw):
         return raw
+    if "【cos_staging:preset】" in raw:
+        return raw
+    if _cos_preset_owns_staging(raw):
+        return _build_cos_preset_staging_prompt(adapt_cos_outfit_for_camera(raw, "third"))
     raw = raw.replace(_COS_LEGACY_LACE_EYE_COVER_PROMPT, COS_FULL_EYE_COVER_PROMPT)
     if "【cos_mode:special】" in raw.lower():
         if "【特殊 COS / 固定成片模式】" in raw:
@@ -3132,7 +2916,6 @@ def build_cos_look_action(
     appearance_type: str = "auto",
     match_query: str = "",
     force_id: str = "",
-    force_multi_view_collage: bool = False,
     suppress_cos_pose: bool = False,
     picker: Optional[Callable[..., Mapping[str, Any]]] = None,
 ) -> str:
@@ -3140,6 +2923,9 @@ def build_cos_look_action(
     choose = picker or pick_cos_look_set
     query = str(match_query).strip() if str(match_query).strip() else extra_request
     requested_camera = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
+    preset_staging = _cos_preset_owns_staging(extra_request)
+    if preset_staging:
+        requested_camera = "third"
     chosen = get_cos_look_by_id(force_id) if force_id else None
     if not chosen and requested_camera and choose is pick_cos_look_set:
         chosen = choose(avoid_id=avoid_id, query=query, exclude_special=True)
@@ -3160,19 +2946,21 @@ def build_cos_look_action(
     title = str(chosen.get("title") or "随机COS")
     cos_type = str(chosen.get("cos_type") or "").strip()
     cos_id = str(chosen.get("id") or "cos")
-    requested_camera_in_text = parse_requested_cos_camera(extra_request)
-    explicit_collage = requests_cos_multi_view_collage(extra_request)
-    explicit_selfie = any(
-        _has_positive_request(extra_request, term)
-        for term in COS_SELFIE_REQUEST_TERMS
-    )
-    if (
-        (explicit_collage or force_multi_view_collage)
-        and not camera
-        and not explicit_selfie
-        and requested_camera != "first"
-    ):
-        requested_camera = "third"
+    if preset_staging:
+        outfit = adapt_cos_outfit_for_camera(str(chosen.get("prompt") or "").strip(), "third")
+        outfit = normalize_cos_eye_contract(outfit, cos_id)
+        outfit = adapt_cos_prompt_for_appearance(outfit, appearance_type)
+        outfit = normalize_cos_prompt_negatives(
+            outfit, appearance_type=appearance_type, preserve_reference_medium=has_refs,
+        )
+        base = f"本次套装：《{cos_type}》{title}。{outfit} 用户补充要求优先：{extra_request}。"
+        if has_refs:
+            base = "用户提供的引用图片作为本次主角身份来源；" + base
+        eye_mode = cos_eye_mode(cos_id)
+        base += f" 【cos:{cos_id}】"
+        if eye_mode != "unspecified":
+            base += f" 【cos_eye:{eye_mode}】"
+        return _build_cos_preset_staging_prompt(base)
     phone_face_cover = requests_phone_face_cover(extra_request)
     look_profile = cos_look_compatibility(cos_id)
     requested_pose = "user" if suppress_cos_pose else _requested_cos_pose(extra_request)
@@ -3201,19 +2989,6 @@ def build_cos_look_action(
         pose_id=requested_pose,
         allowed_cameras=look_profile["recommended_view_ids"],
     )
-    compact_extra = re.sub(r"\s+", "", str(extra_request or ""))
-    collage_negated = (
-        any(term in compact_extra for term in COS_MULTI_VIEW_COLLAGE_TERMS)
-        and not explicit_collage
-    )
-    collage_eligible = camera_kind == "third" and (
-        explicit_collage
-        or force_multi_view_collage
-        or not requested_camera_in_text
-    ) and not (requested_pose or has_explicit_framing or collage_negated)
-    collage_active = collage_eligible and (
-        explicit_collage or force_multi_view_collage or random.choice([False] * 23 + [True])
-    )
     variation = pick_cos_variation(
         cos_id,
         avoid_pose=avoid_pose,
@@ -3223,11 +2998,9 @@ def build_cos_look_action(
         avoid_scenes=avoid_scenes,
         extra_request=extra_request,
         camera=requested_camera or camera_kind,
-        multi_view_collage=collage_active,
         use_combinations=True,
         suppress_pose=suppress_cos_pose,
     )
-    collage_active = bool(variation.get("panel_prompt"))
     recline_handheld_fallback = bool(
         camera_kind == "selfie"
         and _requests_recline_handheld_selfie(extra_request)
@@ -3242,14 +3015,6 @@ def build_cos_look_action(
             )
         )
     )
-    collage_fallback_reason = ""
-    if explicit_collage and not collage_active:
-        if requested_pose or has_explicit_framing:
-            collage_fallback_reason = "因本次同时指定了单一姿势或景别，按明确要求生成单张照片；"
-        elif camera_kind != "third":
-            collage_fallback_reason = "当前相机视角不适合多格构图，按当前视角生成单张照片；"
-        else:
-            collage_fallback_reason = "当前套装与指定场景的兼容姿势不足，改为兼容的单张成片；"
     outfit = adapt_cos_outfit_for_camera(
         str(chosen.get("prompt") or "").strip(), camera_kind
     )
@@ -3272,7 +3037,6 @@ def build_cos_look_action(
         framing_weights=look_profile["recommended_framing_weights"],
         cos_id=cos_id,
         eligible_pose_ids=look_profile["recommended_pose_ids"],
-        multi_view_collage=collage_active,
     )
     # A camera/pose pair can legitimately have only one compatible crop (for
     # example a selfie half-turn). When a caller is rotating a batch, retry
@@ -3296,7 +3060,6 @@ def build_cos_look_action(
                 avoid_scenes=_as_id_set(avoid_scenes) | {variation.get("scene_id", "")},
                 extra_request=extra_request,
                 camera=requested_camera or camera_kind,
-                multi_view_collage=collage_active,
                 use_combinations=True,
                 suppress_pose=suppress_cos_pose,
             )
@@ -3312,12 +3075,10 @@ def build_cos_look_action(
                 framing_weights=look_profile["recommended_framing_weights"],
                 cos_id=cos_id,
                 eligible_pose_ids=look_profile["recommended_pose_ids"],
-                multi_view_collage=bool(retry_variation.get("panel_prompt")),
             )
             if retry_framing.get("view_id") not in avoided_framing_ids:
                 variation = retry_variation
                 framing_choice = retry_framing
-                collage_active = bool(variation.get("panel_prompt"))
                 break
     outfit = framing_choice.get("outfit_text", outfit)
     extra_request = framing_choice.get("extra_request_text", extra_request)
@@ -3328,17 +3089,7 @@ def build_cos_look_action(
         and f"《{cos_type}》" not in outfit
         else ""
     )
-    if collage_active:
-        framing_line = (
-            "本次采用9:16竖幅画布上的自然错落式多视角拼贴，优先于套装正文中的单一景别描述；"
-            "以下各画格保持同一人物、同一套装、同一场景和影像风格；"
-        )
-    elif framing_choice.get("prompt"):
-        framing_line = f"本次镜头构图：{framing_choice['prompt']}；"
-    else:
-        framing_line = ""
-    if collage_fallback_reason:
-        framing_line = collage_fallback_reason + framing_line
+    framing_line = f"本次镜头构图：{framing_choice['prompt']}；" if framing_choice.get("prompt") else ""
     composition = framing_choice.get("composition") or {}
     if composition.get("prompt"):
         framing_line += f"附加构图强化：{composition['prompt']}；"
@@ -3363,7 +3114,7 @@ def build_cos_look_action(
         framing = (
             "【他拍 / 看看COS模式】"
             "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-            + ("同一人物的七格连续照片拼贴：" if collage_active else "别人视角的单人成品照：")
+            + "别人视角的单人成品照："
             + framing_line
             + "画面只保留主角，拍摄者完全在画面外；不要拍到"
             + ("拍摄过程或其它拍摄设备；" if phone_face_cover else "拍摄设备或拍摄过程；")
@@ -3414,12 +3165,6 @@ def build_cos_look_action(
         + f"本次套装：{series_prefix}{title}。"
         + outfit
         + "还原套装写明的颜色、层次、配饰、鞋履和材质，未列出的部件不自行添加。"
-        + (
-            "保持七张照片的不规则竖幅拼贴关系：中央竖幅主图明显更大，六张辅助照片错落分布于主图上下与两侧，避免等分网格；"
-            "各画格使用不同姿势和机位但场景、服装与影像风格一致；不要简化成普通常服；画面干净得体。"
-            if collage_active
-            else ""
-        )
     )
     if variation["prompt"]:
         base += adapt_cos_outfit_for_camera(
@@ -3427,8 +3172,6 @@ def build_cos_look_action(
             camera_kind,
             preserve_mirror=variation.get("scene_id") == "bedroom_mirror",
         )
-    if variation.get("panel_prompt"):
-        base += variation["panel_prompt"]
     if has_refs:
         base = "用户提供的引用图片作为本次主角身份来源，服装、场景和构图按本次已锁定的 COS 规则执行；" + base
     extra = _strip_parsed_cos_request_terms(
@@ -3454,18 +3197,9 @@ def build_cos_look_action(
         lambda match: "" if match.group() in consumed_terms else match.group(),
         extra,
     ).strip(" ，,、；;")
-    if collage_fallback_reason:
-        term_pattern = "|".join(
-            re.escape(term)
-            for term in sorted(COS_MULTI_VIEW_COLLAGE_TERMS, key=len, reverse=True)
-        )
-        extra = re.sub(term_pattern, "", extra)
-        extra = re.sub(r"^[，,、；;\s]+|[，,、；;\s]+$", "", extra)
     if extra and extra not in base:
         base += f" 用户补充要求优先：{extra}。"
-    framing_id = str(
-        variation.get("main_framing_id") or framing_choice.get("view_id") or ""
-    )
+    framing_id = str(framing_choice.get("view_id") or "")
     return (
         base
         + f" 【cos:{cos_id}】 【cam:{camera_kind}】"
@@ -3478,6 +3212,5 @@ def build_cos_look_action(
         + (f" 【cos_makeup:{variation['makeup_id']}】" if variation.get("makeup_id") else "")
         + (f" 【cos_framing:{framing_id}】" if framing_id else "")
         + (f" 【cos_combo:{variation['combination_id']}】" if variation.get("combination_id") else "")
-        + (f" 【cos_view:{COS_MULTI_VIEW_COLLAGE_ID}】" if collage_active else "")
         + (f" 【cos_composition:{composition['composition_id']}】" if composition.get("composition_id") else "")
     )

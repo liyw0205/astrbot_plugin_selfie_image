@@ -378,6 +378,7 @@ def test_rebuilding_builtin_prompts_keeps_realism_once(mode, language):
     rebuilt = build_selfie_builtin_prompt(action, action_content=prompt, **kwargs)
     assert rebuilt.count("local skin-tone variation" if language == "en" else "局部肤色差异") == 1
     assert rebuilt.count("Do not automatically copy its room" if language == "en" else "不自动沿用其中的房间") == 1
+    assert rebuilt.count("Body continuity:" if language == "en" else "身材保持：") == 1
 
 
 @pytest.mark.parametrize("english,translation_applied", [(False, False), (True, False), (True, True)])
@@ -685,6 +686,7 @@ def test_leg_legacy_front_skirt_retry_preserves_clothes_and_changes_camera(tmp_p
     assert prompt.count(outfit["prompt"]) == 1
     assert prompt.count(LEGFOCUS_OUTFIT_CAPTURE_PROFILES["skirt"]["coverage_prompt"]) == 1
     assert prompt.count(LEGFOCUS_FRAMING) == 1
+    assert prompt.count("Body continuity:" if english else "身材保持：") == 1
 
 
 @pytest.mark.parametrize("query", ["第三人称 第一人称", "侧拍 正前方", "第一人称 全身"])
@@ -1521,6 +1523,35 @@ def test_back_three_quarter_group_alias_uses_the_matching_composition():
     assert "背后三分之四角度" in action
 
 
+@pytest.mark.parametrize("item_id,anchor", [
+    ("studio_topdown_cluster_group", "光轴垂直向下拍摄"),
+    ("living_rug_layered_recline_group", "一只手在自己髋后撑住同一地毯"),
+    ("window_seated_standing_group", "略高于坐姿者视线并轻微俯拍"),
+    ("lantern_corridor_staggered_group", "纸灯笼提供柔和暖光"),
+    ("petal_hot_spring_waterline_group", "每个人的双手只在自己身前交叠"),
+])
+@pytest.mark.parametrize("english", [False, True])
+def test_group_compound_survives_final_prompt_with_headshot_identity(tmp_path, item_id, anchor, english):
+    from astrbot_plugin_selfie_image.prompts.group_prompt_pool import GROUP_COMPOSITIONS_BY_ID
+
+    plugin = plugin_for_prompts(tmp_path, english)
+    companion = ImageReference(data=b"companion-headshot", mime_type="image/png")
+    with patch("astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices", return_value=[item_id]):
+        action = plugin._build_group_selfie_action("三人合影", has_refs=True)
+    selection = plugin._select_group_references([companion])
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
+        None, action, [companion], cos_selection=selection,
+    ))
+
+    assert GROUP_COMPOSITIONS_BY_ID[item_id]["prompt"] in prompt
+    assert anchor in prompt
+    assert "窗光或暖灯" not in prompt
+    assert "竖屏手机近景半身" not in prompt
+    assert "未展示或无法确认的身体特征视为未知" in prompt
+    assert "不在人物间平均、互换或混用" in prompt
+    assert plugin.persona.analyze_selfie_intent(action).is_group_photo
+
+
 def test_reference_description_uses_locked_contract_scope(tmp_path):
     plugin = plugin_for_prompts(tmp_path)
     plugin.config = SimpleNamespace(image_ocr_model="")
@@ -1533,6 +1564,11 @@ def test_reference_description_uses_locked_contract_scope(tmp_path):
     assert contract in instruction
     assert "不要描述原图的姿势" in instruction
     assert "未被本次要求替换的衣物" in instruction
+    assert "未展示或无法确认的身体特征未知" in instruction
+    assert "按图片编号及图中人物分别记录" in instruction
+    assert "不把服装模特或同伴的身材写成主角身材" in instruction
+    assert "不估算具体身高、体重或围度" in instruction
+    assert "用户要求明确指定沿用某张参考" in instruction
     assert meta["scope"] == "contract_identity"
 
 
@@ -2130,6 +2166,8 @@ def test_batch_rebuild_preserves_prompt_fixes(tmp_path, source, query):
     assert plugin._run_image_generation.call_count == 3
     for call in plugin._run_image_generation.call_args_list:
         prompt = call.args[0]
+        assert prompt.count("身材保持：") == 1
+        assert "未展示或无法确认的身体特征视为未知" in prompt
         if source == "command-selfie":
             assert "穿红色连衣裙" in prompt
             assert "今日穿搭" not in prompt
@@ -2186,3 +2224,125 @@ def test_plain_drawing_requests_preserve_the_user_prompt(tmp_path, refs):
     call = plugin._run_image_generation.call_args
     assert call.args[0] == raw
     assert call.args[3] == refs
+
+
+@pytest.mark.parametrize("mode", ["selfie", "third", "group", "cos", "legs"])
+@pytest.mark.parametrize("has_identity", [False, True])
+@pytest.mark.parametrize("english,translated", [(False, False), (True, False), (True, True)])
+def test_body_continuity_reaches_final_prompts_without_fixing_a_build(
+    tmp_path, mode, has_identity, english, translated,
+):
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin._persona_identity_reference = lambda **_kw: (
+        ImageReference(data=b"identity-headshot", mime_type="image/png") if has_identity else None
+    )
+    plugin._translate_prompt_to_english = AsyncMock(
+        side_effect=lambda text, **_kw: (text, {"applied": translated})
+    )
+    action = realism_action(mode, "auto", "不看镜头，保持原定姿势")
+    companions = [ImageReference(data=b"companion-headshot", mime_type="image/png")] if mode == "group" else []
+    selection = plugin._select_group_references(companions) if mode == "group" else None
+    prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
+        None, action, companions, cos_selection=selection,
+    ))
+    use_english = english and translated
+    assert prompt.count("Body continuity:" if use_english else "身材保持：") == 1
+    assert ("unseen or uncertain body traits unknown" if use_english else "未展示或无法确认的身体特征视为未知") in prompt
+    assert ("invent measurements or a fixed body template" if use_english else "不编造尺寸或套用固定身材模板") in prompt
+    assert ("without copying the reference pose" if use_english else "不复制原图姿势") in prompt
+    assert ("Only an explicit user request" if use_english else "只有用户明确要求时") in prompt
+    assert ("costume character designs do not supply a replacement build" if use_english else "不迁移服装参考人物或角色原设的体型") in prompt
+    if has_identity:
+        assert refs[0].data == b"identity-headshot"
+        assert ("selected main identity reference only for reliably visible" if use_english else "本次选定的主角身份参考中可靠可见") in prompt
+    else:
+        assert ("body traits explicitly established" if use_english else "仅沿用当前人设中明确设定的身体特征") in prompt
+    if mode == "group":
+        assert [ref.data for ref in refs] == ([b"identity-headshot"] if has_identity else []) + [b"companion-headshot"]
+        assert ("never average or swap bodies" if use_english else "不在人物间平均、互换或混用") in prompt
+        if not has_identity:
+            assert ("all supplied companion references belong to companions" if use_english else "所有输入的同伴参考只属于同伴") in prompt
+    if mode == "legs":
+        assert ("confirmed leg shape, thickness, and thigh-to-calf relationships" if use_english else "能确认的腿型、粗细与大腿小腿关系") in prompt
+    assert prompt.count(extract_generated_action_contract(action)) == 1
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("mode", ["selfie", "group", "cos", "legs"])
+def test_body_continuity_also_covers_direct_builtin_prompts(language, mode):
+    action = realism_action(mode, "anime")
+    prompt = build_selfie_builtin_prompt(action, language=language, has_reference_image=True)
+    assert prompt.count("Body continuity:" if language == "en" else "身材保持：") == 1
+    assert ("headshot" if language == "en" else "只有头像") in prompt
+    if mode == "group":
+        assert ("never average or swap bodies" if language == "en" else "不在人物间平均、互换或混用") in prompt
+
+
+@pytest.mark.parametrize("english", [False, True])
+def test_wardrobe_body_never_replaces_headshot_identity(tmp_path, english):
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin.persona.current_wardrobe_item = lambda: SimpleNamespace(id="test", name="宽松猫纹短裤")
+    plugin.persona.current_wardrobe_reference = lambda: ImageReference(data=b"outfit-model", mime_type="image/png")
+    action = build_selfie_look_action()
+    prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert [ref.data for ref in refs] == [b"identity", b"outfit-model"]
+    assert ("custom wardrobe clothing reference" if english else "自定义衣橱服装参考图") in prompt
+    assert ("costume character designs do not supply a replacement build" if english else "不迁移服装参考人物或角色原设的体型") in prompt
+    assert ("unseen or uncertain body traits unknown" if english else "未展示或无法确认的身体特征视为未知") in prompt
+
+
+@pytest.mark.parametrize("mode", ["selfie", "group", "cos", "legs"])
+def test_explicit_body_change_does_not_get_dropped(tmp_path, mode):
+    plugin = plugin_for_prompts(tmp_path)
+    query = "只让手臂更有肌肉感，其余体型保持；改为Q版比例"
+    action = realism_action(mode, "anime", query)
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert query in prompt
+    assert "只有用户明确要求时才改变指定的身体特征或风格化比例" in prompt
+    assert "包括明确要求的 Q 版变换" in prompt
+
+
+def test_cos_body_templates_are_removed_without_changing_clothing():
+    firefly = get_cos_look_by_id("firefly_star_rail_sleeping_cabin")["prompt"]
+    white_shirt = get_cos_look_by_id("original_chiaroscuro_white_shirt")["prompt"]
+    assert "身形成熟丰润" not in firefly
+    assert "腿部比例修长" not in firefly
+    assert "S型轮廓" not in firefly
+    assert "自然纤细的成年人体比例" not in white_shirt
+    for prompt in (firefly, white_shirt):
+        assert "不预设" in prompt
+        assert "可确认" in prompt
+    assert "宽大白色棉质纽扣衬衫" in white_shirt
+    assert "黑色宽松" in get_cos_look_by_id("zzz_sunna_private_sportswear")["prompt"]
+
+
+@pytest.mark.parametrize("mode", ["selfie", "group", "cos", "legs"])
+def test_selfie_retry_keeps_visible_body_without_fixed_proportions(tmp_path, mode):
+    plugin = plugin_for_prompts(tmp_path)
+    action = realism_action(mode, "anime")
+    plugin._last_llm_generation = lambda *_a: {"kind": "selfie", "params": {"action": action}}
+    record = {"id": "record", "image_code": "code", "generated_image_paths": ["previous.png"]}
+    plugin._llm_retry_source_record = lambda *_a: record
+    plugin._remember_llm_generation = lambda *_a: None
+    plugin._update_last_llm_generation = lambda *_a, **_kw: None
+    previous = ImageReference(data=b"previous-result", mime_type="image/png")
+    current = ImageReference(data=b"current-reference", mime_type="image/png")
+    plugin._load_retry_source_image = lambda *_a: previous
+    plugin._event_reference_images = AsyncMock(return_value=[current])
+    plugin._run_llm_image_request = AsyncMock(return_value="ok")
+
+    assert asyncio.run(plugin.tool_retry_last_generation(None, "身材比例不对，保留Q版风格")) == "ok"
+    call = plugin._run_llm_image_request.call_args
+    prompt = call.args[1]
+    assert prompt.count("身材保持：") == 1
+    assert "未展示或无法确认的身体特征视为未知" in prompt
+    assert "不预设尺寸或头身数" in prompt
+    assert "7至7.5头身" not in prompt
+    assert "身材比例不对，保留Q版风格" in prompt
+    assert call.kwargs["reference_images"] == [current, previous]
+    if mode == "group":
+        assert "上一张合影可能包含多人" in prompt
+        assert "不在人物间平均、互换或混用" in prompt
+        assert "合影中参考图一只锚定主角" not in prompt
+    if mode == "legs":
+        assert "未知腿部不预设" in prompt

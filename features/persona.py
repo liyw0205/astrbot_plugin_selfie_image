@@ -66,6 +66,7 @@ from .daily_prompt_pools import (
     SELFIE_SNAPSHOT_PRESETS,
 )
 from .identity_pool import IdentityPoolMixin
+from ..prompts.body_identity import build_body_identity_prompt
 from ..prompts.prompt_templates import (
     APPEARANCE_OUTPUT_PROMPTS_ZH,
     COS_COVERED_EYES_IDENTITY_CONTRACT_ZH,
@@ -163,7 +164,7 @@ def group_style_lines(appearance_type: str) -> list[str]:
     kind = normalize_appearance_type(appearance_type)
     if kind == "anime":
         return [
-            "整张合影统一为柔光京阿尼风格动漫：柔和散射光、细腻脸部、偏仙风气质；线条、上色、光影与头身比例一致。",
+            "整张合影统一为柔光京阿尼风格动漫：柔和散射光、细腻脸部、偏仙风气质；线条、上色与光影语言一致，各人的可见体型和比例分别保持。",
             "脸型更细、五官更精致，氛围干净通透，带一点仙气，不要粗线条厚涂或夸张漫画脸。",
             "额外参考若是真人照片：只提取身份线索（发色发型、配色、饰品、服装色块、体态倾向），改画成与主角同一套柔光京阿尼动漫人物，不要继续写实摄影质感。",
             "二次元头像、插画、表情包、卡通、吉祥物、玩偶、毛绒玩具：只取配色/发型/气质线索，拟人成可并肩站立的完整动漫人物，禁止原样保留玩具/玩偶外形。",
@@ -2175,7 +2176,7 @@ class PersonaManager(IdentityPoolMixin):
                 "固定形象参考：参考图一是主角身份锚点。",
                 "主角的脸型、五官结构、发型发色、体态、性别与整体长相来自参考图一；额外参考图不得替换这些身份特征。",
                 "参考图一是女性则主角必须是女性，是男性则必须是男性；禁止把女形象改成男、把男形象改成女。",
-                "表情、眼神、嘴角与微表情默认按本次场景自然重画，不要原样复制参考图一的固定表情或僵硬眼神；只锁身份长相与性别。",
+                "表情、眼神、嘴角与微表情默认按本次场景自然重画，不要原样复制参考图一的固定表情或僵硬眼神；保持已确认的身份特征。",
                 "视线和表情按用户明确要求执行，不额外要求看镜头。"
                 if gaze_override else "面向镜头时自然看向镜头、眼神有焦点；用户明确要求侧脸、低头、看彼此或看别处时按要求，不要心不在焉。",
             ]
@@ -2811,6 +2812,11 @@ class PersonaManager(IdentityPoolMixin):
                 f"这是{subject_photo_label}。" if subject_photo_label else "",
                 "" if has_reference_image else (f"角色设定：{personality}\n【角色设定结束】" if personality else ""),
                 *identity_lines,
+                build_body_identity_prompt(
+                    has_identity_reference=has_reference_image,
+                    is_group=intent.is_group_photo,
+                    is_legs=intent.is_legs_only,
+                ),
                 *reference_lines,
                 *today_lines,
                 *mode_lines,

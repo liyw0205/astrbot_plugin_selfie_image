@@ -315,19 +315,6 @@
         "playful_color"
       ]
     },
-    "photo_frame_studio": {
-      "title": "白边照片布景",
-      "aliases": ["白边照片影棚", "照片边框影棚", "照片破框影棚", "白边照片", "照片框"],
-      "prompt": "浅灰或柔白无缝背景前设置一张大型竖幅白边照片，四边矩形边缘清晰，照片画面与外部空间有明确的平面层次；照片大小足以容纳人物上身和双手支撑动作，边框周围留少量干净背景。场景中只出现这一张照片，不出现镜面、额外人物或摄影设备。",
-      "style_prompt": "中性浅色背景与白色照片边框保持明度区分，人物和照片边缘清楚可辨。",
-      "lighting_ids": ["studio_side"],
-      "style_weights": {"natural_snapshot": 4, "minimal_studio": 2},
-      "style_family": "minimal_room",
-      "style_ids": ["natural_snapshot", "minimal_studio", "clean_character_film"],
-      "pose_ids": ["photo_frame_break_bottom_left", "photo_frame_break_top_bottom"],
-      "tags": ["editorial", "indoor", "neutral", "photo_frame"],
-      "makeup_ids": ["natural_clean", "cool_matte", "playful_color"]
-    },
     "living_room_rug": {
       "title": "客厅地毯",
       "aliases": [
@@ -1258,6 +1245,102 @@
       "face_risk_tags": ["backlight"],
       "tags": ["indoor", "vehicle", "seated", "daylight"],
       "makeup_ids": ["natural_clean", "soft_feminine"]
+    },
+    "pose_reference_room": {
+      "title": "姿势参考室内",
+      "aliases": ["姿势参考室内", "简洁姿势房间"],
+      "prompt": "简洁室内背景，柔软平整的浅色地毯与干净墙面，留出足够抬腿、错步和双膝支撑空间；场景不额外指定人物站坐、手部动作或画幅裁切。",
+      "lighting_ids": ["room_diffuse"],
+      "style_family": "domestic_snapshot",
+      "style_ids": ["natural_snapshot"],
+      "style_weights": {"natural_snapshot": 5},
+      "pose_ids": ["standing_support_leg_other_knee_high_bent", "kneeling_upright_front_hem_level_lift", "standing_staggered_front_hem_side_lift", "front_oblique_chest_waist_upper_thigh_crop", "standing_support_other_knee_up_foot_down"],
+      "tags": ["indoor", "domestic", "soft_ground"],
+      "makeup_ids": ["natural_clean"]
+    },
+    "ancient_wood_table_room": {
+      "title": "古风木格栅长桌室内",
+      "aliases": ["古风木格栅长桌室内", "古风实木长桌", "木格栅桌面场景"],
+      "prompt": "中式古风室内，木格栅背景与深色实木长桌；桌面宽大平稳，可连续承托人物上半身和桌面动作，周围保留舒展空间。",
+      "lighting_ids": ["warm_room_diffuse"],
+      "style_family": "traditional_portrait",
+      "style_ids": ["natural_snapshot"],
+      "style_weights": {"natural_snapshot": 5},
+      "pose_ids": ["ancient_room_table_lean_same_side_leg_overhead", "ancient_room_table_supine_head_over_edge_legs_up"],
+      "tags": ["indoor", "traditional", "table"],
+      "makeup_ids": ["ancient_elegant"]
+    },
+    "ancient_soft_portrait_room": {
+      "title": "古风暖光面部近景室内",
+      "aliases": ["古风暖光面部近景室内", "古风面部近距离俯拍"],
+      "prompt": "暖柔自然光照入的古风室内，近景背景柔和虚化，只保留少量室内色彩层次，视觉重点留给面部。",
+      "lighting_ids": ["warm_room_diffuse"],
+      "style_family": "traditional_portrait",
+      "style_ids": ["natural_snapshot"],
+      "style_weights": {"natural_snapshot": 5},
+      "pose_ids": ["ancient_style_face_close_high_angle_portrait"],
+      "tags": ["indoor", "traditional", "portrait"],
+      "makeup_ids": ["soft_feminine"]
+    },
+    "light_wood_hallway": {
+      "title": "浅木走廊门边",
+      "aliases": ["浅木走廊门边", "浅木色走廊", "走廊掌撑墙面双脚踮起", "门边侧身靠墙掌撑踮脚"],
+      "prompt": "室内走廊门边，浅木色墙面与自然门框线条，墙面平整可供手掌支撑，地面平整，保留完整动作空间。",
+      "lighting_ids": ["warm_room_top"],
+      "style_family": "domestic_snapshot",
+      "style_ids": ["natural_snapshot"],
+      "style_weights": {"natural_snapshot": 5},
+      "pose_ids": ["hallway_wall_lean_palm_support_tiptoe_stance"],
+      "tags": ["indoor", "hallway", "wall"],
+      "makeup_ids": ["natural_clean"]
+    },
+    "cartoon_gaming_chair_room": {
+      "title": "居家白色卡通电竞椅",
+      "aliases": ["居家白色卡通电竞椅", "白色卡通电竞椅", "电竞椅"],
+      "prompt": "温馨居家房间，一张白色卡通电竞椅，椅面、椅边与椅背结构清楚且足够承托侧坐姿势；前方保留伸腿空间，背景陈设简洁。",
+      "lighting_ids": ["warm_room_diffuse"],
+      "style_family": "domestic_snapshot",
+      "style_ids": ["natural_snapshot"],
+      "style_weights": {"natural_snapshot": 5},
+      "pose_ids": ["home_gaming_chair_side_sit_crossed_leg_feet_suspended"],
+      "tags": ["indoor", "domestic", "chair"],
+      "makeup_ids": ["natural_clean"]
+    },
+    "clear_blue_portrait_pool": {
+      "title": "清澈蓝池水中近景",
+      "aliases": ["清澈蓝池水中近景", "清澈蓝色水池", "蓝色水池漂浮近景人像", "蓝池胸口水位漂浮"],
+      "prompt": "清澈蓝色水池，水面有细碎涟漪与少量气泡，真实水面反光保持清透；人物位于水中，水位和近景范围由完整姿势组合确定。",
+      "lighting_ids": ["clear_pool_soft"],
+      "style_family": "water_portrait",
+      "style_ids": ["natural_snapshot"],
+      "style_weights": {"natural_snapshot": 5},
+      "pose_ids": ["blue_pool_upper_body_float_ancient_style_close_portrait"],
+      "tags": ["water", "pool", "portrait"],
+      "makeup_ids": ["natural_clean"]
+    },
+    "golden_shallow_water": {
+      "title": "暖金逆光浅水",
+      "aliases": ["暖金逆光浅水", "浅水并腿提裙腰腿低角度", "浅水双手提裙腰腿局部"],
+      "prompt": "水深漫到人物小腿的平缓浅水，脚下有连续平整的站立面，水面带细碎波纹倒影；低处暖金色自然光从身后照来。",
+      "lighting_ids": ["golden_water_backlight"],
+      "style_family": "water_portrait",
+      "style_ids": ["natural_snapshot"],
+      "style_weights": {"natural_snapshot": 5},
+      "pose_ids": ["shallow_water_standing_both_hands_hem_lift_low_waist_leg_crop"],
+      "tags": ["water", "shallow", "backlight"],
+      "makeup_ids": ["natural_clean"]
+    },
+    "misty_petals_hot_spring": {
+      "title": "古风薄雾花瓣温泉",
+      "aliases": ["古风薄雾花瓣温泉", "古风温泉池", "古风温泉水中坐姿双手交叠", "温泉双手交叠前伸"],
+      "prompt": "古风温泉池，水面氤氲轻薄雾气并漂浮花瓣，人物坐在水中；水面、花瓣与雾气有自然层次，朦胧氛围保持柔和。",
+      "lighting_ids": ["misty_water_soft"],
+      "style_family": "traditional_water_portrait",
+      "style_ids": ["natural_snapshot"],
+      "style_weights": {"natural_snapshot": 5},
+      "pose_ids": ["ancient_hot_spring_seated_lean_forward_overlapped_hands"],
+      "tags": ["water", "traditional", "hot_spring"],
+      "makeup_ids": ["ancient_elegant"]
     },
     "theater_dressing_room": {
       "title": "剧院后台换装间",

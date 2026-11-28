@@ -43,8 +43,12 @@ def _load_group_compositions() -> List[Dict[str, Any]]:
             raise PromptDataError(f"合影朝向格式错误: {item_id}")
         if framing not in {"near", "medium", "environment", "close_medium"}:
             raise PromptDataError(f"合影景别格式错误: {item_id}")
+        compound = item.get("compound", False)
+        if not isinstance(compound, bool):
+            raise PromptDataError(f"合影复合组合标记必须为布尔值: {item_id}")
         item["orientation"] = orientation
         item["framing"] = framing
+        item["compound"] = compound
         seen.add(item_id)
         compositions.append(item)
     return compositions

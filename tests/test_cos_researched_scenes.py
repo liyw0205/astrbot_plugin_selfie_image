@@ -69,11 +69,11 @@ def test_style_only_request_selects_its_environment_even_with_combination_picker
 
 
 @pytest.mark.parametrize("scene_id", SCENE_STYLES)
-def test_collage_picker_preserves_style_scene_constraints(scene_id):
+def test_variation_picker_preserves_style_scene_constraints(scene_id):
     style_id = SCENE_STYLES[scene_id]
     variation = cos.pick_cos_variation(
         "roxy_cream", extra_request=COS_JSON_STYLES[style_id]["aliases"][0],
-        camera="third", multi_view_collage=True,
+        camera="third",
     )
     assert variation["scene_id"] == scene_id
     assert variation["style_id"] == style_id
@@ -156,17 +156,6 @@ def test_bed_side_recline_is_not_compatible_with_a_floor_only_scene():
     assert set(COS_JSON_POSES["bedside_side_recline"]["scene_ids"]) == {
         "bedroom_sleep", "gray_bed_recline",
     }
-
-
-@pytest.mark.parametrize("scene_id", SCENE_STYLES)
-def test_small_scene_pose_pools_fall_back_from_collage_without_other_environments(scene_id):
-    action = cos.build_cos_look_action(
-        f"{COS_JSON_SCENES[scene_id]['aliases'][0]} 多视角拼贴",
-        force_id="roxy_cream", camera="third", force_multi_view_collage=True,
-    )
-    assert_compatible_selection(action, scene_id)
-    assert "【cos_view:multi_view_collage】" not in action
-    assert "兼容姿势不足" in action
 
 
 @pytest.mark.parametrize("constraint", ["胸像近景", "低机位", "光线：正面闪光灯"])

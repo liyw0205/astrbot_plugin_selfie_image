@@ -6574,6 +6574,27 @@ class SessionModelAndTaskTests(unittest.TestCase):
             ],
         )
 
+        from astrbot_plugin_selfie_image.prompts.body_identity import build_body_identity_prompt
+
+        scoped_prompt = "保持人物神态\n" + build_body_identity_prompt(has_identity_reference=True)
+
+        async def describe_identity(_event, images, *, prompt_contract):
+            self.assertEqual(images, [PNG_BYTES])
+            self.assertEqual(prompt_contract, scoped_prompt)
+            return "只有头像，身体未知", {"enabled": True, "applied": True}
+
+        plugin._describe_reference_images_for_generation = describe_identity
+        captured.clear()
+        with patch.object(plugin_main, "generate_image_with_fallback", side_effect=fake_generate):
+            asyncio.run(plugin._run_image_generation(
+                scoped_prompt, "9:16", "1K", [reference], targets=targets, event=object(),
+            ))
+        self.assertEqual(captured[0][2], 0)
+        self.assertIn("身材保持：", captured[0][1])
+        self.assertIn("只有头像，身体未知", captured[0][1])
+        self.assertIn("仅补充身份、可确认的体型", captured[0][1])
+        self.assertEqual(captured[1], ("plain-edit", scoped_prompt, 1))
+
     def test_image_generation_audit_rejection_records_without_unbound_result(self) -> None:
         plugin = self._plugin_stub()
         plugin._save_reference_images_to_cache = lambda _refs: []
@@ -8376,7 +8397,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=1,
             )
             self.assertTrue(("表情" in clothes) and (("重画" in clothes) or ("自然" in clothes)))
-            self.assertIn("只锁身份长相", clothes)
+            self.assertIn("保持已确认的身份特征", clothes)
+            self.assertIn("未展示或无法确认的身体特征视为未知", clothes)
 
 
     def test_legs_persona_preserves_reference_outfit_and_requested_detail(self) -> None:
@@ -8542,6 +8564,7 @@ class LegFocusTests(unittest.TestCase):
                 "qipao_emerald_satin_side_slit", "qipao_black_lace_detached_sleeves",
                 "qipao_ivory_blue_peony", "qipao_red_brocade_long_slit",
                 "qipao_cyan_wrap_top_skirt",
+                "blue_archive_kisaki_navy_gold_qipao",
             },
         )
         xishi_qipao_ids = {item["id"] for item in plugin_main.match_cos_look_sets("西施旗袍")}
@@ -8555,7 +8578,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("甘雨")},
-            {"ganyu_bride", "ganyu_ice_blue", "ganyu_blue_white_qilin_close"},
+            {"ganyu_bride", "ganyu_ice_blue", "ganyu_blue_white_qilin_close", "ganyu_private_blue_lace_hoodie"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("洛琪希")},

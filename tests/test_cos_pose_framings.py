@@ -18,7 +18,6 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     parse_requested_cos_camera,
     pick_cos_framing,
     pick_cos_variation,
-    requests_cos_multi_view_collage,
 )
 from astrbot_plugin_selfie_image.cos.cos_looks_loader import (
     COS_DATA_DIR,
@@ -33,8 +32,6 @@ from astrbot_plugin_selfie_image.cos.cos_looks_loader import (
     COS_JSON_FRAMING_REQUEST_TERMS,
     COS_JSON_FRAMING_OPTION_SUFFIX_TERMS,
     COS_JSON_MAKEUPS,
-    COS_JSON_MULTI_VIEW_COLLAGE,
-    COS_JSON_MULTI_VIEW_COLLAGE_TERMS,
     COS_JSON_POSES,
     COS_JSON_POSE_CLASSIFICATION_TERMS,
     COS_JSON_POSE_CUSTOM_REQUEST_TERMS,
@@ -222,8 +219,6 @@ def test_shared_staging_metadata_and_curated_pairs_are_json_owned():
     assert set(COS_JSON_POSES) - used_poses == set()
     assert COS_JSON_POSES["veranda_side_profile"].get("explicit_only") is not True
     assert COS_JSON_POSES["veranda_side_profile"]["scene_ids"] == ["japanese_veranda"]
-    assert COS_JSON_POSES["photo_frame_break_bottom_left"]["scene_ids"] == ["photo_frame_studio"]
-    assert COS_JSON_POSES["photo_frame_break_top_bottom"]["scene_ids"] == ["photo_frame_studio"]
     assert set(COS_JSON_MAKEUPS) == {
         makeup_id for scene in COS_JSON_SCENES.values() for makeup_id in scene["makeup_ids"]
     }
@@ -307,23 +302,8 @@ def test_high_risk_cos_poses_and_combinations_are_tagged_and_use_positive_alignm
             assert combo.get("risk") == "high", combo_id
 
 
-def test_cos_multi_view_collage_defaults_to_portrait_ratio():
-    look = next(item for item in cos_looks.COS_LOOK_SETS if item["id"] == "roxy_cream")
-    action = build_cos_look_action(
-        "多视角拼贴",
-        picker=lambda **_: look,
-    )
-
-    from astrbot_plugin_selfie_image.prompts.command_parser import extract_prompt_aspect_ratio
-
-    assert "9:16竖幅画布" in action
-    assert extract_prompt_aspect_ratio(action) == "9:16"
-    assert "中央竖幅主画格（大图）" in action
-
-
 def test_camera_and_request_vocabulary_is_json_owned():
     assert cos_looks.COS_SELFIE_REQUEST_TERMS == tuple(COS_JSON_CAMERA_REQUEST_TERMS["selfie"])
-    assert cos_looks.COS_MULTI_VIEW_COLLAGE_TERMS == COS_JSON_MULTI_VIEW_COLLAGE_TERMS
     assert COS_JSON_CAMERA_REQUEST_TERMS["mirror_selfie"]
     assert COS_JSON_FRAMING_OPTION_SUFFIX_TERMS
     assert COS_JSON_POSE_CUSTOM_REQUEST_TERMS
@@ -331,48 +311,14 @@ def test_camera_and_request_vocabulary_is_json_owned():
     assert set(COS_JSON_SCENE_REQUEST_SYNTAX_TERMS) == {
         "labels", "assignments", "freeform_leads", "freeform_locations",
     }
-    assert cos_looks.COS_MULTI_VIEW_COLLAGE_ID == COS_JSON_MULTI_VIEW_COLLAGE["id"]
-    assert cos_looks.COS_MULTI_VIEW_COLLAGE_PANEL_COUNT == COS_JSON_MULTI_VIEW_COLLAGE["panel_count"]
-    assert len(cos_looks.COS_MULTI_VIEW_COLLAGE_LABELS) == COS_JSON_MULTI_VIEW_COLLAGE["panel_count"]
     assert COS_JSON_POSES["back_to_camera"]["random_weight"] == 5
     assert COS_JSON_POSES["over_shoulder"]["random_weight"] == 6
 
     assert parse_requested_cos_camera("第一人称视角") == "first"
     assert parse_requested_cos_camera("朋友帮忙拍摄") == "third"
     assert parse_requested_cos_camera("对镜自拍") == "selfie"
-    assert requests_cos_multi_view_collage("多视角拼贴") is True
     assert cos_looks._requested_cos_pose("用户要求交叉双臂") == "user"
     assert cos_looks._requested_cos_pose("不要交叉双臂") == ""
-
-
-@pytest.mark.parametrize(
-    ("prompt_text", "pose_id"),
-    [
-        ("采用破框而出的立体视觉效果", "photo_frame_break_bottom_left"),
-        ("照片上沿抬臂、下沿探手", "photo_frame_break_top_bottom"),
-    ],
-)
-def test_photo_frame_break_poses_are_randomly_eligible_and_selectable(prompt_text, pose_id):
-    pose = COS_JSON_POSES[pose_id]
-    profile = cos_looks.cos_look_compatibility("roxy_cream")
-
-    assert cos_looks._requested_cos_pose(prompt_text) == pose_id
-    assert pose.get("explicit_only") is not True
-    assert pose_id in cos_looks.COS_DEFAULT_RANDOM_POSE_IDS
-    assert pose_id in profile["recommended_pose_ids"]
-    assert "photo_frame_studio" in profile["recommended_scene_ids"]
-    assert pose_id in profile["scene_pose_compatibility"]["photo_frame_studio"]
-    assert pose["framing_ids"] == ["photo_frame_front_medium"]
-
-    action = build_cos_look_action(
-        prompt_text,
-        force_id="roxy_cream",
-        camera="third",
-    )
-    assert f"【cos_pose:{pose_id}】" in action
-    assert "【cos_scene:photo_frame_studio】" in action
-    assert "【cos_framing:photo_frame_front_medium】" in action
-    assert pose["prompt"] in action
 
 
 def test_veranda_side_pose_is_reachable_without_naming_the_pose():
@@ -397,8 +343,6 @@ def test_veranda_side_pose_is_reachable_without_naming_the_pose():
     [
         ("topdown_look_up_stand", "studio_topdown_look_up"),
         ("chair_low_seated_stretch", "atelier_chair_low_stretch"),
-        ("photo_frame_break_bottom_left", "photo_frame_bottom_left_break"),
-        ("photo_frame_break_top_bottom", "photo_frame_top_bottom_break"),
     ],
 )
 def test_new_random_poses_are_reachable_through_curated_picker(pose_id, combination_id):

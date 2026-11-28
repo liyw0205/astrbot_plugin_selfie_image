@@ -521,7 +521,8 @@ async def run_image_generation_workflow(
             from ..prompts.prompt_templates import explicit_selfie_action_mode
 
             locked_mode = explicit_selfie_action_mode(request_prompt) or explicit_selfie_action_mode(original_prompt)
-            describe_options = {"prompt_contract": request_prompt} if locked_mode else {}
+            has_body_identity = any(marker in request_prompt for marker in ("身材保持：", "Body continuity:"))
+            describe_options = {"prompt_contract": request_prompt} if locked_mode or has_body_identity else {}
             reference_description, image_to_text_meta = await self._describe_reference_images_for_generation(
                 event, [ref.data for ref in refs if ref and ref.data], **describe_options
             )
@@ -529,17 +530,17 @@ async def run_image_generation_workflow(
             # details available to models that receive a text-only request.
             if is_leg_focus_request:
                 description_line = (
-                    "参考图内容描述（仅用于身份及合同要求保留的服饰；不得覆盖已锁定的腿部机位、姿势、场景、裁切或袜装）："
+                    "参考图内容描述（仅用于身份、可确认的体型及合同要求保留的服饰；不得覆盖已锁定的腿部机位、姿势、场景、裁切或袜装）："
                     f"{reference_description}"
                 )
             elif locked_mode == "cos":
                 description_line = (
-                    "参考图内容描述（仅用于辅助识别身份；不得覆盖已锁定的 COS 服饰、姿势、场景、机位或构图）："
+                    "参考图内容描述（仅用于辅助识别身份与可确认的体型；不得覆盖已锁定的 COS 服饰、姿势、场景、机位或构图）："
                     f"{reference_description}"
                 )
-            elif locked_mode:
+            elif locked_mode or has_body_identity:
                 description_line = (
-                    "参考图内容描述（仅补充身份及合同要求保留的服饰；机位、姿势、视线、场景和构图服从本次合同）："
+                    "参考图内容描述（仅补充身份、可确认的体型及合同要求保留的服饰；机位、姿势、视线、场景和构图服从本次合同）："
                     f"{reference_description}"
                 )
             else:

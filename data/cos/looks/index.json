@@ -34,12 +34,12 @@
     {
       "cos_type": "原创COS",
       "file": "原创COS.json",
-      "count": 52
+      "count": 53
     },
     {
       "cos_type": "原神",
       "file": "原神.json",
-      "count": 49
+      "count": 50
     },
     {
       "cos_type": "叛逆的鲁鲁修",
@@ -154,7 +154,7 @@
     {
       "cos_type": "蔚蓝档案",
       "file": "蔚蓝档案.json",
-      "count": 38
+      "count": 39
     },
     {
       "cos_type": "通用COS",
@@ -276,6 +276,7 @@
     "ancient_teal_red_pipe",
     "ancient_lotus_short_qipao",
     "ganyu_bride",
+    "ganyu_private_blue_lace_hoodie",
     "ganyu_blue_white_qilin_close",
     "qingyi_blue_white_uniform",
     "xishi_fan_qipao",
@@ -707,6 +708,7 @@
     "blue_archive_tsubaki",
     "shiroko_sport_vest_shorts",
     "blue_archive_izuna_yukata",
+    "blue_archive_kisaki_navy_gold_qipao",
     "princess_connect_karyl",
     "karyl_black_purple_cat_dress",
     "kokkoro_white_green_offshoulder",
@@ -879,6 +881,7 @@
     "original_talisman_bluegray",
     "original_egyptian_black_gold_cat",
     "original_egyptian_white_gold_queen",
+    "original_pink_ruffle_denim_skirt",
     "rezero_emilia_spirit_gala",
     "rezero_beatrice_gothic_library",
     "rezero_crusch_military_gala",

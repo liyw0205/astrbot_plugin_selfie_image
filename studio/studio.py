@@ -71,12 +71,24 @@ def _load_builtin_prompts() -> List[Dict[str, Any]]:
                 raise BuiltinPromptDataError(f"内置预设 global 必须是布尔值: {preset_id}")
             if raw["global"]:
                 item["global"] = True
+        if "owns_staging" in raw:
+            if not isinstance(raw["owns_staging"], bool):
+                raise BuiltinPromptDataError(f"内置预设 owns_staging 必须是布尔值: {preset_id}")
+            item["owns_staging"] = raw["owns_staging"]
         seen_ids.add(preset_id)
         items.append(item)
     return items
 
 
 BUILTIN_PROMPTS: List[Dict[str, Any]] = _load_builtin_prompts()
+
+
+def prompt_owns_staging(text: str) -> bool:
+    """Recognize expanded presets that supply their own scene, pose and crop."""
+    return any(
+        item.get("owns_staging") and item["prompt"] in text
+        for item in BUILTIN_PROMPTS
+    )
 
 # These special presets can also be requested through dynamic aliases.
 # Keep the aliases themselves out of the fixed preset seed so each one expands

@@ -137,7 +137,6 @@ COS_JSON_LIGHTING_RULES = _load_object("_lightings.json", "rules")
 COS_JSON_CONTACT_SHADOW_PROMPTS = _load_object("_lightings.json", "contact_shadow_prompts")
 COS_JSON_LIGHTING_REQUEST_TERMS = _load_terms("_lightings.json", "request_terms")
 COS_JSON_COMPOSITIONS = _load_vocab("_compositions.json")
-COS_JSON_MULTI_VIEW_COLLAGE = _load_object("_compositions.json", "multi_view")
 COS_JSON_COMBINATIONS = _load_vocab("_combinations.json")
 COS_JSON_POSE_REQUEST_ALIASES = _load_alias_map("_poses.json", "request_aliases")
 COS_JSON_POSE_CLASSIFICATION_TERMS = _load_alias_map("_poses.json", "classification_terms")
@@ -154,7 +153,6 @@ COS_JSON_FRAMING_OPTION_TERMS = _load_terms("_framings.json", "option_terms")
 COS_JSON_FRAMING_OPTION_SUFFIX_TERMS = _load_terms("_framings.json", "option_suffix_terms")
 COS_JSON_CAMERA_REQUEST_TERMS = _load_alias_map("_framings.json", "camera_request_terms")
 COS_JSON_COMPOSITION_REQUEST_TERMS = _load_terms("_compositions.json", "request_terms")
-COS_JSON_MULTI_VIEW_COLLAGE_TERMS = _load_terms("_compositions.json", "multi_view_request_terms")
 COS_JSON_LEGACY_GROUPS = _load_legacy_groups()
 
 for pose_id, aliases in COS_JSON_POSE_REQUEST_ALIASES.items():
@@ -262,7 +260,7 @@ def validate_json_catalog() -> List[str]:
     camera_ids = {"selfie", "first", "third"}
     required_lighting_rules = {
         "source_consistency", "user_lighting", "user_face", "subject_clarity",
-        "face_visible", "face_optional", "contact", "collage",
+        "face_visible", "face_optional", "contact",
     }
     if set(COS_JSON_LIGHTING_RULES) != required_lighting_rules or any(
         not isinstance(value, str) or not value.strip()
@@ -326,22 +324,8 @@ def validate_json_catalog() -> List[str]:
         or not set(COS_JSON_CAMERA_REQUEST_TERMS["mirror_selfie"]) <= set(COS_JSON_CAMERA_REQUEST_TERMS["selfie"])
     ):
         issues.append("camera request terms must be non-empty and mirror selfie terms must be selfie aliases")
-    if not COS_JSON_MULTI_VIEW_COLLAGE_TERMS or not COS_JSON_POSE_CUSTOM_REQUEST_TERMS:
-        issues.append("multi-view and custom pose request terms must not be empty")
-    collage_id = str(COS_JSON_MULTI_VIEW_COLLAGE.get("id") or "").strip()
-    collage_count = COS_JSON_MULTI_VIEW_COLLAGE.get("panel_count")
-    collage_labels = COS_JSON_MULTI_VIEW_COLLAGE.get("panel_labels")
-    if (
-        not collage_id
-        or not COS_JSON_MULTI_VIEW_COLLAGE.get("title")
-        or not COS_JSON_MULTI_VIEW_COLLAGE.get("prompt")
-        or not isinstance(collage_count, int)
-        or collage_count < 1
-        or not isinstance(collage_labels, list)
-        or len(collage_labels) != collage_count
-        or any(not str(label).strip() for label in collage_labels)
-    ):
-        issues.append("multi-view collage metadata is incomplete or inconsistent")
+    if not COS_JSON_POSE_CUSTOM_REQUEST_TERMS:
+        issues.append("custom pose request terms must not be empty")
     if set(COS_JSON_LOOK_THEME_CONFLICTS) - set(COS_JSON_LOOK_THEME_MARKERS):
         issues.append("scene look theme conflicts reference unknown themes")
     if not isinstance(COS_JSON_FACE_RISK_PROMPTS, Mapping) or any(

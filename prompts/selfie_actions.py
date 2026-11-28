@@ -929,7 +929,9 @@ def build_group_selfie_action(
         shot_options = GROUP_COMPOSITIONS
         # Detailed staging is a default, not an override of an explicit request.
         remaining = re.sub(
-            r"(?:[一二三四五六七八九十两\d]+[人位名]|多人|双人|大家|全员|一起|和我|跟我|我们|合影|合照|同框|拍照|拍)",
+            r"(?:[一二三四五六七八九十两\d]+[人位名]|多人|双人|大家|全员|一起|和我|跟我|我们|合影|合照|同框|拍照|拍"
+            r"|(?:(?:场景|背景|姿势|构图|机位|视角)(?:都|全部)?)?(?:随机|随便|任意|不限)"
+            r"|真人|写实|动漫|二次元|自动)",
             "", str(extra_request or ""),
         )
         if re.search(r"[\w\u4e00-\u9fff]", remaining):
@@ -991,6 +993,9 @@ def build_group_selfie_action(
         if group_orientation == "front"
         else ""
     )
+    if composition["compound"]:
+        # A compound entry owns its camera, crop, gaze and lighting together.
+        orientation_prompt = lighting_prompt = framing_prompt = ""
     base += (
         "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一。"
         + orientation_prompt

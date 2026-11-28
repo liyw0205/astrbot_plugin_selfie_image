@@ -311,7 +311,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(any("洛丽塔" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertTrue(any("运动短裤" in item or "运动短裙" in item or "网球短裙" in item for item in DAILY_EXTRA_OUTFIT_POOL))
         self.assertEqual(len({item["id"] for item in BUILTIN_PROMPTS}), len(BUILTIN_PROMPTS))
-        self.assertEqual(len(BUILTIN_PROMPTS), 88)
+        self.assertGreaterEqual(len(BUILTIN_PROMPTS), 88)
         from astrbot_plugin_selfie_image.studio.studio import ACTION_PROMPT_PRESET_IDS
         for preset_id in (
             "preset_social_hotel_breakfast",

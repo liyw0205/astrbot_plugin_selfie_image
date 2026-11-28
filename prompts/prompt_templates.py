@@ -16,6 +16,7 @@ from ..cos.leg_focus import (
     leg_focus_appearance_prompt,
 )
 from .group_prompt_pool import has_group_composition_contract
+from .body_identity import build_body_identity_prompt
 
 
 COS_IDENTITY_CONTRACT_ZH = (
@@ -385,6 +386,14 @@ def build_selfie_builtin_prompt(
 
     def finish(*parts: str, final_style: str = "") -> str:
         prompt = _join(*parts)
+        body_identity = build_body_identity_prompt(
+            language=language,
+            has_identity_reference=has_reference_image,
+            is_group=raw_is_group,
+            is_legs=raw_is_legs,
+        )
+        if body_identity not in prompt:
+            prompt = _join(prompt, body_identity)
         realism = photographic_realism_prompt(
             effective_appearance_type,
             language=language,
@@ -419,6 +428,13 @@ def build_selfie_builtin_prompt(
     feet_cropped = is_legs and is_leg_calf_crop_action(str(action))
     leg_face_context = is_legs and feet_cropped and has_leg_face_context(str(action))
     if language == "en":
+        wardrobe_lines = []
+        if has_wardrobe_reference and not (is_cos or is_group or is_legs):
+            wardrobe_lines.append(
+                "Reference image 2 is the custom wardrobe clothing reference. Transfer only the clothing, material, color, cut, pattern, and accessories; never transfer its person's identity, face, hair, body, gender, expression, or background. Reference image 1 remains the identity anchor."
+            )
+            if str(wardrobe_item_name or "").strip():
+                wardrobe_lines.append(f"Wardrobe item name: {str(wardrobe_item_name).strip()}.")
         style = {
             "real": "realistic photographic",
             "anime": "soft Kyoto Animation-like anime with a finer face and ethereal atmosphere",
@@ -464,6 +480,7 @@ def build_selfie_builtin_prompt(
                 if has_reference_image else "Use the character settings as the identity anchor; default to an adult woman when gender is unspecified.",
                 rendered_action,
             ]
+            lines.extend(wardrobe_lines)
             if translated_user and translated_user not in rendered_action:
                 lines.append(f"User request: {translated_user}")
             return finish(*lines)
@@ -518,12 +535,7 @@ def build_selfie_builtin_prompt(
             lines.append(
                 "Use extra references only for independent companions or explicitly requested clothing, pose, composition, lighting, or scene. Extra references must not override the primary subject's visual medium."
             )
-        if has_wardrobe_reference and not (is_cos or is_group_contract or is_legs):
-            lines.append(
-                "Reference image 2 is the custom wardrobe clothing reference. Transfer only the clothing, material, color, cut, pattern, and accessories; never transfer its person's identity, face, hair, body, gender, expression, or background. Reference image 1 remains the identity anchor."
-            )
-            if str(wardrobe_item_name or "").strip():
-                lines.append(f"Wardrobe item name: {str(wardrobe_item_name).strip()}.")
+        lines.extend(wardrobe_lines)
         if is_group:
             if is_group_contract:
                 lines.extend([
