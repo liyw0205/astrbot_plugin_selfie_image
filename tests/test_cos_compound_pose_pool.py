@@ -109,24 +109,49 @@ def test_inverted_table_portrait_keeps_closed_eyes_in_expression_layer():
 
 
 @pytest.mark.parametrize("pose_id", [BUNDLES[1][0], BUNDLES[2][0], BUNDLES[10][0]])
-def test_hem_actions_do_not_randomize_for_a_trouser_only_costume(monkeypatch, pose_id):
+@pytest.mark.parametrize("request_kind", ["random", "explicit"])
+def test_hem_actions_support_a_costume_without_a_loose_hem(monkeypatch, pose_id, request_kind):
     original = cos.get_cos_look_by_id
 
     def get_look(look_id):
         if look_id == "trouser_fixture":
-            return {"id": look_id, "prompt": "贴身背心，深灰色长裤，短靴。"}
+            return {"id": look_id, "prompt": "贴身连体衣，深灰色长裤，短靴。"}
         return original(look_id)
 
     monkeypatch.setattr(cos, "get_cos_look_by_id", get_look)
+    monkeypatch.setattr(cos.random, "random", lambda: 1.0)
+    _, scene_id, framing_id = next(bundle for bundle in BUNDLES if bundle[0] == pose_id)
     profile = cos.cos_look_compatibility("trouser_fixture")
-    assert pose_id not in profile["recommended_pose_ids"]
-    assert "golden_shallow_water" not in profile["recommended_scene_ids"]
+    assert pose_id in profile["recommended_pose_ids"]
+    assert scene_id in profile["recommended_scene_ids"]
+    request = cos.COS_POSE_REQUEST_ALIASES[pose_id][0] if request_kind == "explicit" else ""
+    rotation = {
+        "avoid_poses": set(cos.COS_RANDOM_POSE_CLASSES) - {pose_id},
+        "avoid_scenes": set(cos.COS_RANDOM_SCENE_CLASSES) - {scene_id},
+    }
     variation = cos.pick_cos_variation(
         "trouser_fixture", camera="third",
-        extra_request=cos.COS_POSE_REQUEST_ALIASES[pose_id][0],
+        extra_request=request, **rotation,
     )
-    assert variation["pose_id"] != pose_id
-    assert variation["selection_notice"]
+    assert variation["pose_id"] == pose_id
+    assert not variation["selection_notice"]
+    action = cos.build_cos_look_action(
+        request, force_id="trouser_fixture", camera="third", **rotation,
+    )
+    assert_bundle(action, pose_id, scene_id, framing_id)
+    assert get_look("trouser_fixture")["prompt"] in action
+    assert "若当前服装没有可活动的" in cos.COS_RANDOM_POSE_CLASSES[pose_id]["prompt"]
+    assert "若当前服装没有可活动的" in cos.COS_FRAMING_CLASSES[framing_id]["prompt"]
+
+
+def test_all_ordinary_outfits_share_the_complete_random_pose_pool():
+    expected = set(cos.COS_DEFAULT_RANDOM_POSE_IDS)
+    for look in cos.COS_LOOK_SETS:
+        profile = cos.cos_look_compatibility(look["id"])
+        if cos.is_special_cos_look(look):
+            assert not profile["variation_enabled"]
+            continue
+        assert set(profile["recommended_pose_ids"]) == expected, look["id"]
 
 
 @pytest.mark.parametrize("index", [6, 9, 10])

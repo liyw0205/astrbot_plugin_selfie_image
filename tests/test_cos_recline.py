@@ -99,24 +99,26 @@ def test_shared_base_pose_is_available_to_other_cos_looks():
     assert variation["scene_id"] == "gray_bed_recline"
 
 
-def test_unverified_outfit_falls_back_from_hem_pose_to_base():
+@pytest.mark.parametrize("look_id", ["roxy_cream", "original_ccd_sleepwear_overknees"])
+def test_other_outfits_keep_the_requested_hem_pose(look_id):
     variation = cos.pick_cos_variation(
-        "roxy_cream",
+        look_id,
         extra_request="灰色地毯角落 半躺轻捏衣摆",
         camera="third",
     )
-    assert variation["pose_id"] == "soft_surface_recline_support"
-    assert variation["selection_notice"]
+    assert variation["pose_id"] == "soft_surface_recline_hem_hold"
+    assert not variation["selection_notice"]
 
 
-@pytest.mark.parametrize("look_id", HEM_LOOKS)
-def test_hem_pose_is_randomly_reachable_for_verified_outfits(look_id):
+@pytest.mark.parametrize("look_id", HEM_LOOKS + ("roxy_cream", "original_ccd_sleepwear_overknees"))
+@pytest.mark.parametrize("camera", CAMERAS)
+def test_hem_pose_is_randomly_reachable_across_outfits(look_id, camera):
     pose_id = "soft_surface_recline_hem_hold"
     scene_id = "gray_rug_recline"
     profile = cos.cos_look_compatibility(look_id)
     variation = cos.pick_cos_variation(
         look_id,
-        camera="third",
+        camera=camera,
         avoid_poses=[item for item in cos.COS_RANDOM_POSE_CLASSES if item != pose_id],
         avoid_scenes=[item for item in cos.COS_RANDOM_SCENE_CLASSES if item != scene_id],
     )
@@ -126,18 +128,17 @@ def test_hem_pose_is_randomly_reachable_for_verified_outfits(look_id):
     assert variation["scene_id"] == scene_id
 
 
-def test_hem_pose_is_not_randomly_reachable_for_unverified_outfits():
+def test_hem_pose_is_reachable_in_the_final_action_for_other_outfits():
     pose_id = "soft_surface_recline_hem_hold"
-    profile = cos.cos_look_compatibility("roxy_cream")
-    variation = cos.pick_cos_variation(
-        "roxy_cream",
+    action = cos.build_cos_look_action(
+        force_id="roxy_cream",
         camera="third",
         avoid_poses=[item for item in cos.COS_RANDOM_POSE_CLASSES if item != pose_id],
         avoid_scenes=[item for item in cos.COS_RANDOM_SCENE_CLASSES if item != "gray_rug_recline"],
     )
-
-    assert pose_id not in profile["recommended_pose_ids"]
-    assert variation["pose_id"] != pose_id
+    assert tag(action, "pose") == pose_id
+    assert tag(action, "framing") == "recline_high_close"
+    assert "若服装没有合适的自由下摆" in action
 
 
 def test_pose_only_request_stays_on_compatible_surfaces_after_rotation_is_exhausted():

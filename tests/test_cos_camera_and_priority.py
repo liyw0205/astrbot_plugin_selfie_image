@@ -972,13 +972,7 @@ def test_ccd_sleepwear_cos_look_keeps_camera_and_pose_in_the_shared_random_pools
     profile = cos_look_compatibility(look["id"])
     shared_profile = cos_look_compatibility("custom_cos_id")
     assert profile["recommended_view_ids"] == ["selfie", "first", "third"]
-    def garment_independent_poses(profile):
-        return [
-            pose_id for pose_id in profile["recommended_pose_ids"]
-            if not COS_RANDOM_POSE_CLASSES[pose_id].get("required_outfit_terms")
-        ]
-
-    assert garment_independent_poses(profile) == garment_independent_poses(shared_profile)
+    assert profile["recommended_pose_ids"] == shared_profile["recommended_pose_ids"]
     assert profile["recommended_scene_ids"] == shared_profile["recommended_scene_ids"]
 
     for orientation in ("正面站姿", "背影"):

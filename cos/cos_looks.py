@@ -340,11 +340,6 @@ COS_SOFT_SURFACE_RECLINE_POSE_IDS = frozenset({
     "soft_surface_recline_hem_hold",
 })
 COS_SOFT_SURFACE_RECLINE_BASE_POSE_ID = "soft_surface_recline_support"
-COS_SOFT_SURFACE_RECLINE_HEM_POSE_ID = "soft_surface_recline_hem_hold"
-COS_SOFT_SURFACE_RECLINE_HEM_LOOK_IDS = frozenset({
-    "original_skyblue_lace_cami",
-    "original_blue_anime_print_cami",
-})
 
 
 def _as_id_set(values: Any) -> set[str]:
@@ -1019,12 +1014,6 @@ def pick_cos_framing(
     return selected
 
 
-def _cos_pose_matches_outfit(pose_id: str, cos_id: str) -> bool:
-    terms = COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("required_outfit_terms") or ()
-    description = _positive_cos_look_description(cos_id) if terms else ""
-    return not terms or any(_has_positive_request(description, term) for term in terms)
-
-
 def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
     """Return a look-specific staging profile, falling back to the shared pool."""
     look_id = str(cos_id or "").strip()
@@ -1110,16 +1099,6 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
         if pose_id not in COS_EXPLICIT_ONLY_POSE_IDS
         and pose_id in COS_DEFAULT_RANDOM_POSE_IDS
         and any(pose_id in scene_poses for scene_poses in scene_pose_compatibility.values())
-    ]
-    # The garment-pinch pose only randomizes for outfits with a verified loose hem.
-    if look_id not in COS_SOFT_SURFACE_RECLINE_HEM_LOOK_IDS:
-        recommended_poses = [
-            pose_id for pose_id in recommended_poses
-            if pose_id != COS_SOFT_SURFACE_RECLINE_HEM_POSE_ID
-        ]
-    recommended_poses = [
-        pose_id for pose_id in recommended_poses
-        if _cos_pose_matches_outfit(pose_id, look_id)
     ]
     scenes = [
         scene_id for scene_id in scenes
@@ -1658,22 +1637,12 @@ def pick_cos_variation(
     requested_scene = _requested_cos_scene(extra_request)
     selection_notice = ""
     rejected_pose_ids: set[str] = set()
-    if requested_pose and not _cos_pose_matches_outfit(requested_pose, cos_id):
-        rejected_pose_ids.add(requested_pose)
-        requested_pose = ""
-        selection_notice = "当前套装没有该动作所需的原有裙摆或衣摆，已改用兼容姿势。"
     handheld_requested = (
         (camera or parse_requested_cos_camera(extra_request)) == "selfie"
         and _requests_recline_handheld_selfie(extra_request)
     ) or requests_phone_face_cover(extra_request)
     if handheld_requested:
         allowed_poses.difference_update(COS_SOFT_SURFACE_RECLINE_POSE_IDS)
-    if (
-        requested_pose == COS_SOFT_SURFACE_RECLINE_HEM_POSE_ID
-        and cos_id not in COS_SOFT_SURFACE_RECLINE_HEM_LOOK_IDS
-    ):
-        requested_pose = COS_SOFT_SURFACE_RECLINE_BASE_POSE_ID
-        selection_notice = "当前套装未核验可活动衣摆，已改用基础半躺后撑动作。"
     if requested_pose in COS_SOFT_SURFACE_RECLINE_POSE_IDS:
         scene_conflict = bool(
             requested_scene
@@ -1747,7 +1716,6 @@ def pick_cos_variation(
             compatible_poses = _poses_for_camera(compatible_poses, camera)
         compatible_poses = [item for item in compatible_poses if item not in COS_EXPLICIT_ONLY_POSE_IDS]
         compatible_poses = [item for item in compatible_poses if item not in rejected_pose_ids]
-        compatible_poses = [item for item in compatible_poses if _cos_pose_matches_outfit(item, cos_id)]
         if not requested_pose:
             safe_poses = [
                 item for item in compatible_poses
