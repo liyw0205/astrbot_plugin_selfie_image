@@ -362,15 +362,15 @@
       "random_camera_ids": ["third"]
     },
     "kneeling_front_level_hem_oblique_high": {
-      "title": "高跪正前平提衣摆轻俯拍",
-      "prompt": "9:16竖幅，从人物正面略偏一侧、稍高于跪姿视线轻俯拍，保留完整头脸、撑起的上身、正前水平展开的衣摆、双膝与向后折回的小腿",
+      "title": "高跪侧拉衣摆轻俯拍",
+      "prompt": "9:16竖幅，从人物正面略偏一侧轻俯拍，保留完整头脸、立起的上身、脸颊侧轻触发丝的手、向画面左外侧拉开的原有前摆与双膝，一侧小腿向外摊开，腿部有自然远近层次",
       "scene_ids": ["pose_reference_room"],
       "camera_ids": ["third"],
       "random_camera_ids": ["third"]
     },
     "staggered_hem_side_lift_full_oblique": {
       "title": "错步侧提衣摆微斜全身",
-      "prompt": "9:16竖幅，正面略斜角、接近平视并轻微俯拍全身，头顶与双脚完整入镜，保留错步侧胯、拨发手与前摆向一侧归拢的斜垂关系，画面轻微倾斜",
+      "prompt": "9:16竖幅，从正面略偏侧低角度轻微仰拍全身，头顶与双脚完整入镜，保留后腿承重、前腿轻伸的错步侧胯、身侧掐指手与另一手捏住原有前摆底端向同侧髋旁斜带的关系，布料自然斜垂，画面轻微倾斜",
       "scene_ids": ["pose_reference_room"],
       "camera_ids": ["third"],
       "random_camera_ids": ["third"]
