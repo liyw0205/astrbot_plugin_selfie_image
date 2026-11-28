@@ -1266,7 +1266,7 @@
       "style_family": "traditional_portrait",
       "style_ids": ["natural_snapshot"],
       "style_weights": {"natural_snapshot": 5},
-      "pose_ids": ["ancient_room_table_lean_same_side_leg_overhead", "ancient_room_table_supine_head_over_edge_legs_up"],
+      "pose_ids": ["ancient_room_table_supine_head_over_edge_legs_up"],
       "tags": ["indoor", "traditional", "table"],
       "makeup_ids": ["ancient_elegant"]
     },

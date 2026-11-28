@@ -1,4 +1,4 @@
-"""Exercise the P01-P13 compound staging entries through real COS selection."""
+"""Exercise the retained compound staging entries through real COS selection."""
 
 import re
 
@@ -15,7 +15,6 @@ BUNDLES = (
     ("standing_staggered_front_hem_side_lift", "pose_reference_room", "staggered_hem_side_lift_full_oblique"),
     ("front_oblique_chest_waist_upper_thigh_crop", "pose_reference_room", "front_oblique_neck_to_upper_thigh"),
     ("standing_support_other_knee_up_foot_down", "pose_reference_room", "low_oblique_knee_up_foot_down_diagonal"),
-    ("ancient_room_table_lean_same_side_leg_overhead", "ancient_wood_table_room", "table_side_lean_leg_overhead_full"),
     ("ancient_room_table_supine_head_over_edge_legs_up", "ancient_wood_table_room", "table_inverted_head_raised_legs"),
     ("ancient_style_face_close_high_angle_portrait", "ancient_soft_portrait_room", "ancient_face_close_high_angle"),
     ("hallway_wall_lean_palm_support_tiptoe_stance", "light_wood_hallway", "hallway_wall_palm_tiptoe_full"),
@@ -102,14 +101,14 @@ def test_raised_knee_and_foot_down_remain_different_without_left_right_labels():
 
 
 def test_inverted_table_portrait_keeps_closed_eyes_in_expression_layer():
-    pose_id = BUNDLES[6][0]
+    pose_id = BUNDLES[5][0]
     expression_id, prompt = cos._pick_scene_expression(pose_id)
     assert prompt == cos.COS_JSON_EXPRESSIONS[expression_id]["closed_eyes_prompt"]
     assert "双眼轻闭" in cos.COS_RANDOM_POSE_CLASSES[pose_id]["prompt"]
     assert "视线稳定" not in prompt
 
 
-@pytest.mark.parametrize("pose_id", [BUNDLES[1][0], BUNDLES[2][0], BUNDLES[11][0]])
+@pytest.mark.parametrize("pose_id", [BUNDLES[1][0], BUNDLES[2][0], BUNDLES[10][0]])
 def test_hem_actions_do_not_randomize_for_a_trouser_only_costume(monkeypatch, pose_id):
     original = cos.get_cos_look_by_id
 
@@ -130,7 +129,7 @@ def test_hem_actions_do_not_randomize_for_a_trouser_only_costume(monkeypatch, po
     assert variation["selection_notice"]
 
 
-@pytest.mark.parametrize("index", [7, 10, 11])
+@pytest.mark.parametrize("index", [6, 9, 10])
 def test_compound_does_not_replace_cos_hair_or_costume(index):
     pose = cos.COS_RANDOM_POSE_CLASSES[BUNDLES[index][0]]["prompt"]
     assert "当前 COS" in pose

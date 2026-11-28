@@ -389,13 +389,6 @@
       "camera_ids": ["third"],
       "random_camera_ids": ["third"]
     },
-    "table_side_lean_leg_overhead_full": {
-      "title": "伏桌侧屈高举腿完整构图",
-      "prompt": "9:16竖幅，从侧前方取景，完整交代伏桌上半身、贴桌支撑手、同侧伸直高举过头的腿与足端，面部转向镜头；高举腿的髋、膝、踝、足连续且透视一致，另一条腿自然藏于桌后，桌面承托与关节连接清楚，不为正对镜头展示脚底而改变足踝朝向",
-      "scene_ids": ["ancient_wood_table_room"],
-      "camera_ids": ["third"],
-      "random_camera_ids": ["third"]
-    },
     "table_inverted_head_raised_legs": {
       "title": "桌沿倒置头部与上举双腿",
       "prompt": "9:16竖幅，镜头朝向探出桌沿的倒置面部，保留双眼轻闭、仰躺桌面的躯干、向两侧摊开的双臂与伸直向上抬起的双腿，现有发丝随倒置方向自然垂落，比例自然",
