@@ -214,7 +214,8 @@
         "playful"
       ],
       "random_camera_ids": [
-        "third"
+        "third",
+        "first"
       ]
     },
     "front_hem_display": {
@@ -272,7 +273,7 @@
       "random_weight": 3,
       "framing_ids": ["two_thirds", "three_quarter_front", "high_angle_three_quarter", "low_angle_hero", "low_angle_near_standing"],
       "expression_ids": ["confident", "playful", "flirtatious", "sultry"],
-      "random_camera_ids": ["third"]
+      "random_camera_ids": ["third", "first"]
     },
     "front_waist_shift": {
       "title": "正面错胯站姿",
@@ -622,10 +623,12 @@
         "sultry"
       ],
       "camera_ids": [
-        "third"
+        "third",
+        "first"
       ],
       "random_camera_ids": [
-        "third"
+        "third",
+        "first"
       ]
     },
     "back_to_camera": {
@@ -703,7 +706,9 @@
         "flirtatious"
       ],
       "random_camera_ids": [
-        "third"
+        "third",
+        "first",
+        "selfie"
       ]
     },
     "hands_gathered_at_sternum": {
@@ -726,7 +731,8 @@
         "melancholy"
       ],
       "random_camera_ids": [
-        "third"
+        "third",
+        "first"
       ]
     },
     "window_back_raised_arms": {
@@ -1078,7 +1084,8 @@
         "sultry"
       ],
       "random_camera_ids": [
-        "third"
+        "third",
+        "first"
       ]
     },
     "front_lean_v_sign": {

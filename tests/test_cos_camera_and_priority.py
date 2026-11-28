@@ -531,7 +531,8 @@ def test_studio_cos_prompt_uses_the_same_third_person_contract():
     assert "【cos:web】" in action
     assert "【cam:third】" in action
     assert "【他拍 / 看看COS模式】" in action
-    assert "自拍" not in action
+    assert "【自拍 / 看看COS模式】" not in action
+    assert "采用固定或定时自拍" not in action
     assert "两条手臂和两只手" in action
 
 
@@ -631,11 +632,15 @@ def test_camera_adaptation_preserves_mirror_scene_staging_only_when_requested():
     assert "镜前" not in adapt_cos_outfit_for_camera("人物在全身镜前自拍", "third")
 
 
-def test_first_person_random_pose_excludes_pure_side_profile_but_explicit_survives():
-    assert "first" not in COS_POSE_CAMERA_COMPATIBILITY["side_profile"]
-    for _ in range(40):
-        selected = pick_cos_variation("roxy_cream", camera="first")
-        assert selected["pose_id"] != "side_profile"
+def test_first_person_side_profile_is_randomly_reachable_and_explicit_survives():
+    selected = pick_cos_variation(
+        "roxy_cream",
+        camera="first",
+        avoid_poses=set(COS_RANDOM_POSE_CLASSES) - {"side_profile"},
+        avoid_scenes=set(COS_RANDOM_SCENE_CLASSES) - {"old_city_rooftop"},
+    )
+    assert selected["pose_id"] == "side_profile"
+    assert selected["scene_id"] == "old_city_rooftop"
 
     explicit = pick_cos_variation(
         "roxy_cream",

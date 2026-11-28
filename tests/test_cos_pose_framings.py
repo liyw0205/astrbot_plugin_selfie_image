@@ -45,6 +45,80 @@ from astrbot_plugin_selfie_image.cos.cos_looks_loader import (
 )
 
 
+ORDINARY_STANDING_SCENE_IDS = (
+    "bedroom_carpet", "bedroom_window", "photo_studio", "living_room_rug",
+    "garden_walkway", "bamboo_garden", "cherry_blossom_path", "seaside_boardwalk",
+    "rooftop_sunset", "old_town_lane", "rainy_neon_street", "library_wood",
+    "museum_hall", "cafe_corner", "festival_lantern", "stone_staircase",
+    "greenhouse", "snowy_courtyard", "tea_room_window", "japanese_veranda",
+    "japanese_ink_room", "old_city_rooftop", "costume_atelier", "shrine_interior",
+    "theater_dressing_room",
+)
+GENERAL_PORTRAIT_POSE_IDS = (
+    "quiet_low_gaze", "hands_gathered_at_sternum", "lean_forward_hands", "side_profile",
+)
+
+
+@pytest.mark.parametrize("scene_id", ORDINARY_STANDING_SCENE_IDS)
+@pytest.mark.parametrize(
+    ("pose_id", "camera"),
+    [(pose_id, camera) for pose_id in GENERAL_PORTRAIT_POSE_IDS for camera in ("third", "first")]
+    + [("quiet_low_gaze", "selfie")],
+)
+def test_general_portraits_reach_ordinary_scenes_without_explicit_staging(scene_id, pose_id, camera):
+    with patch.object(cos_looks.random, "random", return_value=1.0):
+        action = build_cos_look_action(
+            force_id="roxy_cream",
+            camera=camera,
+            avoid_poses=set(COS_RANDOM_POSE_CLASSES) - {pose_id},
+            avoid_scenes=set(COS_RANDOM_SCENE_CLASSES) - {scene_id},
+        )
+
+    assert f"【cos_scene:{scene_id}】" in action
+    assert f"【cos_pose:{pose_id}】" in action
+    assert f"【cam:{camera}】" in action
+    framing_id = re.search(r"【cos_framing:([a-z0-9_]+)】", action).group(1)
+    assert framing_id in COS_JSON_POSES[pose_id]["framing_ids"]
+    assert camera in COS_JSON_FRAMINGS[framing_id]["random_camera_ids"]
+    assert cos_looks.adapt_cos_outfit_for_camera(COS_JSON_POSES[pose_id]["prompt"], camera) in action
+    if camera == "first":
+        assert "镜头位于观察者自然视线的位置" in action
+        assert "观察者身体、观察者手臂或第二人物" in action
+    elif camera == "selfie":
+        assert "采用固定或定时自拍" in action
+        assert "主角双手保持已选动作" in action
+
+
+@pytest.mark.parametrize("pose_id", ["front_sleeve_display", "front_raised_arm"])
+def test_front_arm_gestures_keep_their_actions_in_random_first_person(pose_id):
+    with patch.object(cos_looks.random, "random", return_value=1.0):
+        action = build_cos_look_action(
+            force_id="roxy_cream",
+            camera="first",
+            avoid_poses=set(COS_RANDOM_POSE_CLASSES) - {pose_id},
+            avoid_scenes=set(COS_RANDOM_SCENE_CLASSES) - {"photo_studio"},
+        )
+
+    assert f"【cos_pose:{pose_id}】" in action
+    assert "【cam:first】" in action
+    assert COS_JSON_POSES[pose_id]["prompt"] in action
+    assert "观察者身体、观察者手臂或第二人物" in action
+
+
+def test_general_portraits_preserve_dedicated_scenes_and_selfie_limits():
+    for scene_id, scene in COS_JSON_SCENES.items():
+        if scene_id not in ORDINARY_STANDING_SCENE_IDS:
+            assert not set(GENERAL_PORTRAIT_POSE_IDS).intersection(scene["pose_ids"]), scene_id
+
+    restricted_selfie_pose_ids = {
+        "front_sleeve_display", "front_raised_arm", "hands_gathered_at_sternum",
+        "lean_forward_hands", "side_profile",
+    }
+    assert not restricted_selfie_pose_ids.intersection(
+        cos_looks._poses_for_camera(restricted_selfie_pose_ids, "selfie")
+    )
+
+
 def test_pose_framing_compatibility_is_owned_by_json_catalog():
     assert validate_json_catalog() == []
     assert set(COS_POSE_FRAMING_COMPATIBILITY) == set(COS_RANDOM_POSE_CLASSES)
@@ -333,7 +407,9 @@ def test_veranda_side_pose_is_reachable_without_naming_the_pose():
     )
 
     assert pose_id in profile["recommended_pose_ids"]
-    assert profile["scene_pose_compatibility"][scene_id] == [pose_id, "standing_detail", "half_turn"]
+    assert set(profile["scene_pose_compatibility"][scene_id]) == {
+        pose_id, "standing_detail", "half_turn", *GENERAL_PORTRAIT_POSE_IDS,
+    }
     assert variation["pose_id"] == pose_id
     assert variation["scene_id"] == scene_id
 

@@ -89,7 +89,11 @@
         "soft_surface_recline_hem_hold",
         "over_shoulder",
         "back_to_camera",
-        "chair_low_seated_stretch"
+        "chair_low_seated_stretch",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "domestic",
@@ -237,7 +241,11 @@
         "reach_light",
         "window_back_raised_arms",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "domestic",
@@ -302,7 +310,8 @@
         "rear_wall_curve",
         "wall_raised_elbow_lean",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "side_profile"
       ],
       "tags": [
         "editorial",
@@ -359,7 +368,11 @@
         "soft_surface_recline_support",
         "soft_surface_recline_hem_hold",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "domestic",
@@ -408,7 +421,11 @@
         "front_arms_raised_arch",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "botanical",
@@ -448,7 +465,11 @@
         "front_arms_raised_arch",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "botanical",
@@ -489,7 +510,11 @@
         "front_arms_raised_arch",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "botanical",
@@ -530,7 +555,11 @@
         "leaning_rest",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "coastal",
@@ -575,7 +604,11 @@
         "rear_hip_shift",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "rooftop",
@@ -624,7 +657,11 @@
         "rear_edge_curve",
         "rear_hip_shift",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "historic",
@@ -662,7 +699,11 @@
         "half_turn",
         "leaning_rest",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "neon",
@@ -705,7 +746,10 @@
         "rear_wall_curve",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "academic",
@@ -743,7 +787,11 @@
         "kneeling_side_raised_arm",
         "leaning_rest",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "architecture",
@@ -793,7 +841,11 @@
         "seated_side_curve",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "casual",
@@ -837,7 +889,11 @@
         "half_turn",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "festival",
@@ -875,7 +931,11 @@
         "stair_sit",
         "leaning_rest",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "architecture",
@@ -915,7 +975,11 @@
         "one_knee_crouch",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "botanical",
@@ -953,7 +1017,11 @@
         "half_turn",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "ice",
@@ -976,7 +1044,7 @@
       "style_weights": {"natural_snapshot": 5},
       "style_family": "traditional_lifestyle",
       "style_ids": ["natural_snapshot", "retro_ccd_static", "cool_quiet_snapshot", "dreamcore_soft"],
-      "pose_ids": ["standing_detail", "front_sleeve_display", "front_hem_display", "half_turn", "reach_light"],
+      "pose_ids": ["standing_detail", "front_sleeve_display", "front_hem_display", "half_turn", "reach_light", "quiet_low_gaze", "hands_gathered_at_sternum", "lean_forward_hands", "side_profile"],
       "tags": ["indoor", "traditional"],
       "makeup_ids": ["ancient_elegant", "natural_clean", "cool_matte"]
     },
@@ -989,7 +1057,7 @@
       "style_weights": {"natural_snapshot": 5},
       "style_family": "traditional_lifestyle",
       "style_ids": ["natural_snapshot", "retro_ccd_static", "cool_quiet_snapshot"],
-      "pose_ids": ["veranda_side_profile", "standing_detail", "half_turn"],
+      "pose_ids": ["veranda_side_profile", "standing_detail", "half_turn", "quiet_low_gaze", "hands_gathered_at_sternum", "lean_forward_hands", "side_profile"],
       "tags": ["japanese", "traditional", "daylight"],
       "makeup_ids": ["natural_clean", "soft_feminine", "cool_matte"]
     },
@@ -1027,7 +1095,11 @@
         "seated_side_curve",
         "reach_light",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "indoor",
@@ -1077,7 +1149,10 @@
         "side_edge_hip_shift",
         "rear_hip_shift",
         "back_to_camera",
-        "over_shoulder"
+        "over_shoulder",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands"
       ],
       "tags": [
         "daylight",
@@ -1135,7 +1210,10 @@
         "front_seated_lean",
         "side_profile",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands"
       ],
       "tags": [
         "domestic",
@@ -1178,7 +1256,11 @@
         "rear_hip_shift",
         "seated_composed",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands",
+        "side_profile"
       ],
       "tags": [
         "architecture",
@@ -1375,7 +1457,10 @@
         "chair_low_seated_stretch",
         "side_profile",
         "over_shoulder",
-        "back_to_camera"
+        "back_to_camera",
+        "quiet_low_gaze",
+        "hands_gathered_at_sternum",
+        "lean_forward_hands"
       ],
       "tags": [
         "editorial",
